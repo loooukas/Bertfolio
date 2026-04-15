@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+requests
+python-dotenv
+transformers
+torch
+yfinance
+pandas
+numpy

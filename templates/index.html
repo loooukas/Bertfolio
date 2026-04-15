@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FinBERT Earnings Analyzer</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <h1>FinBERT Earnings Analyzer</h1>
+        <p>
+          Local transcript analysis for company strength, outlook, confidence, and evasiveness across the latest
+          four quarters.
+        </p>
+      </header>
+
+      <section class="query-card">
+        <label for="ticker">Ticker</label>
+        <div class="query-row">
+          <input id="ticker" type="text" value="AAPL" maxlength="12" />
+          <button id="analyze-btn">Analyze</button>
+        </div>
+        <p class="small">Requires `FMP_API_KEY` or `ALPHAVANTAGE_API_KEY` in your local `.env` file.</p>
+      </section>
+
+      <section id="status" class="status"></section>
+
+      <section id="aggregate" class="grid grid-4 hidden"></section>
+
+      <section class="panel hidden" id="fundamentals-panel">
+        <h2>Fundamentals vs Transcript Signal</h2>
+        <div class="fundamentals-meta" id="fundamentals-meta"></div>
+        <canvas id="fundamentals-chart"></canvas>
+        <div class="table-wrap">
+          <table id="fundamentals-table">
+            <thead>
+              <tr>
+                <th>Quarter</th>
+                <th>Revenue</th>
+                <th>Net Income</th>
+                <th>Reported EPS</th>
+                <th>EPS Estimate</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="transcripts-panel">
+        <h2>Quarter-by-Quarter Call Analysis</h2>
+        <div id="transcripts"></div>
+      </section>
+    </main>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const aggregateEl = document.getElementById("aggregate");
+      const analyzeBtn = document.getElementById("analyze-btn");
+      const tickerInput = document.getElementById("ticker");
+      const fundamentalsPanel = document.getElementById("fundamentals-panel");
+      const transcriptsPanel = document.getElementById("transcripts-panel");
+      const fundamentalsMeta = document.getElementById("fundamentals-meta");
+      const fundamentalsTableBody = document.querySelector("#fundamentals-table tbody");
+      const transcriptsEl = document.getElementById("transcripts");
+      let fundamentalsChart;
+
+      function fmtNumber(value) {
+        if (value === null || value === undefined) return "-";
+        return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+      }
+
+      function fmtCurrency(value) {
+        if (value === null || value === undefined) return "-";
+        return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(
+          value
+        );
+      }
+
+      function card(label, value) {
+        return `<article class="metric"><h3>${label}</h3><strong>${value}</strong></article>`;
+      }
+
+      function pill(kind, text) {
+        return `<span class="pill ${kind}">${text}</span>`;
+      }
+
+      function renderAggregate(data) {
+        const a = data.aggregate_scores;
+        aggregateEl.innerHTML = [
+          card("Company Strength", `${a.company_strength_score}`),
+          card("Outlook", `${a.outlook_score}`),
+          card("Confidence", `${a.confidence_score}`),
+          card("Evasiveness", `${a.evasiveness_score}`),
+        ].join("");
+        aggregateEl.classList.remove("hidden");
+      }
+
+      function renderFundamentals(data) {
+        const f = data.fundamentals;
+        fundamentalsMeta.innerHTML = [
+          `<div>${pill("neutral", `Sentiment: ${data.aggregate_scores.sentiment_label}`)}</div>`,
+          `<div>${pill("bull", `Market Cap: ${fmtCurrency(f.market_cap)}`)}</div>`,
+          `<div>${pill("neutral", `Trailing PE: ${fmtNumber(f.trailing_pe)}`)}</div>`,
+          `<div>${pill("neutral", `Forward PE: ${fmtNumber(f.forward_pe)}`)}</div>`,
+          `<div>${pill("neutral", `Revenue QoQ: ${fmtNumber(f.revenue_qoq_growth_pct)}%`)}</div>`,
+          `<div>${pill("neutral", `EPS QoQ: ${fmtNumber(f.eps_qoq_growth_pct)}%`)}</div>`,
+        ].join("");
+
+        fundamentalsTableBody.innerHTML = "";
+        f.quarterly.forEach((q) => {
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${q.quarter}</td>
+            <td>${fmtCurrency(q.revenue)}</td>
+            <td>${fmtCurrency(q.net_income)}</td>
+            <td>${fmtNumber(q.reported_eps)}</td>
+            <td>${fmtNumber(q.eps_estimate)}</td>
+          `;
+          fundamentalsTableBody.appendChild(row);
+        });
+
+        const labels = f.quarterly.map((q) => q.quarter).reverse();
+        const revenue = f.quarterly.map((q) => q.revenue || 0).reverse();
+        const eps = f.quarterly.map((q) => q.reported_eps || 0).reverse();
+
+        if (fundamentalsChart) fundamentalsChart.destroy();
+        fundamentalsChart = new Chart(document.getElementById("fundamentals-chart"), {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "Revenue",
+                data: revenue,
+                backgroundColor: "rgba(10, 111, 246, 0.45)",
+                yAxisID: "y",
+              },
+              {
+                label: "Reported EPS",
+                data: eps,
+                type: "line",
+                borderColor: "#159f76",
+                backgroundColor: "#159f76",
+                yAxisID: "y1",
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            scales: {
+              y: { position: "left", grid: { color: "rgba(255,255,255,0.08)" } },
+              y1: { position: "right", grid: { drawOnChartArea: false } },
+            },
+          },
+        });
+
+        fundamentalsPanel.classList.remove("hidden");
+      }
+
+      function renderTranscripts(data) {
+        transcriptsEl.innerHTML = "";
+        data.transcripts.forEach((item) => {
+          const block = document.createElement("article");
+          block.className = "transcript";
+
+          const bullish = item.bullish_signals
+            .slice(0, 3)
+            .map((s) => `<li>${s}</li>`)
+            .join("");
+          const bearish = item.bearish_signals
+            .slice(0, 3)
+            .map((s) => `<li>${s}</li>`)
+            .join("");
+          const evasive = item.evasive_signals
+            .slice(0, 3)
+            .map((s) => `<li>${s}</li>`)
+            .join("");
+          const quotes = item.decision_relevant_quotes
+            .slice(0, 4)
+            .map((s) => `<li>${s}</li>`)
+            .join("");
+
+          block.innerHTML = `
+            <header>
+              <h3>${item.year} Q${item.quarter} (${item.source})</h3>
+              <div class="row">
+                ${pill("neutral", `Sentiment: ${item.sentiment.label}`)}
+                ${pill("neutral", `Confidence: ${item.confidence_score}`)}
+                ${pill("neutral", `Outlook: ${item.outlook_score}`)}
+                ${pill("warn", `Evasiveness: ${item.evasiveness_score}`)}
+              </div>
+            </header>
+            <div class="split">
+              <section>
+                <h4>Bullish Signals</h4>
+                <ul>${bullish || "<li>-</li>"}</ul>
+              </section>
+              <section>
+                <h4>Bearish Signals</h4>
+                <ul>${bearish || "<li>-</li>"}</ul>
+              </section>
+            </div>
+            <section>
+              <h4>Evasive / Hedging Signals</h4>
+              <ul>${evasive || "<li>-</li>"}</ul>
+            </section>
+            <section>
+              <h4>Decision-Relevant Quotes</h4>
+              <ul>${quotes || "<li>-</li>"}</ul>
+            </section>
+          `;
+
+          transcriptsEl.appendChild(block);
+        });
+        transcriptsPanel.classList.remove("hidden");
+      }
+
+      async function runAnalysis() {
+        const ticker = tickerInput.value.trim().toUpperCase();
+        if (!ticker) {
+          statusEl.textContent = "Enter a ticker first.";
+          return;
+        }
+
+        statusEl.textContent = `Analyzing ${ticker}...`;
+        statusEl.className = "status";
+        analyzeBtn.disabled = true;
+
+        try {
+          const response = await fetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}`);
+          const payload = await response.json();
+
+          if (!response.ok) {
+            throw new Error(payload.detail || "Failed to analyze ticker.");
+          }
+
+          renderAggregate(payload);
+          renderFundamentals(payload);
+          renderTranscripts(payload);
+
+          const warningText = payload.warnings?.length
+            ? ` Completed with warnings: ${payload.warnings.join(" | ")}`
+            : " Completed successfully.";
+          statusEl.textContent = `${ticker}: ${payload.transcripts_found} transcript(s) analyzed.${warningText}`;
+          statusEl.className = "status ok";
+        } catch (err) {
+          statusEl.textContent = `Error: ${err.message}`;
+          statusEl.className = "status error";
+        } finally {
+          analyzeBtn.disabled = false;
+        }
+      }
+
+      analyzeBtn.addEventListener("click", runAnalysis);
+      tickerInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") runAnalysis();
+      });
+    </script>
+  </body>
+</html>
