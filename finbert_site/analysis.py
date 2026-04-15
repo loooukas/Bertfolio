@@ -188,9 +188,11 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
 
     transcripts, warnings = fetch_last_4_transcripts(symbol, settings)
     if not transcripts:
+        warning_summary = " | ".join(warnings[:4]) if warnings else "No provider diagnostics available."
         raise RuntimeError(
             "No transcripts were retrieved. Configure FMP_API_KEY and/or ALPHAVANTAGE_API_KEY, "
-            "or use a provider tier with earnings transcript access."
+            "or use a provider tier with earnings transcript access. "
+            f"Provider diagnostics: {warning_summary}"
         )
 
     fundamentals_dict = fetch_fundamentals(symbol)
