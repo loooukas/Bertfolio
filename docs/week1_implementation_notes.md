@@ -5,6 +5,7 @@
 The app is built as an analyst-support system for reducing transcript review time while keeping traceability:
 
 - transcript ingestion is explicit and auditable
+- Alpha Vantage news ingestion adds current external sentiment context
 - sentiment and confidence are separated from factual transcript text
 - warnings are surfaced when transcript quality/source access is insufficient
 

@@ -12,7 +12,6 @@ load_dotenv()
 
 @dataclass(frozen=True)
 class Settings:
-    fmp_api_key: str = os.getenv("FMP_API_KEY", "")
     alpha_vantage_api_key: str = os.getenv("ALPHAVANTAGE_API_KEY", "")
     finbert_model_name: str = os.getenv("FINBERT_MODEL_NAME", "ProsusAI/finbert")
     request_timeout_seconds: int = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "30"))

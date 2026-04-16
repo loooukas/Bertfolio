@@ -1,9 +1,10 @@
-"""External data providers for transcripts and fundamentals."""
+"""External data providers for Alpha Vantage transcripts/news and fundamentals."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import time
 from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
@@ -11,6 +12,9 @@ import requests
 import yfinance as yf
 
 from .settings import Settings
+
+_LAST_ALPHA_REQUEST_TS = 0.0
+_ALPHA_MIN_INTERVAL_SEC = 1.1
 
 
 @dataclass
@@ -23,12 +27,53 @@ class TranscriptRecord:
     source: str
 
 
+@dataclass
+class NewsRecord:
+    title: str
+    summary: str
+    url: str
+    source: Optional[str]
+    time_published: Optional[str]
+    sentiment_score: float
+    sentiment_label: str
+
+
 def _quarter_from_month(month: int) -> int:
     return ((month - 1) // 3) + 1
 
 
 def _quarter_label(year: int, quarter: int) -> str:
     return f"{year}-Q{quarter}"
+
+
+def _alpha_get(params: Dict[str, str], timeout_seconds: int) -> Dict[str, Any]:
+    global _LAST_ALPHA_REQUEST_TS
+
+    now = time.monotonic()
+    elapsed = now - _LAST_ALPHA_REQUEST_TS
+    if elapsed < _ALPHA_MIN_INTERVAL_SEC:
+        time.sleep(_ALPHA_MIN_INTERVAL_SEC - elapsed)
+
+    url = "https://www.alphavantage.co/query"
+    response = requests.get(url, params=params, timeout=timeout_seconds)
+    _LAST_ALPHA_REQUEST_TS = time.monotonic()
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Alpha Vantage request failed: HTTP {response.status_code} - {response.text[:200]}"
+        )
+
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Alpha Vantage returned a non-JSON object.")
+
+    if payload.get("Error Message"):
+        raise RuntimeError(str(payload.get("Error Message")))
+    if payload.get("Information"):
+        raise RuntimeError(str(payload.get("Information")))
+    if payload.get("Note"):
+        raise RuntimeError(str(payload.get("Note")))
+
+    return payload
 
 
 def recent_quarters(symbol: str, limit: int = 4) -> list[tuple[int, int]]:
@@ -70,69 +115,6 @@ def recent_quarters(symbol: str, limit: int = 4) -> list[tuple[int, int]]:
     return targets[:limit]
 
 
-def _extract_fmp_content(payload: Any) -> Tuple[Optional[str], Optional[str]]:
-    if not isinstance(payload, list) or not payload:
-        return None, None
-
-    first = payload[0]
-    if isinstance(first, list) and len(first) >= 5:
-        # Legacy array shape: [symbol, quarter, date, ???, content]
-        date = str(first[2]) if len(first) > 2 else None
-        content = str(first[4])
-        return date, content
-
-    if isinstance(first, dict):
-        content = first.get("content") or first.get("transcript") or first.get("text")
-        date = first.get("date")
-        if isinstance(content, str) and content.strip():
-            return str(date) if date else None, content
-
-    return None, None
-
-
-def fetch_transcript_fmp(
-    symbol: str,
-    year: int,
-    quarter: int,
-    api_key: str,
-    timeout_seconds: int,
-) -> Optional[TranscriptRecord]:
-    if not api_key:
-        return None
-
-    url = "https://financialmodelingprep.com/api/v4/earning_call_transcript"
-    params = {
-        "symbol": symbol,
-        "year": year,
-        "quarter": quarter,
-        "apikey": api_key,
-    }
-
-    response = requests.get(url, params=params, timeout=timeout_seconds)
-    if response.status_code == 403:
-        raise PermissionError(
-            "FMP returned 403 for transcript endpoint. Your plan likely does not include earnings transcript access."
-        )
-    if response.status_code != 200:
-        raise RuntimeError(
-            f"FMP transcript request failed: HTTP {response.status_code} - {response.text[:200]}"
-        )
-
-    data = response.json()
-    date, content = _extract_fmp_content(data)
-    if not content:
-        return None
-
-    return TranscriptRecord(
-        symbol=symbol,
-        year=year,
-        quarter=quarter,
-        date=date,
-        content=content,
-        source="fmp",
-    )
-
-
 def fetch_transcript_alpha_vantage(
     symbol: str,
     year: int,
@@ -143,80 +125,117 @@ def fetch_transcript_alpha_vantage(
     if not api_key:
         return None
 
-    url = "https://www.alphavantage.co/query"
-    params = {
-        "function": "EARNINGS_CALL_TRANSCRIPT",
-        "symbol": symbol,
-        "quarter": f"{year}Q{quarter}",
-        "apikey": api_key,
-    }
+    payload = _alpha_get(
+        {
+            "function": "EARNINGS_CALL_TRANSCRIPT",
+            "symbol": symbol,
+            "quarter": f"{year}Q{quarter}",
+            "apikey": api_key,
+        },
+        timeout_seconds,
+    )
 
-    response = requests.get(url, params=params, timeout=timeout_seconds)
-    if response.status_code != 200:
-        raise RuntimeError(
-            f"Alpha Vantage transcript request failed: HTTP {response.status_code} - {response.text[:200]}"
-        )
+    transcript = payload.get("transcript") or payload.get("content")
+    if not isinstance(transcript, str) or not transcript.strip():
+        return None
 
-    data = response.json()
-    if isinstance(data, dict):
-        transcript = data.get("transcript") or data.get("content")
-        if isinstance(transcript, str) and transcript.strip():
-            return TranscriptRecord(
-                symbol=symbol,
-                year=year,
-                quarter=quarter,
-                date=data.get("callDate") or data.get("date"),
-                content=transcript,
-                source="alpha_vantage",
-            )
-
-    return None
+    return TranscriptRecord(
+        symbol=symbol,
+        year=year,
+        quarter=quarter,
+        date=payload.get("callDate") or payload.get("date"),
+        content=transcript,
+        source="alpha_vantage",
+    )
 
 
 def fetch_last_4_transcripts(symbol: str, settings: Settings) -> Tuple[list[TranscriptRecord], list[str]]:
     warnings: list[str] = []
     transcripts: list[TranscriptRecord] = []
-    forbidden_seen = False
+
+    if not settings.alpha_vantage_api_key:
+        return [], ["ALPHAVANTAGE_API_KEY is missing in .env"]
 
     for year, quarter in recent_quarters(symbol, limit=4):
-        record: Optional[TranscriptRecord] = None
-
         try:
-            record = fetch_transcript_fmp(
+            record = fetch_transcript_alpha_vantage(
                 symbol=symbol,
                 year=year,
                 quarter=quarter,
-                api_key=settings.fmp_api_key,
+                api_key=settings.alpha_vantage_api_key,
                 timeout_seconds=settings.request_timeout_seconds,
             )
-        except PermissionError as exc:
-            if not forbidden_seen:
-                warnings.append(str(exc))
-                forbidden_seen = True
+            if record is None:
+                warnings.append(f"No transcript for {symbol} {_quarter_label(year, quarter)}")
+                continue
+            transcripts.append(record)
         except Exception as exc:
-            warnings.append(f"FMP error for {symbol} {_quarter_label(year, quarter)}: {exc}")
-
-        if record is None:
-            try:
-                record = fetch_transcript_alpha_vantage(
-                    symbol=symbol,
-                    year=year,
-                    quarter=quarter,
-                    api_key=settings.alpha_vantage_api_key,
-                    timeout_seconds=settings.request_timeout_seconds,
-                )
-            except Exception as exc:
-                warnings.append(
-                    f"Alpha Vantage error for {symbol} {_quarter_label(year, quarter)}: {exc}"
-                )
-
-        if record is None:
-            warnings.append(f"No transcript for {symbol} {_quarter_label(year, quarter)}")
-            continue
-
-        transcripts.append(record)
+            warnings.append(f"Alpha Vantage transcript error for {symbol} {_quarter_label(year, quarter)}: {exc}")
 
     return transcripts, warnings
+
+
+def _parse_news_score(raw: Any) -> float:
+    try:
+        return float(raw)
+    except Exception:
+        return 0.0
+
+
+def fetch_news_alpha_vantage(symbol: str, settings: Settings, limit: int = 12) -> Tuple[list[NewsRecord], list[str]]:
+    warnings: list[str] = []
+
+    if not settings.alpha_vantage_api_key:
+        return [], ["ALPHAVANTAGE_API_KEY is missing in .env"]
+
+    try:
+        payload = _alpha_get(
+            {
+                "function": "NEWS_SENTIMENT",
+                "tickers": symbol,
+                "sort": "LATEST",
+                "limit": str(limit),
+                "apikey": settings.alpha_vantage_api_key,
+            },
+            settings.request_timeout_seconds,
+        )
+    except Exception as exc:
+        return [], [f"Alpha Vantage news error for {symbol}: {exc}"]
+
+    feed = payload.get("feed")
+    if not isinstance(feed, list):
+        return [], [f"No Alpha Vantage news feed available for {symbol}"]
+
+    results: list[NewsRecord] = []
+    for item in feed[:limit]:
+        if not isinstance(item, dict):
+            continue
+
+        title = str(item.get("title") or "Untitled")
+        summary = str(item.get("summary") or "")
+        url = str(item.get("url") or "")
+        if not url:
+            continue
+
+        score = _parse_news_score(item.get("overall_sentiment_score"))
+        label = str(item.get("overall_sentiment_label") or "neutral")
+
+        results.append(
+            NewsRecord(
+                title=title,
+                summary=summary,
+                url=url,
+                source=item.get("source"),
+                time_published=item.get("time_published"),
+                sentiment_score=score,
+                sentiment_label=label,
+            )
+        )
+
+    if not results:
+        warnings.append(f"No Alpha Vantage news items returned for {symbol}")
+
+    return results, warnings
 
 
 def _find_series_row(

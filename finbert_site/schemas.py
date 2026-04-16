@@ -63,10 +63,30 @@ class AggregateScores(BaseModel):
     ]
 
 
+class NewsArticle(BaseModel):
+    title: str
+    summary: str
+    url: str
+    source: Optional[str] = None
+    time_published: Optional[str] = None
+    sentiment_score: float
+    sentiment_label: str
+
+
+class NewsSummary(BaseModel):
+    article_count: int
+    avg_sentiment_score: float
+    sentiment_label: str
+
+
 class AnalysisResponse(BaseModel):
     ticker: str
     transcripts_found: int
+    overall_sentiment_score: float
+    overall_sentiment_label: str
     warnings: list[str]
     aggregate_scores: AggregateScores
     fundamentals: FundamentalsSummary
+    news_summary: NewsSummary
+    news: list[NewsArticle]
     transcripts: list[TranscriptResult]
