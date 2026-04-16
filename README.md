@@ -1,26 +1,49 @@
-# FinBERT Earnings + News Analyzer (Local)
+# FinBERT Multi-Agent Signal Board (Local)
 
-A local web app that takes a stock ticker, pulls the latest 4 quarterly earnings call transcripts from Alpha Vantage, fetches recent Alpha Vantage news, runs FinBERT sentiment locally, and scores:
+A local FastAPI app that keeps **FinBERT** as the sentiment engine, but now uses a
+TradingAgents-style decision flow:
 
-- Company Strength
-- Outlook
-- Management Confidence
-- Evasiveness / hedging behavior
+1. Analyst ingestion (`fundamentals`, `news`, `social`, `transcripts`)
+2. Bull vs bear researcher synthesis
+3. Trader proposal
+4. Risk management team views
+5. Manager execution decision
 
-It also pulls fundamentals and EPS to compare narrative vs. numbers, then returns an overall sentiment score and label.
+The UI now follows a pipeline board format and uses the imported Modrinth design-language token set (color, spacing, radii, and shadow system).
 
-## Can this run on a 24GB Mac?
+## What Changed
 
-Yes. `ProsusAI/finbert` runs locally on CPU or Apple Silicon (`mps`) for this workload. First-run model download may take a few minutes.
+- FinBERT sentiment now scores:
+  - Earnings transcripts
+  - News headlines/summaries
+  - Social posts (Reddit)
+- New API response stages:
+  - `analyst_team`
+  - `research_team`
+  - `trader_plan`
+  - `risk_management`
+  - `manager_decision`
+  - `workflow`
+- Existing evidence surfaces are preserved:
+  - fundamentals snapshots + chart
+  - news/social feed cards
+  - transcript signal/quotes drilldown
+
+## Can This Run on a 24GB M4 Mac?
+
+Yes. This workload is realistic on Apple Silicon with local PyTorch (`mps`) for FinBERT inference.
+The current model default is `ProsusAI/finbert`.
 
 ## Project Structure
 
-- `finbert_site/main.py` — FastAPI app + endpoints
-- `finbert_site/providers.py` — Alpha Vantage transcript/news + fundamentals data providers
-- `finbert_site/finbert_model.py` — local FinBERT chunked inference
-- `finbert_site/analysis.py` — Week 1 scoring logic and aggregation
-- `templates/index.html` — dashboard page
-- `static/style.css` — UI styles
+- `finbert_site/main.py` — FastAPI entrypoint + endpoints
+- `finbert_site/providers.py` — Alpha Vantage + Yahoo Finance + Reddit data providers
+- `finbert_site/finbert_model.py` — local FinBERT wrapper
+- `finbert_site/analysis.py` — multi-stage scoring and synthesis pipeline
+- `finbert_site/schemas.py` — API contracts for analyst/research/trader/risk/manager stages
+- `templates/index.html` — pipeline board UI
+- `static/style.css` — Modrinth token-based styling
+- `docs/phased_implementation_plan.md` — migration plan and phase tracking
 
 ## Setup
 
@@ -49,31 +72,10 @@ uvicorn finbert_site.main:app --reload
 
 ## API Keys
 
-- `ALPHAVANTAGE_API_KEY`: required for transcripts and news
+- `ALPHAVANTAGE_API_KEY`: required for transcripts and Alpha Vantage news.
 
-If transcripts are unavailable for a quarter, the app will still show news cards and overall sentiment when possible.
-
-## Notes on your original Colab snippet
-
-Your Colab baseline was ported into local modules and extended:
-
-- keeps chunked FinBERT analysis of long transcripts
-- robust transcript response parsing
-- supports last-4-quarter workflow from Alpha Vantage
-- adds news-card grid and news sentiment summary
-- adds fundamentals/EPS comparison layer
-- includes a local dashboard and API endpoint
-
-## Week 1 alignment
-
-The scoring logic follows your Week 1 deliverable categories:
-
-- sentiment in financial context (not generic tone)
-- forward-looking language emphasis for outlook
-- hedging/evasiveness detection in Q&A sections
-- confidence based on specificity vs. hedging
-- traceable quotes and signal lists
+Social feed currently uses Reddit search and does not require an additional key.
 
 ## Caveat
 
-This is an analyst-support tool, not trading advice. It is intentionally conservative and designed for `Augment & Verify` oversight.
+This is an analyst-support tool, not trading advice. It is designed for `Augment & Verify` human oversight.

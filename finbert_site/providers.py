@@ -38,6 +38,16 @@ class NewsRecord:
     sentiment_label: str
 
 
+@dataclass
+class SocialRecord:
+    source: str
+    title: str
+    body: str
+    url: str
+    subreddit: Optional[str]
+    created_utc: Optional[int]
+
+
 def _quarter_from_month(month: int) -> int:
     return ((month - 1) // 3) + 1
 
@@ -236,6 +246,62 @@ def fetch_news_alpha_vantage(symbol: str, settings: Settings, limit: int = 12) -
         warnings.append(f"No Alpha Vantage news items returned for {symbol}")
 
     return results, warnings
+
+
+def fetch_social_reddit(symbol: str, settings: Settings, limit: int = 12) -> Tuple[list[SocialRecord], list[str]]:
+    warnings: list[str] = []
+    query = f"${symbol} OR {symbol} stock"
+    endpoint = "https://www.reddit.com/search.json"
+
+    try:
+        response = requests.get(
+            endpoint,
+            params={
+                "q": query,
+                "sort": "new",
+                "limit": str(limit),
+                "type": "link",
+                "t": "week",
+            },
+            headers={"User-Agent": "finbert-local-analyzer/0.2"},
+            timeout=settings.request_timeout_seconds,
+        )
+        if response.status_code != 200:
+            return [], [f"Reddit social feed error for {symbol}: HTTP {response.status_code}"]
+
+        payload = response.json()
+        data = payload.get("data", {})
+        children = data.get("children", [])
+        if not isinstance(children, list):
+            return [], [f"No Reddit social posts available for {symbol}"]
+
+        records: list[SocialRecord] = []
+        for child in children:
+            post = child.get("data", {}) if isinstance(child, dict) else {}
+            title = str(post.get("title") or "").strip()
+            body = str(post.get("selftext") or "").strip()
+            permalink = str(post.get("permalink") or "").strip()
+            if not title:
+                continue
+
+            url = f"https://www.reddit.com{permalink}" if permalink else "https://www.reddit.com"
+            records.append(
+                SocialRecord(
+                    source="reddit",
+                    title=title,
+                    body=body,
+                    url=url,
+                    subreddit=str(post.get("subreddit") or "") or None,
+                    created_utc=int(post.get("created_utc")) if post.get("created_utc") else None,
+                )
+            )
+
+        if not records:
+            warnings.append(f"No Reddit posts found for {symbol} in the recent window.")
+
+        return records[:limit], warnings
+    except Exception as exc:
+        return [], [f"Reddit social feed error for {symbol}: {exc}"]
 
 
 def _find_series_row(

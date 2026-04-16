@@ -79,6 +79,71 @@ class NewsSummary(BaseModel):
     sentiment_label: str
 
 
+class SocialPost(BaseModel):
+    source: str
+    title: str
+    body: str
+    url: str
+    subreddit: Optional[str] = None
+    created_utc: Optional[int] = None
+    sentiment_score: float
+    sentiment_label: str
+
+
+class SocialSummary(BaseModel):
+    post_count: int
+    avg_sentiment_score: float
+    sentiment_label: str
+
+
+class AnalystSignal(BaseModel):
+    name: Literal["transcript", "fundamentals", "news", "social"]
+    stance: Literal["bullish", "bearish", "mixed"]
+    signal_score: float = Field(ge=-1, le=1)
+    confidence_score: float = Field(ge=0, le=100)
+    key_points: list[str]
+    evidence: list[str]
+
+
+class ResearchDebate(BaseModel):
+    bullish_points: list[str]
+    bearish_points: list[str]
+    discussion_summary: str
+    buy_evidence_score: float = Field(ge=0, le=100)
+    sell_evidence_score: float = Field(ge=0, le=100)
+
+
+class TraderProposal(BaseModel):
+    action: Literal["buy", "sell", "hold"]
+    conviction_score: float = Field(ge=0, le=100)
+    thesis: str
+    horizon: str
+
+
+class RiskView(BaseModel):
+    profile: Literal["aggressive", "neutral", "conservative"]
+    recommendation: str
+    max_position_pct: float = Field(ge=0, le=100)
+
+
+class RiskManagementSummary(BaseModel):
+    views: list[RiskView]
+    consensus: str
+
+
+class ManagerDecision(BaseModel):
+    action: Literal["approve_buy", "approve_sell", "hold"]
+    rationale: list[str]
+    execution_plan: list[str]
+
+
+class WorkflowStage(BaseModel):
+    key: str
+    title: str
+    status: Literal["completed", "partial", "skipped"]
+    detail: str
+
+
 class AnalysisResponse(BaseModel):
     ticker: str
     transcripts_found: int
@@ -88,5 +153,13 @@ class AnalysisResponse(BaseModel):
     aggregate_scores: AggregateScores
     fundamentals: FundamentalsSummary
     news_summary: NewsSummary
+    social_summary: SocialSummary
+    analyst_team: list[AnalystSignal]
+    research_team: ResearchDebate
+    trader_plan: TraderProposal
+    risk_management: RiskManagementSummary
+    manager_decision: ManagerDecision
+    workflow: list[WorkflowStage]
     news: list[NewsArticle]
+    social: list[SocialPost]
     transcripts: list[TranscriptResult]

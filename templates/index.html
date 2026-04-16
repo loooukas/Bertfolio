@@ -3,17 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FinBERT Earnings Analyzer</title>
+    <title>FinBERT Multi-Agent Signal Board</title>
     <link rel="stylesheet" href="/static/style.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body>
-    <main class="shell">
-      <header class="hero">
-        <h1>FinBERT Earnings + News Analyzer</h1>
+    <main class="app-shell">
+      <header class="hero-card">
+        <p class="eyebrow">FinBERT-Centered Trading Intelligence</p>
+        <h1>Multi-Agent Signal Board</h1>
         <p>
-          Alpha Vantage transcript + news ingestion with local FinBERT analysis for company strength, outlook,
-          confidence, evasiveness, and overall ticker sentiment.
+          Fundamentals, news, social media, and earnings transcripts are analyzed with local FinBERT sentiment,
+          then synthesized through a researcher-trader-risk-manager decision flow.
         </p>
       </header>
 
@@ -21,24 +22,92 @@
         <label for="ticker">Ticker</label>
         <div class="query-row">
           <input id="ticker" type="text" value="AAPL" maxlength="12" />
-          <button id="analyze-btn">Analyze</button>
+          <button id="analyze-btn">Run Analysis</button>
         </div>
-        <p class="small">Requires `ALPHAVANTAGE_API_KEY` in your local `.env` file.</p>
+        <p class="small">Requires <code>ALPHAVANTAGE_API_KEY</code> in your local <code>.env</code>. Social feed uses Reddit.</p>
       </section>
 
       <section id="status" class="status"></section>
 
-      <section id="aggregate" class="grid grid-metrics hidden"></section>
+      <section id="workflow-rail" class="workflow-rail hidden"></section>
 
-      <section class="panel hidden" id="news-panel">
-        <h2>Latest News</h2>
-        <div class="fundamentals-meta" id="news-meta"></div>
-        <div class="news-grid" id="news-grid"></div>
+      <section class="board-grid hidden" id="board-grid">
+        <article class="board-card source-column">
+          <h2>Analyst Ingestion</h2>
+          <div id="source-cards" class="source-cards"></div>
+        </article>
+
+        <article class="board-card research-column">
+          <h2>Research Team</h2>
+          <div class="debate-grid">
+            <section class="debate-card bullish">
+              <h3>Bullish Evidence</h3>
+              <p id="buy-score" class="score-pill"></p>
+              <ul id="bull-list"></ul>
+            </section>
+            <section class="debate-card bearish">
+              <h3>Bearish Evidence</h3>
+              <p id="sell-score" class="score-pill"></p>
+              <ul id="bear-list"></ul>
+            </section>
+          </div>
+          <p id="discussion-summary" class="discussion-summary"></p>
+        </article>
+
+        <article class="board-card decision-column">
+          <h2>Decision Flow</h2>
+
+          <section class="decision-block trader">
+            <h3>Trader Proposal</h3>
+            <div id="trader-metrics" class="metric-row"></div>
+            <p id="trader-thesis"></p>
+          </section>
+
+          <section class="decision-block risk">
+            <h3>Risk Management Team</h3>
+            <p id="risk-consensus" class="small"></p>
+            <div id="risk-views" class="risk-views"></div>
+          </section>
+
+          <section class="decision-block manager">
+            <h3>Manager Decision</h3>
+            <p id="manager-action" class="manager-action"></p>
+            <ul id="manager-rationale"></ul>
+            <h4>Execution Plan</h4>
+            <ol id="execution-plan"></ol>
+          </section>
+        </article>
+      </section>
+
+      <section class="panel hidden" id="aggregate-panel">
+        <h2>Core Scores</h2>
+        <div id="aggregate" class="metric-grid"></div>
+      </section>
+
+      <section class="panel hidden" id="analyst-panel">
+        <h2>Analyst Team Reports</h2>
+        <div id="analyst-cards" class="analyst-grid"></div>
+      </section>
+
+      <section class="panel hidden" id="feeds-panel">
+        <h2>News + Social Feed</h2>
+        <div class="feed-columns">
+          <div>
+            <h3>News</h3>
+            <div id="news-meta" class="meta-row"></div>
+            <div id="news-grid" class="feed-grid"></div>
+          </div>
+          <div>
+            <h3>Social</h3>
+            <div id="social-meta" class="meta-row"></div>
+            <div id="social-grid" class="feed-grid"></div>
+          </div>
+        </div>
       </section>
 
       <section class="panel hidden" id="fundamentals-panel">
-        <h2>Fundamentals vs Transcript Signal</h2>
-        <div class="fundamentals-meta" id="fundamentals-meta"></div>
+        <h2>Fundamentals</h2>
+        <div class="meta-row" id="fundamentals-meta"></div>
         <canvas id="fundamentals-chart"></canvas>
         <div class="table-wrap">
           <table id="fundamentals-table">
@@ -57,24 +126,44 @@
       </section>
 
       <section class="panel hidden" id="transcripts-panel">
-        <h2>Quarter-by-Quarter Call Analysis</h2>
+        <h2>Transcript Drilldown</h2>
         <div id="transcripts"></div>
       </section>
     </main>
 
     <script>
       const statusEl = document.getElementById("status");
+      const workflowRail = document.getElementById("workflow-rail");
+      const boardGrid = document.getElementById("board-grid");
+      const aggregatePanel = document.getElementById("aggregate-panel");
       const aggregateEl = document.getElementById("aggregate");
-      const analyzeBtn = document.getElementById("analyze-btn");
-      const tickerInput = document.getElementById("ticker");
-      const fundamentalsPanel = document.getElementById("fundamentals-panel");
-      const transcriptsPanel = document.getElementById("transcripts-panel");
-      const newsPanel = document.getElementById("news-panel");
+      const analystPanel = document.getElementById("analyst-panel");
+      const analystCards = document.getElementById("analyst-cards");
+      const feedsPanel = document.getElementById("feeds-panel");
       const newsMeta = document.getElementById("news-meta");
+      const socialMeta = document.getElementById("social-meta");
       const newsGrid = document.getElementById("news-grid");
+      const socialGrid = document.getElementById("social-grid");
+      const sourceCards = document.getElementById("source-cards");
+      const bullList = document.getElementById("bull-list");
+      const bearList = document.getElementById("bear-list");
+      const buyScore = document.getElementById("buy-score");
+      const sellScore = document.getElementById("sell-score");
+      const discussionSummary = document.getElementById("discussion-summary");
+      const traderMetrics = document.getElementById("trader-metrics");
+      const traderThesis = document.getElementById("trader-thesis");
+      const riskConsensus = document.getElementById("risk-consensus");
+      const riskViews = document.getElementById("risk-views");
+      const managerAction = document.getElementById("manager-action");
+      const managerRationale = document.getElementById("manager-rationale");
+      const executionPlan = document.getElementById("execution-plan");
+      const fundamentalsPanel = document.getElementById("fundamentals-panel");
       const fundamentalsMeta = document.getElementById("fundamentals-meta");
       const fundamentalsTableBody = document.querySelector("#fundamentals-table tbody");
+      const transcriptsPanel = document.getElementById("transcripts-panel");
       const transcriptsEl = document.getElementById("transcripts");
+      const analyzeBtn = document.getElementById("analyze-btn");
+      const tickerInput = document.getElementById("ticker");
       let fundamentalsChart;
 
       function fmtNumber(value) {
@@ -84,84 +173,175 @@
 
       function fmtCurrency(value) {
         if (value === null || value === undefined) return "-";
-        return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(
-          value
-        );
+        return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
       }
 
-      function card(label, value) {
-        return `<article class="metric"><h3>${label}</h3><strong>${value}</strong></article>`;
+      function meter(label, value, tone = "neutral") {
+        return `<span class="chip ${tone}">${label}: ${value}</span>`;
       }
 
-      function pill(kind, text) {
-        return `<span class="pill ${kind}">${text}</span>`;
-      }
-
-      function sentimentKind(label) {
-        if (!label) return "neutral";
-        const lowered = label.toLowerCase();
-        if (lowered.includes("bull")) return "bull";
-        if (lowered.includes("bear")) return "warn";
+      function toneFromScore(score) {
+        if (score > 0.1) return "bull";
+        if (score < -0.1) return "bear";
         return "neutral";
+      }
+
+      function card(label, value, tone = "neutral") {
+        return `<article class="metric-card ${tone}"><p>${label}</p><strong>${value}</strong></article>`;
+      }
+
+      function listMarkup(items) {
+        if (!items || !items.length) return "<li>-</li>";
+        return items.map((item) => `<li>${item}</li>`).join("");
+      }
+
+      function renderWorkflow(data) {
+        workflowRail.innerHTML = data.workflow
+          .map(
+            (step) =>
+              `<article class="stage ${step.status}"><p>${step.title}</p><span>${step.detail}</span></article>`
+          )
+          .join("");
+        workflowRail.classList.remove("hidden");
+      }
+
+      function renderBoard(data) {
+        sourceCards.innerHTML = [
+          card("Transcripts", data.transcripts_found, "neutral"),
+          card("News", data.news_summary.article_count, toneFromScore(data.news_summary.avg_sentiment_score)),
+          card("Social", data.social_summary.post_count, toneFromScore(data.social_summary.avg_sentiment_score)),
+          card("Fundamentals QoQ", `${fmtNumber(data.fundamentals.revenue_qoq_growth_pct)}% / ${fmtNumber(data.fundamentals.eps_qoq_growth_pct)}%`, toneFromScore(data.analyst_team.find((a) => a.name === "fundamentals")?.signal_score || 0)),
+        ].join("");
+
+        buyScore.textContent = `Buy Evidence: ${fmtNumber(data.research_team.buy_evidence_score)}`;
+        sellScore.textContent = `Sell Evidence: ${fmtNumber(data.research_team.sell_evidence_score)}`;
+        bullList.innerHTML = listMarkup(data.research_team.bullish_points);
+        bearList.innerHTML = listMarkup(data.research_team.bearish_points);
+        discussionSummary.textContent = data.research_team.discussion_summary;
+
+        traderMetrics.innerHTML = [
+          meter("Action", data.trader_plan.action.toUpperCase(), toneFromScore(data.overall_sentiment_score)),
+          meter("Conviction", fmtNumber(data.trader_plan.conviction_score), "neutral"),
+          meter("Horizon", data.trader_plan.horizon, "neutral"),
+        ].join("");
+        traderThesis.textContent = data.trader_plan.thesis;
+
+        riskConsensus.textContent = data.risk_management.consensus;
+        riskViews.innerHTML = data.risk_management.views
+          .map(
+            (view) =>
+              `<article class="risk-card"><h4>${view.profile}</h4><p>${view.recommendation}</p><span>Max position: ${fmtNumber(view.max_position_pct)}%</span></article>`
+          )
+          .join("");
+
+        managerAction.textContent = `Decision: ${data.manager_decision.action.replaceAll("_", " ").toUpperCase()}`;
+        managerRationale.innerHTML = listMarkup(data.manager_decision.rationale);
+        executionPlan.innerHTML = data.manager_decision.execution_plan
+          .map((item) => `<li>${item}</li>`)
+          .join("");
+
+        boardGrid.classList.remove("hidden");
       }
 
       function renderAggregate(data) {
         const a = data.aggregate_scores;
         aggregateEl.innerHTML = [
-          card("Overall Sentiment", `${data.overall_sentiment_label} (${data.overall_sentiment_score})`),
-          card("Company Strength", `${a.company_strength_score}`),
-          card("Outlook", `${a.outlook_score}`),
-          card("Confidence", `${a.confidence_score}`),
-          card("Evasiveness", `${a.evasiveness_score}`),
+          card("Overall", `${data.overall_sentiment_label} (${data.overall_sentiment_score})`, toneFromScore(data.overall_sentiment_score)),
+          card("Company Strength", fmtNumber(a.company_strength_score)),
+          card("Outlook", fmtNumber(a.outlook_score)),
+          card("Confidence", fmtNumber(a.confidence_score)),
+          card("Evasiveness", fmtNumber(a.evasiveness_score)),
         ].join("");
-        aggregateEl.classList.remove("hidden");
+        aggregatePanel.classList.remove("hidden");
       }
 
-      function renderNews(data) {
-        const summary = data.news_summary;
+      function renderAnalysts(data) {
+        analystCards.innerHTML = data.analyst_team
+          .map((report) => {
+            const tone = toneFromScore(report.signal_score);
+            return `
+              <article class="analyst-card ${tone}">
+                <header>
+                  <h3>${report.name.toUpperCase()} Analyst</h3>
+                  <div class="meta-row">
+                    ${meter("Stance", report.stance.toUpperCase(), tone)}
+                    ${meter("Signal", fmtNumber(report.signal_score), tone)}
+                    ${meter("Confidence", fmtNumber(report.confidence_score), "neutral")}
+                  </div>
+                </header>
+                <section>
+                  <h4>Key Points</h4>
+                  <ul>${listMarkup(report.key_points)}</ul>
+                </section>
+                <section>
+                  <h4>Evidence</h4>
+                  <ul>${listMarkup(report.evidence)}</ul>
+                </section>
+              </article>
+            `;
+          })
+          .join("");
+        analystPanel.classList.remove("hidden");
+      }
+
+      function renderFeeds(data) {
         newsMeta.innerHTML = [
-          `<div>${pill(sentimentKind(summary.sentiment_label), `News Sentiment: ${summary.sentiment_label}`)}</div>`,
-          `<div>${pill("neutral", `Avg News Score: ${summary.avg_sentiment_score}`)}</div>`,
-          `<div>${pill("neutral", `Articles: ${summary.article_count}`)}</div>`,
+          meter("Articles", data.news_summary.article_count),
+          meter("Avg Score", fmtNumber(data.news_summary.avg_sentiment_score), toneFromScore(data.news_summary.avg_sentiment_score)),
+          meter("Label", data.news_summary.sentiment_label.toUpperCase(), toneFromScore(data.news_summary.avg_sentiment_score)),
         ].join("");
 
-        newsGrid.innerHTML = "";
-        if (!data.news.length) {
-          newsGrid.innerHTML = `<p class="small">No recent Alpha Vantage news returned for this ticker.</p>`;
-          newsPanel.classList.remove("hidden");
-          return;
-        }
+        socialMeta.innerHTML = [
+          meter("Posts", data.social_summary.post_count),
+          meter("Avg Score", fmtNumber(data.social_summary.avg_sentiment_score), toneFromScore(data.social_summary.avg_sentiment_score)),
+          meter("Label", data.social_summary.sentiment_label.toUpperCase(), toneFromScore(data.social_summary.avg_sentiment_score)),
+        ].join("");
 
-        data.news.forEach((item) => {
-          const cardEl = document.createElement("article");
-          cardEl.className = "news-card";
-          cardEl.innerHTML = `
-            <header>
-              ${pill(sentimentKind(item.sentiment_label), item.sentiment_label)}
-              <span class="news-source">${item.source || "Unknown source"}</span>
-            </header>
-            <h3><a href="${item.url}" target="_blank" rel="noopener noreferrer">${item.title}</a></h3>
-            <p>${item.summary || "No summary provided."}</p>
-            <footer>
-              <span>Score: ${fmtNumber(item.sentiment_score)}</span>
-              <span>${item.time_published || ""}</span>
-            </footer>
-          `;
-          newsGrid.appendChild(cardEl);
-        });
+        newsGrid.innerHTML = data.news.length
+          ? data.news
+              .map(
+                (item) => `
+              <article class="feed-card">
+                <header>
+                  ${meter(item.sentiment_label.toUpperCase(), fmtNumber(item.sentiment_score), toneFromScore(item.sentiment_score))}
+                </header>
+                <h4><a href="${item.url}" target="_blank" rel="noopener noreferrer">${item.title}</a></h4>
+                <p>${item.summary || "No summary provided."}</p>
+                <footer>${item.source || "Unknown source"}</footer>
+              </article>
+            `
+              )
+              .join("")
+          : "<p class='small'>No news records available.</p>";
 
-        newsPanel.classList.remove("hidden");
+        socialGrid.innerHTML = data.social.length
+          ? data.social
+              .map(
+                (item) => `
+              <article class="feed-card">
+                <header>
+                  ${meter(item.sentiment_label.toUpperCase(), fmtNumber(item.sentiment_score), toneFromScore(item.sentiment_score))}
+                </header>
+                <h4><a href="${item.url}" target="_blank" rel="noopener noreferrer">${item.title}</a></h4>
+                <p>${item.body || "No body text captured."}</p>
+                <footer>${item.source}${item.subreddit ? ` · r/${item.subreddit}` : ""}</footer>
+              </article>
+            `
+              )
+              .join("")
+          : "<p class='small'>No social records available.</p>";
+
+        feedsPanel.classList.remove("hidden");
       }
 
       function renderFundamentals(data) {
         const f = data.fundamentals;
         fundamentalsMeta.innerHTML = [
-          `<div>${pill(sentimentKind(data.aggregate_scores.sentiment_label), `Transcript Sentiment: ${data.aggregate_scores.sentiment_label}`)}</div>`,
-          `<div>${pill("bull", `Market Cap: ${fmtCurrency(f.market_cap)}`)}</div>`,
-          `<div>${pill("neutral", `Trailing PE: ${fmtNumber(f.trailing_pe)}`)}</div>`,
-          `<div>${pill("neutral", `Forward PE: ${fmtNumber(f.forward_pe)}`)}</div>`,
-          `<div>${pill("neutral", `Revenue QoQ: ${fmtNumber(f.revenue_qoq_growth_pct)}%`)}</div>`,
-          `<div>${pill("neutral", `EPS QoQ: ${fmtNumber(f.eps_qoq_growth_pct)}%`)}</div>`,
+          meter("Market Cap", fmtCurrency(f.market_cap)),
+          meter("Trailing PE", fmtNumber(f.trailing_pe)),
+          meter("Forward PE", fmtNumber(f.forward_pe)),
+          meter("Revenue QoQ", `${fmtNumber(f.revenue_qoq_growth_pct)}%`),
+          meter("EPS QoQ", `${fmtNumber(f.eps_qoq_growth_pct)}%`),
         ].join("");
 
         fundamentalsTableBody.innerHTML = "";
@@ -190,15 +370,17 @@
               {
                 label: "Revenue",
                 data: revenue,
-                backgroundColor: "rgba(10, 111, 246, 0.45)",
+                backgroundColor: "rgba(73, 122, 255, 0.55)",
+                borderRadius: 6,
                 yAxisID: "y",
               },
               {
                 label: "Reported EPS",
                 data: eps,
                 type: "line",
-                borderColor: "#159f76",
-                backgroundColor: "#159f76",
+                borderColor: "#169c67",
+                backgroundColor: "#169c67",
+                tension: 0.25,
                 yAxisID: "y1",
               },
             ],
@@ -206,7 +388,7 @@
           options: {
             responsive: true,
             scales: {
-              y: { position: "left", grid: { color: "rgba(255,255,255,0.08)" } },
+              y: { position: "left", grid: { color: "rgba(10, 24, 58, 0.08)" } },
               y1: { position: "right", grid: { drawOnChartArea: false } },
             },
           },
@@ -217,67 +399,59 @@
 
       function renderTranscripts(data) {
         transcriptsEl.innerHTML = "";
-
         if (!data.transcripts.length) {
-          transcriptsEl.innerHTML = `<p class="small">No recent earnings transcripts were returned by Alpha Vantage for this ticker.</p>`;
+          transcriptsEl.innerHTML = "<p class='small'>No transcripts available for this ticker.</p>";
           transcriptsPanel.classList.remove("hidden");
           return;
         }
 
         data.transcripts.forEach((item) => {
-          const block = document.createElement("article");
-          block.className = "transcript";
-
-          const bullish = item.bullish_signals
-            .slice(0, 3)
-            .map((s) => `<li>${s}</li>`)
-            .join("");
-          const bearish = item.bearish_signals
-            .slice(0, 3)
-            .map((s) => `<li>${s}</li>`)
-            .join("");
-          const evasive = item.evasive_signals
-            .slice(0, 3)
-            .map((s) => `<li>${s}</li>`)
-            .join("");
-          const quotes = item.decision_relevant_quotes
-            .slice(0, 4)
-            .map((s) => `<li>${s}</li>`)
-            .join("");
-
-          block.innerHTML = `
+          const cardEl = document.createElement("article");
+          cardEl.className = "transcript-card";
+          cardEl.innerHTML = `
             <header>
-              <h3>${item.year} Q${item.quarter} (${item.source})</h3>
-              <div class="row">
-                ${pill(sentimentKind(item.sentiment.label), `Sentiment: ${item.sentiment.label}`)}
-                ${pill("neutral", `Confidence: ${item.confidence_score}`)}
-                ${pill("neutral", `Outlook: ${item.outlook_score}`)}
-                ${pill("warn", `Evasiveness: ${item.evasiveness_score}`)}
+              <h3>${item.year} Q${item.quarter} · ${item.source}</h3>
+              <div class="meta-row">
+                ${meter("Sentiment", item.sentiment.label.toUpperCase(), toneFromScore(item.sentiment.directional_score))}
+                ${meter("Directional", fmtNumber(item.sentiment.directional_score), toneFromScore(item.sentiment.directional_score))}
+                ${meter("Confidence", fmtNumber(item.confidence_score))}
+                ${meter("Outlook", fmtNumber(item.outlook_score))}
+                ${meter("Evasiveness", fmtNumber(item.evasiveness_score), "bear")}
               </div>
             </header>
-            <div class="split">
+            <div class="split-grid">
               <section>
                 <h4>Bullish Signals</h4>
-                <ul>${bullish || "<li>-</li>"}</ul>
+                <ul>${listMarkup(item.bullish_signals.slice(0, 4))}</ul>
               </section>
               <section>
                 <h4>Bearish Signals</h4>
-                <ul>${bearish || "<li>-</li>"}</ul>
+                <ul>${listMarkup(item.bearish_signals.slice(0, 4))}</ul>
               </section>
             </div>
             <section>
-              <h4>Evasive / Hedging Signals</h4>
-              <ul>${evasive || "<li>-</li>"}</ul>
+              <h4>Evasive Signals</h4>
+              <ul>${listMarkup(item.evasive_signals.slice(0, 4))}</ul>
             </section>
             <section>
               <h4>Decision-Relevant Quotes</h4>
-              <ul>${quotes || "<li>-</li>"}</ul>
+              <ul>${listMarkup(item.decision_relevant_quotes.slice(0, 4))}</ul>
             </section>
           `;
-
-          transcriptsEl.appendChild(block);
+          transcriptsEl.appendChild(cardEl);
         });
+
         transcriptsPanel.classList.remove("hidden");
+      }
+
+      function renderAll(data) {
+        renderWorkflow(data);
+        renderBoard(data);
+        renderAggregate(data);
+        renderAnalysts(data);
+        renderFeeds(data);
+        renderFundamentals(data);
+        renderTranscripts(data);
       }
 
       async function runAnalysis() {
@@ -287,27 +461,21 @@
           return;
         }
 
-        statusEl.textContent = `Analyzing ${ticker}...`;
-        statusEl.className = "status";
         analyzeBtn.disabled = true;
+        statusEl.textContent = `Running pipeline for ${ticker}...`;
+        statusEl.className = "status";
 
         try {
           const response = await fetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}`);
           const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || "Failed to analyze ticker.");
 
-          if (!response.ok) {
-            throw new Error(payload.detail || "Failed to analyze ticker.");
-          }
-
-          renderAggregate(payload);
-          renderNews(payload);
-          renderFundamentals(payload);
-          renderTranscripts(payload);
+          renderAll(payload);
 
           const warningText = payload.warnings?.length
-            ? ` Completed with warnings: ${payload.warnings.join(" | ")}`
-            : " Completed successfully.";
-          statusEl.textContent = `${ticker}: ${payload.transcripts_found} transcript(s), ${payload.news_summary.article_count} news article(s).${warningText}`;
+            ? ` Warnings: ${payload.warnings.join(" | ")}`
+            : "";
+          statusEl.textContent = `${ticker} completed. Overall ${payload.overall_sentiment_label} (${payload.overall_sentiment_score}).${warningText}`;
           statusEl.className = "status ok";
         } catch (err) {
           statusEl.textContent = `Error: ${err.message}`;
