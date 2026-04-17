@@ -3,146 +3,132 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FinBERT Report Desk</title>
+    <title>FinBERT Earnings Signals</title>
     <link rel="stylesheet" href="/static/style.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   </head>
   <body>
-    <main class="layout-root">
-      <header class="top-shell">
-        <div class="title-wrap">
-          <p class="eyebrow">FinBERT-centered trading intelligence</p>
-          <h1>FinBERT Report Desk</h1>
-          <p class="subline">Deterministic analyst reports, compact flow, and data health diagnostics.</p>
+    <main class="app-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p id="hero-kicker" class="kicker">FINBERT EARNINGS SIGNALS</p>
+          <h1 id="hero-title">FinBERT Earnings Signals</h1>
+          <p id="hero-subtitle">
+            Transcript-first earnings intelligence with compact market context and auditability.
+          </p>
         </div>
 
         <section class="query-panel">
-          <label for="ticker">Ticker</label>
+          <label for="ticker" id="ticker-label">Ticker</label>
           <div class="query-row">
             <input id="ticker" type="text" value="AAPL" maxlength="12" />
             <button id="analyze-btn">Run Analysis</button>
           </div>
-          <p class="query-note">Alpha Vantage required for transcripts/news. Reddit feed is broad-ranked for relevance.</p>
+          <p id="query-note" class="query-note">
+            Primary transcript source: Motley Fool deterministic discovery and parsing.
+          </p>
         </section>
 
-        <section id="status" class="status-line"></section>
+        <p id="status" class="status-line"></p>
       </header>
 
-      <section id="analysis-layout" class="analysis-layout hidden">
+      <section id="workspace" class="workspace hidden">
         <aside class="left-rail">
-          <div class="rail-block">
-            <h2>Progress</h2>
-            <ul id="workflow-list" class="workflow-list"></ul>
-          </div>
-
-          <div class="rail-block">
-            <h2>Reports</h2>
-            <nav id="tab-nav" class="tab-nav"></nav>
-          </div>
+          <article class="rail-card" id="run-context"></article>
+          <nav class="rail-nav" id="section-nav"></nav>
         </aside>
 
-        <section class="workspace">
-          <div id="run-summary" class="run-summary"></div>
+        <section class="main-panel">
+          <section id="section-overview" class="section-pane active">
+            <article class="panel-card">
+              <h2 id="heading-overview">Overview</h2>
+              <p id="overview-summary" class="summary"></p>
+              <ul id="overview-takeaways" class="takeaways"></ul>
+              <div id="overview-metrics" class="metric-grid"></div>
+            </article>
 
-          <section id="tab-summary" class="tab-pane active">
-            <div class="report-shell">
-              <article class="report-card">
-                <h3>Summary</h3>
-                <div id="summary-report" class="markdown"></div>
-                <div id="summary-tables" class="structured-tables"></div>
-              </article>
-            </div>
-
-            <div class="chart-grid two">
-              <article class="chart-card">
-                <header>
-                  <h4>Price + Volume (3 months)</h4>
-                </header>
-                <canvas id="price-volume-chart"></canvas>
-                <p id="price-volume-empty" class="chart-empty">No price/volume data available.</p>
-              </article>
-
-              <article class="chart-card">
-                <header>
-                  <h4>Sentiment Timeline</h4>
-                </header>
-                <canvas id="sentiment-chart"></canvas>
-                <p id="sentiment-empty" class="chart-empty">No sentiment timeline data available.</p>
-              </article>
-            </div>
-          </section>
-
-          <section id="tab-analyst" class="tab-pane">
-            <article class="report-card">
-              <h3>Analyst Reports</h3>
-              <div id="analyst-report" class="markdown"></div>
-              <div id="analyst-tables" class="structured-tables"></div>
+            <article class="panel-card">
+              <h3 id="heading-speaker-profile">Speaker Confidence Profile</h3>
+              <canvas id="speaker-confidence-chart"></canvas>
+              <p id="speaker-chart-empty" class="empty-note">Not enough speaker diversity for a useful profile chart.</p>
             </article>
           </section>
 
-          <section id="tab-research" class="tab-pane">
-            <article class="report-card">
-              <h3>Research Debate</h3>
-              <div id="research-report" class="markdown"></div>
-              <div id="research-tables" class="structured-tables"></div>
+          <section id="section-transcript" class="section-pane">
+            <article class="panel-card">
+              <h2 id="heading-transcript">Transcript</h2>
+              <p id="transcript-availability" class="summary"></p>
+              <p id="transcript-summary" class="body-copy"></p>
+              <p id="transcript-prepared-qa" class="body-copy"></p>
+
+              <div class="split-grid">
+                <div>
+                  <h4 id="heading-quotes">Key Quotes</h4>
+                  <ul id="transcript-quotes" class="compact-list"></ul>
+                </div>
+                <div>
+                  <h4 id="heading-pressure">Q&A Pressure Points</h4>
+                  <ul id="transcript-pressure" class="compact-list"></ul>
+                </div>
+              </div>
+            </article>
+
+            <article class="panel-card">
+              <h3 id="heading-speaker-table">Speaker Block Analysis</h3>
+              <div class="table-wrap">
+                <table id="speaker-analysis-table">
+                  <thead>
+                    <tr>
+                      <th>Speaker</th>
+                      <th>Section</th>
+                      <th>Sentiment</th>
+                      <th>Confidence</th>
+                      <th>Evasiveness</th>
+                      <th>Specificity</th>
+                      <th>Topic</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
             </article>
           </section>
 
-          <section id="tab-trader" class="tab-pane">
-            <article class="report-card">
-              <h3>Trader Plan</h3>
-              <div id="trader-report" class="markdown"></div>
-              <div id="trader-tables" class="structured-tables"></div>
-            </article>
-          </section>
+          <section id="section-market_reaction" class="section-pane">
+            <article class="panel-card">
+              <h2 id="heading-market">Market Reaction</h2>
+              <p id="market-balance" class="summary"></p>
 
-          <section id="tab-risk_manager" class="tab-pane">
-            <article class="report-card">
-              <h3>Risk + Final Verdict</h3>
-              <div id="risk-report" class="markdown"></div>
-              <div id="risk-tables" class="structured-tables"></div>
+              <div class="chart-card">
+                <h3 id="heading-market-chart">Sentiment Timeline</h3>
+                <canvas id="market-sentiment-chart"></canvas>
+                <p id="market-chart-empty" class="empty-note">Not enough timeline depth for a useful sentiment chart.</p>
+              </div>
             </article>
-          </section>
 
-          <section id="tab-data_health" class="tab-pane">
-            <article class="report-card">
-              <h3>Data Health</h3>
-              <div id="data-health-report" class="markdown"></div>
-              <div id="data-health-tables" class="structured-tables"></div>
-              <div id="data-health-extra" class="data-health-extra"></div>
-            </article>
-          </section>
-
-          <section id="tab-news_feed" class="tab-pane">
-            <article class="report-card">
-              <h3>News Feed</h3>
-              <div id="news-meta" class="meta-line"></div>
+            <article class="panel-card">
+              <h3 id="heading-news">News Feed</h3>
               <div id="news-cards" class="feed-grid"></div>
             </article>
-          </section>
 
-          <section id="tab-social_feed" class="tab-pane">
-            <article class="report-card">
-              <h3>Social Feed</h3>
-              <div id="social-meta" class="meta-line"></div>
+            <article class="panel-card">
+              <h3 id="heading-social">Social Feed</h3>
               <div id="social-cards" class="feed-grid"></div>
             </article>
           </section>
 
-          <section id="tab-fundamentals" class="tab-pane">
-            <article class="report-card">
-              <h3>Fundamentals</h3>
-              <div id="fundamentals-meta" class="meta-line"></div>
-              <div class="chart-grid one">
-                <article class="chart-card">
-                  <header>
-                    <h4>Revenue / Net Income / EPS Trend</h4>
-                  </header>
-                  <canvas id="fundamentals-chart"></canvas>
-                  <p id="fundamentals-empty" class="chart-empty">No fundamentals trend data available.</p>
-                </article>
+          <section id="section-fundamentals" class="section-pane">
+            <article class="panel-card">
+              <h2 id="heading-fundamentals">Fundamentals</h2>
+              <p id="fundamentals-context" class="summary"></p>
+              <div id="fundamentals-metrics" class="metric-grid"></div>
+
+              <div class="chart-card">
+                <h3 id="heading-fundamentals-chart">Quarterly Trend</h3>
+                <canvas id="fundamentals-chart"></canvas>
+                <p id="fundamentals-chart-empty" class="empty-note">Not enough quarterly depth for a useful fundamentals trend chart.</p>
               </div>
+
               <div class="table-wrap">
                 <table id="fundamentals-table">
                   <thead>
@@ -160,444 +146,650 @@
             </article>
           </section>
 
-          <section id="tab-transcript" class="tab-pane">
-            <article class="report-card">
-              <h3>Transcript</h3>
-              <div id="transcript-list" class="transcript-grid"></div>
+          <section id="section-data_audit" class="section-pane">
+            <article class="panel-card">
+              <h2 id="heading-audit">Data Audit</h2>
+              <p id="audit-confidence" class="summary"></p>
+
+              <div class="table-wrap">
+                <table id="audit-table">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Value</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+
+              <div class="split-grid">
+                <div>
+                  <h4 id="heading-audit-warnings">Warnings</h4>
+                  <ul id="audit-warnings" class="compact-list"></ul>
+                </div>
+                <div>
+                  <h4 id="heading-audit-missing">Missing / Sparse</h4>
+                  <ul id="audit-missing" class="compact-list"></ul>
+                </div>
+              </div>
+
+              <div class="split-grid">
+                <div>
+                  <h4 id="heading-audit-dedupe">Dedupe Stats</h4>
+                  <ul id="audit-dedupe" class="compact-list"></ul>
+                </div>
+                <div>
+                  <h4 id="heading-audit-failures">Discovery Failures</h4>
+                  <ul id="audit-failures" class="compact-list"></ul>
+                </div>
+              </div>
+
+              <div class="split-grid">
+                <div>
+                  <h4 id="heading-audit-discarded">Discarded Near-Matches</h4>
+                  <ul id="audit-discarded" class="compact-list"></ul>
+                </div>
+                <div>
+                  <h4 id="heading-audit-parsing">Parsing Warnings</h4>
+                  <ul id="audit-parsing" class="compact-list"></ul>
+                </div>
+              </div>
             </article>
           </section>
         </section>
       </section>
     </main>
 
+    <dialog id="social-modal" class="modal">
+      <article class="modal-card">
+        <header>
+          <h3 id="modal-title">Social Post</h3>
+          <button id="modal-close" class="ghost-btn" type="button">Close</button>
+        </header>
+        <p id="modal-meta" class="meta-line"></p>
+        <p id="modal-body" class="modal-body"></p>
+        <a id="modal-link" href="#" target="_blank" rel="noopener noreferrer">Open source post</a>
+      </article>
+    </dialog>
+
     <script>
-      const TAB_CONFIG = [
-        { id: "summary", label: "Summary" },
-        { id: "analyst", label: "Analyst Reports" },
-        { id: "research", label: "Research Debate" },
-        { id: "trader", label: "Trader Plan" },
-        { id: "risk_manager", label: "Risk + Final Verdict" },
-        { id: "data_health", label: "Data Health" },
-        { id: "news_feed", label: "News Feed" },
-        { id: "social_feed", label: "Social Feed" },
-        { id: "fundamentals", label: "Fundamentals" },
-        { id: "transcript", label: "Transcript" },
-      ];
+      const SECTION_ORDER = ["overview", "transcript", "market_reaction", "fundamentals", "data_audit"];
 
-      const tabNav = document.getElementById("tab-nav");
-      const analysisLayout = document.getElementById("analysis-layout");
-      const workflowList = document.getElementById("workflow-list");
-      const runSummary = document.getElementById("run-summary");
-      const statusEl = document.getElementById("status");
-      const analyzeBtn = document.getElementById("analyze-btn");
-      const tickerInput = document.getElementById("ticker");
+      const state = {
+        payload: null,
+        uiCopy: null,
+        charts: {
+          speaker: null,
+          market: null,
+          fundamentals: null,
+        },
+      };
 
-      const summaryReport = document.getElementById("summary-report");
-      const analystReport = document.getElementById("analyst-report");
-      const researchReport = document.getElementById("research-report");
-      const traderReport = document.getElementById("trader-report");
-      const riskReport = document.getElementById("risk-report");
-      const dataHealthReport = document.getElementById("data-health-report");
+      const elements = {
+        workspace: document.getElementById("workspace"),
+        status: document.getElementById("status"),
+        tickerInput: document.getElementById("ticker"),
+        analyzeBtn: document.getElementById("analyze-btn"),
+        sectionNav: document.getElementById("section-nav"),
+        runContext: document.getElementById("run-context"),
+        heroTitle: document.getElementById("hero-title"),
+        heroSubtitle: document.getElementById("hero-subtitle"),
+        tickerLabel: document.getElementById("ticker-label"),
+        heroKicker: document.getElementById("hero-kicker"),
+        queryNote: document.getElementById("query-note"),
 
-      const summaryTables = document.getElementById("summary-tables");
-      const analystTables = document.getElementById("analyst-tables");
-      const researchTables = document.getElementById("research-tables");
-      const traderTables = document.getElementById("trader-tables");
-      const riskTables = document.getElementById("risk-tables");
-      const dataHealthTables = document.getElementById("data-health-tables");
+        headingOverview: document.getElementById("heading-overview"),
+        headingSpeakerProfile: document.getElementById("heading-speaker-profile"),
+        headingTranscript: document.getElementById("heading-transcript"),
+        headingQuotes: document.getElementById("heading-quotes"),
+        headingPressure: document.getElementById("heading-pressure"),
+        headingSpeakerTable: document.getElementById("heading-speaker-table"),
+        headingMarket: document.getElementById("heading-market"),
+        headingMarketChart: document.getElementById("heading-market-chart"),
+        headingNews: document.getElementById("heading-news"),
+        headingSocial: document.getElementById("heading-social"),
+        headingFundamentals: document.getElementById("heading-fundamentals"),
+        headingFundamentalsChart: document.getElementById("heading-fundamentals-chart"),
+        headingAudit: document.getElementById("heading-audit"),
+        headingAuditWarnings: document.getElementById("heading-audit-warnings"),
+        headingAuditMissing: document.getElementById("heading-audit-missing"),
+        headingAuditDedupe: document.getElementById("heading-audit-dedupe"),
+        headingAuditFailures: document.getElementById("heading-audit-failures"),
+        headingAuditDiscarded: document.getElementById("heading-audit-discarded"),
+        headingAuditParsing: document.getElementById("heading-audit-parsing"),
 
-      const dataHealthExtra = document.getElementById("data-health-extra");
-      const newsMeta = document.getElementById("news-meta");
-      const socialMeta = document.getElementById("social-meta");
-      const newsCards = document.getElementById("news-cards");
-      const socialCards = document.getElementById("social-cards");
-      const fundamentalsMeta = document.getElementById("fundamentals-meta");
-      const fundamentalsTableBody = document.querySelector("#fundamentals-table tbody");
-      const transcriptList = document.getElementById("transcript-list");
+        overviewSummary: document.getElementById("overview-summary"),
+        overviewTakeaways: document.getElementById("overview-takeaways"),
+        overviewMetrics: document.getElementById("overview-metrics"),
 
-      let priceVolumeChart;
-      let sentimentChart;
-      let fundamentalsChart;
+        transcriptAvailability: document.getElementById("transcript-availability"),
+        transcriptSummary: document.getElementById("transcript-summary"),
+        transcriptPreparedQa: document.getElementById("transcript-prepared-qa"),
+        transcriptQuotes: document.getElementById("transcript-quotes"),
+        transcriptPressure: document.getElementById("transcript-pressure"),
+        speakerTableBody: document.querySelector("#speaker-analysis-table tbody"),
 
-      function fmtNumber(value, fractionDigits = 2) {
-        if (value === null || value === undefined) return "-";
-        return new Intl.NumberFormat("en-US", { maximumFractionDigits: fractionDigits }).format(value);
+        marketBalance: document.getElementById("market-balance"),
+        newsCards: document.getElementById("news-cards"),
+        socialCards: document.getElementById("social-cards"),
+
+        fundamentalsContext: document.getElementById("fundamentals-context"),
+        fundamentalsMetrics: document.getElementById("fundamentals-metrics"),
+        fundamentalsTableBody: document.querySelector("#fundamentals-table tbody"),
+
+        auditConfidence: document.getElementById("audit-confidence"),
+        auditTableBody: document.querySelector("#audit-table tbody"),
+        auditWarnings: document.getElementById("audit-warnings"),
+        auditMissing: document.getElementById("audit-missing"),
+        auditDedupe: document.getElementById("audit-dedupe"),
+        auditFailures: document.getElementById("audit-failures"),
+        auditDiscarded: document.getElementById("audit-discarded"),
+        auditParsing: document.getElementById("audit-parsing"),
+
+        speakerChartCanvas: document.getElementById("speaker-confidence-chart"),
+        speakerChartEmpty: document.getElementById("speaker-chart-empty"),
+        marketChartCanvas: document.getElementById("market-sentiment-chart"),
+        marketChartEmpty: document.getElementById("market-chart-empty"),
+        fundamentalsChartCanvas: document.getElementById("fundamentals-chart"),
+        fundamentalsChartEmpty: document.getElementById("fundamentals-chart-empty"),
+
+        modal: document.getElementById("social-modal"),
+        modalClose: document.getElementById("modal-close"),
+        modalTitle: document.getElementById("modal-title"),
+        modalMeta: document.getElementById("modal-meta"),
+        modalBody: document.getElementById("modal-body"),
+        modalLink: document.getElementById("modal-link"),
+      };
+
+      function fmtNum(value, digits = 2) {
+        if (value === null || value === undefined || Number.isNaN(value)) return "-";
+        return new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(value);
+      }
+
+      function fmtDate(utc) {
+        if (!utc) return "n/a";
+        const date = new Date(utc * 1000);
+        if (Number.isNaN(date.getTime())) return "n/a";
+        return date.toISOString().slice(0, 10);
+      }
+
+      function fmtExternalDate(value) {
+        if (!value) return "n/a";
+        if (typeof value === "number") return fmtDate(value);
+
+        const raw = String(value).trim();
+        if (/^\d{8}T\d{6}$/.test(raw)) {
+          return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+        }
+        if (/^\d{8}$/.test(raw)) {
+          return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+        }
+        const maybeDate = new Date(raw);
+        if (!Number.isNaN(maybeDate.getTime())) return maybeDate.toISOString().slice(0, 10);
+        return raw;
       }
 
       function fmtCurrency(value) {
-        if (value === null || value === undefined) return "-";
+        if (value === null || value === undefined || Number.isNaN(value)) return "-";
         return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
       }
 
-      function createTabButtons() {
-        tabNav.innerHTML = TAB_CONFIG.map((tab, idx) => {
-          const active = idx === 0 ? "active" : "";
-          return `<button type="button" class="tab-btn ${active}" data-tab="${tab.id}">${tab.label}</button>`;
-        }).join("");
+      function compactText(text, maxChars = 160) {
+        const cleaned = (text || "").replace(/\s+/g, " ").trim();
+        if (!cleaned) return "";
+        if (cleaned.length <= maxChars) return cleaned;
+        return `${cleaned.slice(0, maxChars - 1).trimEnd()}…`;
+      }
 
-        tabNav.querySelectorAll(".tab-btn").forEach((btn) => {
-          btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+      function clearList(listEl) {
+        listEl.innerHTML = "";
+      }
+
+      function renderList(listEl, items, fallback) {
+        clearList(listEl);
+        const rows = items && items.length ? items : [fallback];
+        rows.forEach((text) => {
+          const li = document.createElement("li");
+          li.textContent = text;
+          listEl.appendChild(li);
         });
       }
 
-      function switchTab(tabId) {
-        document.querySelectorAll(".tab-btn").forEach((btn) => {
-          btn.classList.toggle("active", btn.dataset.tab === tabId);
-        });
-        document.querySelectorAll(".tab-pane").forEach((pane) => {
-          pane.classList.toggle("active", pane.id === `tab-${tabId}`);
-        });
+      function destroyChart(chart) {
+        if (chart) chart.destroy();
       }
 
-      function renderWorkflow(workflow) {
-        workflowList.innerHTML = workflow
-          .map((stage) => `<li class="workflow-item ${stage.status}"><strong>${stage.title}</strong><span>${stage.detail}</span></li>`)
+      function setChartVisibility(canvas, empty, enabled) {
+        canvas.style.display = enabled ? "block" : "none";
+        empty.style.display = enabled ? "none" : "block";
+      }
+
+      function buildSectionNav(sectionLabels) {
+        elements.sectionNav.innerHTML = SECTION_ORDER
+          .map((id, index) => {
+            const active = index === 0 ? "active" : "";
+            const label = sectionLabels[id] || id;
+            return `<button type="button" class="nav-btn ${active}" data-section="${id}">${label}</button>`;
+          })
           .join("");
+
+        elements.sectionNav.querySelectorAll(".nav-btn").forEach((button) => {
+          button.addEventListener("click", () => switchSection(button.dataset.section));
+        });
       }
 
-      function renderRunSummary(data) {
-        const compact = data.data_health?.warnings_compact?.[0] || "No major warnings.";
-        runSummary.innerHTML = `
-          <div class="summary-block">
-            <p class="label">Ticker</p>
-            <strong>${data.run_summary.ticker}</strong>
-          </div>
-          <div class="summary-block">
-            <p class="label">Overall</p>
-            <strong>${data.run_summary.overall_label} (${fmtNumber(data.run_summary.overall_score, 4)})</strong>
-          </div>
-          <div class="summary-block">
-            <p class="label">Coverage</p>
-            <strong>T:${data.run_summary.transcripts_found} N:${data.run_summary.news_count} S:${data.run_summary.social_count}</strong>
-          </div>
-          <div class="summary-block wide">
-            <p class="label">Data Health</p>
-            <strong>${compact}</strong>
-          </div>
+      function switchSection(sectionId) {
+        document.querySelectorAll(".nav-btn").forEach((button) => {
+          button.classList.toggle("active", button.dataset.section === sectionId);
+        });
+        document.querySelectorAll(".section-pane").forEach((pane) => {
+          pane.classList.toggle("active", pane.id === `section-${sectionId}`);
+        });
+      }
+
+      function renderRunContext(payload) {
+        const overview = payload.overview;
+        const transcript = payload.transcript;
+        elements.runContext.innerHTML = `
+          <h3>${overview.ticker}</h3>
+          <p class="summary">${overview.stance_label} · ${payload.overall_sentiment_label} (${fmtNum(payload.overall_sentiment_score, 4)})</p>
+          <p class="meta-line">Coverage ${transcript.transcript_count_found}/${transcript.transcript_count_requested} · News ${payload.market_reaction.news_count} · Social ${payload.market_reaction.social_count}</p>
+          <p class="meta-line">Normalization: ${payload.data_audit.normalization_mode}</p>
         `;
       }
 
-      function renderStructuredTables(target, tables) {
-        target.innerHTML = "";
-        if (!tables || !tables.length) return;
+      function renderOverview(payload) {
+        elements.overviewSummary.textContent = payload.overview.executive_summary;
 
-        tables.forEach((table) => {
-          const wrapper = document.createElement("div");
-          wrapper.className = "table-wrap report-table";
-          wrapper.innerHTML = `
-            <h4>${table.title}</h4>
-            <table>
-              <thead>
-                <tr>${table.columns.map((column) => `<th>${column}</th>`).join("")}</tr>
-              </thead>
-              <tbody>
-                ${table.rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}
-              </tbody>
-            </table>
+        clearList(elements.overviewTakeaways);
+        (payload.overview.key_takeaways || []).forEach((item) => {
+          const li = document.createElement("li");
+          li.textContent = item;
+          elements.overviewTakeaways.appendChild(li);
+        });
+
+        elements.overviewMetrics.innerHTML = (payload.overview.metrics || [])
+          .map((metric) => `
+            <article class="metric-card">
+              <p>${metric.label}</p>
+              <strong>${metric.value}</strong>
+            </article>
+          `)
+          .join("");
+
+        destroyChart(state.charts.speaker);
+        const profile = payload.transcript.speaker_confidence_profile || [];
+        const canChart = Boolean(payload.transcript.chart_enabled && profile.length >= 2);
+        setChartVisibility(elements.speakerChartCanvas, elements.speakerChartEmpty, canChart);
+
+        if (canChart) {
+          state.charts.speaker = new Chart(elements.speakerChartCanvas, {
+            type: "bar",
+            data: {
+              labels: profile.map((row) => row.speaker),
+              datasets: [
+                {
+                  label: "Confidence",
+                  data: profile.map((row) => row.confidence),
+                  backgroundColor: "rgba(80, 202, 163, 0.65)",
+                },
+                {
+                  label: "Evasiveness",
+                  data: profile.map((row) => row.evasiveness),
+                  backgroundColor: "rgba(240, 99, 123, 0.55)",
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              plugins: { legend: { labels: { color: "#d3ddf2" } } },
+              scales: {
+                x: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.06)" } },
+                y: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.1)" }, min: 0, max: 100 },
+              },
+            },
+          });
+        }
+      }
+
+      function renderTranscript(payload) {
+        const transcript = payload.transcript;
+        elements.transcriptAvailability.textContent = `Availability: ${transcript.availability} · Coverage ${transcript.transcript_count_found}/${transcript.transcript_count_requested}`;
+        elements.transcriptSummary.textContent = transcript.latest_summary || "No transcript summary available.";
+        elements.transcriptPreparedQa.textContent = transcript.prepared_vs_qa_note || "Prepared remarks vs Q&A distinction unavailable.";
+
+        renderList(elements.transcriptQuotes, transcript.key_quotes || [], "No quotes extracted.");
+        renderList(elements.transcriptPressure, transcript.qa_pressure_points || [], "No pressure points identified.");
+
+        elements.speakerTableBody.innerHTML = "";
+        (transcript.speaker_analysis || []).forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${row.speaker}</td>
+            <td>${row.section_type}</td>
+            <td>${fmtNum(row.sentiment_direction, 3)}</td>
+            <td>${fmtNum(row.confidence, 1)}</td>
+            <td>${fmtNum(row.evasiveness, 1)}</td>
+            <td>${fmtNum(row.specificity, 1)}</td>
+            <td>${row.topic_label}</td>
           `;
-          target.appendChild(wrapper);
+          elements.speakerTableBody.appendChild(tr);
         });
       }
 
-      function reportMapById(reportTabs) {
-        const map = {};
-        (reportTabs || []).forEach((tab) => {
-          map[tab.id] = tab;
-        });
-        return map;
-      }
-
-      function renderReports(reportTabs) {
-        const map = reportMapById(reportTabs);
-
-        summaryReport.innerHTML = marked.parse(map.summary?.markdown || "No summary report available.");
-        analystReport.innerHTML = marked.parse(map.analyst?.markdown || "No analyst report available.");
-        researchReport.innerHTML = marked.parse(map.research?.markdown || "No research report available.");
-        traderReport.innerHTML = marked.parse(map.trader?.markdown || "No trader report available.");
-        riskReport.innerHTML = marked.parse(map.risk_manager?.markdown || "No risk/manager report available.");
-        dataHealthReport.innerHTML = marked.parse(map.data_health?.markdown || "No data health report available.");
-
-        renderStructuredTables(summaryTables, map.summary?.tables || []);
-        renderStructuredTables(analystTables, map.analyst?.tables || []);
-        renderStructuredTables(researchTables, map.research?.tables || []);
-        renderStructuredTables(traderTables, map.trader?.tables || []);
-        renderStructuredTables(riskTables, map.risk_manager?.tables || []);
-        renderStructuredTables(dataHealthTables, map.data_health?.tables || []);
-      }
-
-      function renderDataHealth(dataHealth) {
-        const outcomes = dataHealth?.transcripts?.outcomes || [];
-        const warnings = dataHealth?.warnings_compact || [];
-
-        dataHealthExtra.innerHTML = `
-          <div class="health-grid">
-            <article>
-              <h4>Warnings</h4>
-              <ul>${warnings.length ? warnings.map((w) => `<li>${w}</li>`).join("") : "<li>None</li>"}</ul>
-            </article>
-            <article>
-              <h4>Transcript Scan</h4>
-              <p>Requested: ${dataHealth?.transcripts?.requested_quarters?.length || 0}</p>
-              <p>Found: ${dataHealth?.transcripts?.found_quarters?.length || 0}</p>
-              <p>Missing: ${dataHealth?.transcripts?.missing_quarters?.length || 0}</p>
-              <p>Errors: ${dataHealth?.transcripts?.errors?.length || 0}</p>
-            </article>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Quarter</th><th>Status</th><th>Detail</th></tr></thead>
-              <tbody>
-                ${outcomes.length ? outcomes.map((o) => `<tr><td>${o.quarter}</td><td>${o.status}</td><td>${o.detail || ""}</td></tr>`).join("") : "<tr><td colspan='3'>No transcript diagnostics.</td></tr>"}
-              </tbody>
-            </table>
-          </div>
-        `;
-      }
-
-      function renderNews(data) {
-        newsMeta.textContent = `Articles: ${data.news_summary.article_count} | Avg: ${fmtNumber(data.news_summary.avg_sentiment_score, 3)} | Label: ${data.news_summary.sentiment_label}`;
-
-        newsCards.innerHTML = data.news.length
-          ? data.news.map((item) => `
-            <article class="feed-card-item">
-              <header><span>${item.sentiment_label} ${fmtNumber(item.sentiment_score, 3)}</span></header>
-              <h4><a href="${item.url}" target="_blank" rel="noopener noreferrer">${item.title}</a></h4>
-              <p>${item.summary || "No summary provided."}</p>
-              <footer>${item.source || "Unknown source"}</footer>
-            </article>
-          `).join("")
-          : "<p class='empty-note'>No news records available.</p>";
-      }
-
-      function renderSocial(data) {
-        socialMeta.textContent = `Posts: ${data.social_summary.post_count} | Avg: ${fmtNumber(data.social_summary.avg_sentiment_score, 3)} | Label: ${data.social_summary.sentiment_label}`;
-
-        socialCards.innerHTML = data.social.length
-          ? data.social.map((item) => `
-            <article class="feed-card-item">
-              <header><span>${item.sentiment_label} ${fmtNumber(item.sentiment_score, 3)} | relevance ${fmtNumber(item.relevance_score, 2)}</span></header>
-              <h4><a href="${item.url}" target="_blank" rel="noopener noreferrer">${item.title}</a></h4>
-              <p>${item.body || "No body text captured."}</p>
-              <footer>${item.source}${item.subreddit ? ` · r/${item.subreddit}` : ""}</footer>
-            </article>
-          `).join("")
-          : "<p class='empty-note'>No social records available.</p>";
-      }
-
-      function renderFundamentals(data) {
-        const f = data.fundamentals;
-        fundamentalsMeta.textContent = `Market cap ${fmtCurrency(f.market_cap)} | Trailing PE ${fmtNumber(f.trailing_pe)} | Forward PE ${fmtNumber(f.forward_pe)} | Revenue QoQ ${fmtNumber(f.revenue_qoq_growth_pct)}% | EPS QoQ ${fmtNumber(f.eps_qoq_growth_pct)}%`;
-
-        fundamentalsTableBody.innerHTML = "";
-        f.quarterly.forEach((q) => {
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${q.quarter}</td>
-            <td>${fmtCurrency(q.revenue)}</td>
-            <td>${fmtCurrency(q.net_income)}</td>
-            <td>${fmtNumber(q.reported_eps)}</td>
-            <td>${fmtNumber(q.eps_estimate)}</td>
-          `;
-          fundamentalsTableBody.appendChild(row);
-        });
-      }
-
-      function renderTranscripts(data) {
-        transcriptList.innerHTML = "";
-        if (!data.transcripts.length) {
-          transcriptList.innerHTML = "<p class='empty-note'>No transcripts available for this ticker in scanned quarters.</p>";
+      function renderNewsCards(items) {
+        elements.newsCards.innerHTML = "";
+        if (!items || !items.length) {
+          const text = state.uiCopy?.empty_states?.news || "No news items met the quality threshold.";
+          elements.newsCards.innerHTML = `<p class="empty-note">${text}</p>`;
           return;
         }
 
-        data.transcripts.forEach((item) => {
-          const el = document.createElement("article");
-          el.className = "transcript-item";
-          el.innerHTML = `
-            <h4>${item.year} Q${item.quarter} · ${item.source}</h4>
-            <p>Sentiment ${item.sentiment.label} (${fmtNumber(item.sentiment.directional_score, 3)}) · Confidence ${fmtNumber(item.confidence_score)} · Outlook ${fmtNumber(item.outlook_score)}</p>
-            <p><strong>Quotes</strong></p>
-            <ul>${(item.decision_relevant_quotes || []).slice(0, 4).map((q) => `<li>${q}</li>`).join("") || "<li>No quotes extracted.</li>"}</ul>
-          `;
-          transcriptList.appendChild(el);
+        const openLabel = state.uiCopy?.microcopy?.news_open_action || "Open source";
+
+        elements.newsCards.innerHTML = items
+          .map((item) => `
+            <article class="feed-card">
+              <div class="feed-meta">
+                <span>${item.source || "source n/a"}</span>
+                <span>${fmtExternalDate(item.time_published)}</span>
+                <span>${item.sentiment_label} ${fmtNum(item.sentiment_score, 3)}</span>
+              </div>
+              <h4><a href="${item.url}" target="_blank" rel="noopener noreferrer">${item.title}</a></h4>
+              <p>${compactText(item.summary || "No preview available.", 190)}</p>
+              <a class="inline-action" href="${item.url}" target="_blank" rel="noopener noreferrer">${openLabel}</a>
+            </article>
+          `)
+          .join("");
+      }
+
+      function openSocialModal(item) {
+        elements.modalTitle.textContent = item.title || "Social Post";
+        elements.modalMeta.textContent = `${item.subreddit ? `r/${item.subreddit}` : "reddit"} · ${fmtDate(item.created_utc)} · ${item.sentiment_label} ${fmtNum(item.sentiment_score, 3)}`;
+        elements.modalBody.textContent = item.body || "No body text available.";
+        elements.modalLink.href = item.url || "https://www.reddit.com";
+        elements.modal.showModal();
+      }
+
+      function renderSocialCards(items) {
+        elements.socialCards.innerHTML = "";
+        if (!items || !items.length) {
+          const text = state.uiCopy?.empty_states?.social || "No social items met the quality threshold.";
+          elements.socialCards.innerHTML = `<p class="empty-note">${text}</p>`;
+          return;
+        }
+
+        const openLabel = state.uiCopy?.microcopy?.social_open_action || "View Full Post";
+        const cards = items
+          .map((item, index) => `
+            <article class="feed-card social-card" data-index="${index}">
+              <div class="feed-meta">
+                <span>${item.subreddit ? `r/${item.subreddit}` : "reddit"}</span>
+                <span>${fmtDate(item.created_utc)}</span>
+                <span>${item.sentiment_label} ${fmtNum(item.sentiment_score, 3)}</span>
+              </div>
+              <h4>${item.title}</h4>
+              <p>${item.excerpt || "No excerpt available."}</p>
+              <button class="ghost-btn" type="button">${openLabel}</button>
+            </article>
+          `)
+          .join("");
+
+        elements.socialCards.innerHTML = cards;
+        elements.socialCards.querySelectorAll(".social-card").forEach((card) => {
+          const index = Number(card.dataset.index);
+          card.querySelector("button")?.addEventListener("click", () => openSocialModal(items[index]));
         });
       }
 
-      function destroyChart(chartInstance) {
-        if (chartInstance) chartInstance.destroy();
-      }
+      function renderMarketReaction(payload) {
+        const market = payload.market_reaction;
+        elements.marketBalance.textContent = market.balance_summary;
+        renderNewsCards(market.news_items || []);
+        renderSocialCards(market.social_items || []);
 
-      function setChartEmpty(canvasId, emptyId, hasData) {
-        const canvas = document.getElementById(canvasId);
-        const empty = document.getElementById(emptyId);
-        const card = canvas?.closest(".chart-card");
-        if (!canvas || !empty || !card) return;
-        card.classList.toggle("empty", !hasData);
-        canvas.style.display = hasData ? "block" : "none";
-      }
+        destroyChart(state.charts.market);
+        const timeline = payload.charts?.sentiment_timeline || [];
+        const canChart = Boolean(market.chart_enabled && timeline.length >= 3);
+        setChartVisibility(elements.marketChartCanvas, elements.marketChartEmpty, canChart);
 
-      function renderCharts(data) {
-        const charts = data.charts || {};
-
-        destroyChart(priceVolumeChart);
-        destroyChart(sentimentChart);
-        destroyChart(fundamentalsChart);
-
-        const pv = charts.price_volume || [];
-        const pvLabels = pv.map((p) => p.date);
-        setChartEmpty("price-volume-chart", "price-volume-empty", pv.length > 0);
-        if (pv.length) {
-          priceVolumeChart = new Chart(document.getElementById("price-volume-chart"), {
-            type: "bar",
-            data: {
-              labels: pvLabels,
-              datasets: [
-                {
-                  type: "line",
-                  label: "Close",
-                  data: pv.map((p) => p.close),
-                  borderColor: "#5ab2ff",
-                  backgroundColor: "#5ab2ff",
-                  yAxisID: "y",
-                  tension: 0.25,
-                },
-                {
-                  type: "bar",
-                  label: "Volume",
-                  data: pv.map((p) => p.volume),
-                  backgroundColor: "rgba(80, 202, 163, 0.55)",
-                  yAxisID: "y1",
-                },
-              ],
-            },
-            options: {
-              responsive: true,
-              plugins: { legend: { labels: { color: "#cdd5e5" } } },
-              scales: {
-                x: { ticks: { color: "#8f9ab3" }, grid: { color: "rgba(255,255,255,0.04)" } },
-                y: { ticks: { color: "#8f9ab3" }, grid: { color: "rgba(255,255,255,0.08)" } },
-                y1: { position: "right", ticks: { color: "#8f9ab3" }, grid: { drawOnChartArea: false } },
-              },
-            },
-          });
-        }
-
-        const st = charts.sentiment_timeline || [];
-        setChartEmpty("sentiment-chart", "sentiment-empty", st.length > 0);
-        if (st.length) {
-          sentimentChart = new Chart(document.getElementById("sentiment-chart"), {
+        if (canChart) {
+          state.charts.market = new Chart(elements.marketChartCanvas, {
             type: "line",
             data: {
-              labels: st.map((p) => p.date),
+              labels: timeline.map((point) => point.date),
               datasets: [
-                { label: "News", data: st.map((p) => p.news), borderColor: "#f3bf66", backgroundColor: "#f3bf66", tension: 0.25 },
-                { label: "Social", data: st.map((p) => p.social), borderColor: "#7cc4ff", backgroundColor: "#7cc4ff", tension: 0.25 },
-                { label: "Blended", data: st.map((p) => p.blended), borderColor: "#50caa3", backgroundColor: "#50caa3", tension: 0.25 },
+                { label: "News", data: timeline.map((point) => point.news), borderColor: "#f4c66e", backgroundColor: "#f4c66e", tension: 0.3 },
+                { label: "Social", data: timeline.map((point) => point.social), borderColor: "#78bfff", backgroundColor: "#78bfff", tension: 0.3 },
+                { label: "Blended", data: timeline.map((point) => point.blended), borderColor: "#52cda2", backgroundColor: "#52cda2", tension: 0.3 },
               ],
             },
             options: {
               responsive: true,
-              plugins: { legend: { labels: { color: "#cdd5e5" } } },
+              plugins: { legend: { labels: { color: "#d3ddf2" } } },
               scales: {
-                x: { ticks: { color: "#8f9ab3" }, grid: { color: "rgba(255,255,255,0.04)" } },
-                y: { ticks: { color: "#8f9ab3" }, grid: { color: "rgba(255,255,255,0.08)" }, suggestedMin: -1, suggestedMax: 1 },
+                x: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.06)" } },
+                y: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.1)" }, min: -1, max: 1 },
               },
             },
           });
         }
+      }
 
-        const ft = charts.fundamentals_trend || [];
-        setChartEmpty("fundamentals-chart", "fundamentals-empty", ft.length > 0);
-        if (ft.length) {
-          fundamentalsChart = new Chart(document.getElementById("fundamentals-chart"), {
+      function renderFundamentals(payload) {
+        const f = payload.fundamentals_workspace;
+        elements.fundamentalsContext.textContent = f.operating_context;
+
+        elements.fundamentalsMetrics.innerHTML = (f.metrics || [])
+          .map((metric) => `
+            <article class="metric-card">
+              <p>${metric.label}</p>
+              <strong>${metric.value}</strong>
+            </article>
+          `)
+          .join("");
+
+        elements.fundamentalsTableBody.innerHTML = "";
+        (f.table || []).forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${row.quarter}</td>
+            <td>${fmtCurrency(row.revenue)}</td>
+            <td>${fmtCurrency(row.net_income)}</td>
+            <td>${fmtNum(row.reported_eps, 2)}</td>
+            <td>${fmtNum(row.eps_estimate, 2)}</td>
+          `;
+          elements.fundamentalsTableBody.appendChild(tr);
+        });
+
+        destroyChart(state.charts.fundamentals);
+        const trend = f.trend_series || [];
+        const canChart = Boolean(f.chart_enabled && trend.length >= 3);
+        setChartVisibility(elements.fundamentalsChartCanvas, elements.fundamentalsChartEmpty, canChart);
+
+        if (canChart) {
+          state.charts.fundamentals = new Chart(elements.fundamentalsChartCanvas, {
             data: {
-              labels: ft.map((p) => p.quarter),
+              labels: trend.map((point) => point.quarter),
               datasets: [
                 {
                   type: "bar",
                   label: "Revenue",
-                  data: ft.map((p) => p.revenue || 0),
-                  backgroundColor: "rgba(90, 178, 255, 0.55)",
+                  data: trend.map((point) => point.revenue || 0),
+                  backgroundColor: "rgba(120, 191, 255, 0.55)",
                   yAxisID: "y",
                 },
                 {
                   type: "bar",
                   label: "Net Income",
-                  data: ft.map((p) => p.net_income || 0),
-                  backgroundColor: "rgba(80, 202, 163, 0.5)",
+                  data: trend.map((point) => point.net_income || 0),
+                  backgroundColor: "rgba(82, 205, 162, 0.52)",
                   yAxisID: "y",
                 },
                 {
                   type: "line",
                   label: "Reported EPS",
-                  data: ft.map((p) => p.eps || 0),
-                  borderColor: "#f3bf66",
-                  backgroundColor: "#f3bf66",
+                  data: trend.map((point) => point.eps || 0),
+                  borderColor: "#f4c66e",
+                  backgroundColor: "#f4c66e",
                   yAxisID: "y1",
-                  tension: 0.2,
+                  tension: 0.25,
                 },
               ],
             },
             options: {
               responsive: true,
-              plugins: { legend: { labels: { color: "#cdd5e5" } } },
+              plugins: { legend: { labels: { color: "#d3ddf2" } } },
               scales: {
-                x: { ticks: { color: "#8f9ab3" }, grid: { color: "rgba(255,255,255,0.04)" } },
-                y: { ticks: { color: "#8f9ab3" }, grid: { color: "rgba(255,255,255,0.08)" } },
-                y1: { position: "right", ticks: { color: "#8f9ab3" }, grid: { drawOnChartArea: false } },
+                x: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.06)" } },
+                y: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.1)" } },
+                y1: { position: "right", ticks: { color: "#9aaacc" }, grid: { drawOnChartArea: false } },
               },
             },
           });
         }
       }
 
+      function renderDataAudit(payload) {
+        const audit = payload.data_audit;
+        elements.auditConfidence.textContent = `${audit.confidence_note} Normalization mode: ${audit.normalization_mode}.`;
+
+        elements.auditTableBody.innerHTML = "";
+        const rows = [
+          ["Pages scanned", audit.transcript_discovery.pages_scanned],
+          ["Candidates total", audit.transcript_discovery.candidates_total],
+          ["Transcript-like titles", audit.transcript_discovery.transcript_like_count],
+          ["Match-filtered", audit.transcript_discovery.match_filtered_count],
+          ["Selected", audit.transcript_discovery.selected_count],
+          ["Near-match discards", (audit.transcript_discovery.discarded_near_matches || []).length],
+          ["Fetch failures", (audit.transcript_discovery.fetch_failures || []).length],
+          ["Playwright fallback used", audit.transcript_discovery.playwright_fallback_used ? "yes" : "no"],
+        ];
+
+        rows.forEach(([label, value]) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${label}</td><td>${value}</td>`;
+          elements.auditTableBody.appendChild(tr);
+        });
+
+        renderList(elements.auditWarnings, audit.warnings || [], "No warnings.");
+        renderList(elements.auditMissing, audit.missing_items || [], "No missing-source flags.");
+
+        const dedupeRows = Object.entries(audit.dedupe_counts || {}).map(([key, value]) => `${key}: ${value}`);
+        renderList(elements.auditDedupe, dedupeRows, "No dedupe stats.");
+
+        renderList(elements.auditFailures, audit.transcript_discovery.fetch_failures || [], "No discovery fetch failures.");
+        renderList(elements.auditDiscarded, audit.transcript_discovery.discarded_near_matches || [], "No discarded near-matches.");
+        renderList(elements.auditParsing, audit.parsing_warnings || [], "No transcript parsing warnings.");
+      }
+
+      function applyCopy(copy) {
+        if (!copy) return;
+        state.uiCopy = copy;
+        elements.heroTitle.textContent = copy.app_title || "FinBERT Earnings Signals";
+        elements.heroSubtitle.textContent = copy.app_subtitle || elements.heroSubtitle.textContent;
+        elements.tickerLabel.textContent = copy.ui_labels?.ticker || "Ticker";
+        elements.analyzeBtn.textContent = copy.ui_labels?.run_analysis || "Run Analysis";
+        elements.queryNote.textContent = copy.microcopy?.query_note || elements.queryNote.textContent;
+        elements.heroKicker.textContent = copy.headings?.hero_kicker || elements.heroKicker.textContent;
+
+        elements.headingOverview.textContent = copy.headings?.overview || elements.headingOverview.textContent;
+        elements.headingSpeakerProfile.textContent = copy.headings?.speaker_profile_chart || elements.headingSpeakerProfile.textContent;
+        elements.headingTranscript.textContent = copy.headings?.transcript || elements.headingTranscript.textContent;
+        elements.headingQuotes.textContent = copy.headings?.transcript_quotes || elements.headingQuotes.textContent;
+        elements.headingPressure.textContent = copy.headings?.transcript_pressure || elements.headingPressure.textContent;
+        elements.headingSpeakerTable.textContent = copy.headings?.speaker_analysis_table || elements.headingSpeakerTable.textContent;
+        elements.headingMarket.textContent = copy.headings?.market_reaction || elements.headingMarket.textContent;
+        elements.headingMarketChart.textContent = copy.headings?.sentiment_timeline_chart || elements.headingMarketChart.textContent;
+        elements.headingNews.textContent = copy.headings?.news_feed || elements.headingNews.textContent;
+        elements.headingSocial.textContent = copy.headings?.social_feed || elements.headingSocial.textContent;
+        elements.headingFundamentals.textContent = copy.headings?.fundamentals || elements.headingFundamentals.textContent;
+        elements.headingFundamentalsChart.textContent = copy.headings?.fundamentals_chart || elements.headingFundamentalsChart.textContent;
+        elements.headingAudit.textContent = copy.headings?.data_audit || elements.headingAudit.textContent;
+        elements.headingAuditWarnings.textContent = copy.headings?.audit_warnings || elements.headingAuditWarnings.textContent;
+        elements.headingAuditMissing.textContent = copy.headings?.audit_missing || elements.headingAuditMissing.textContent;
+        elements.headingAuditDedupe.textContent = copy.headings?.audit_dedupe || elements.headingAuditDedupe.textContent;
+        elements.headingAuditFailures.textContent = copy.headings?.audit_failures || elements.headingAuditFailures.textContent;
+        elements.headingAuditDiscarded.textContent = copy.headings?.audit_discarded || elements.headingAuditDiscarded.textContent;
+        elements.headingAuditParsing.textContent = copy.headings?.audit_parsing || elements.headingAuditParsing.textContent;
+
+        elements.marketChartEmpty.textContent = copy.empty_states?.market_chart || elements.marketChartEmpty.textContent;
+        elements.fundamentalsChartEmpty.textContent =
+          copy.empty_states?.fundamentals_chart || elements.fundamentalsChartEmpty.textContent;
+        elements.speakerChartEmpty.textContent =
+          copy.empty_states?.speaker_profile || elements.speakerChartEmpty.textContent;
+
+        elements.modalClose.textContent = copy.microcopy?.modal_close_action || elements.modalClose.textContent;
+        elements.modalLink.textContent = copy.microcopy?.modal_open_action || elements.modalLink.textContent;
+        buildSectionNav(copy.section_labels || {});
+      }
+
       function renderAll(payload) {
-        analysisLayout.classList.remove("hidden");
-        renderWorkflow(payload.workflow || []);
-        renderRunSummary(payload);
-        renderReports(payload.report_tabs || []);
-        renderDataHealth(payload.data_health || {});
-        renderNews(payload);
-        renderSocial(payload);
+        state.payload = payload;
+        elements.workspace.classList.remove("hidden");
+        applyCopy(payload.ui_copy);
+        renderRunContext(payload);
+        renderOverview(payload);
+        renderTranscript(payload);
+        renderMarketReaction(payload);
         renderFundamentals(payload);
-        renderTranscripts(payload);
-        renderCharts(payload);
+        renderDataAudit(payload);
+        switchSection("overview");
       }
 
       async function runAnalysis() {
-        const ticker = tickerInput.value.trim().toUpperCase();
+        const ticker = elements.tickerInput.value.trim().toUpperCase();
         if (!ticker) {
-          statusEl.textContent = "Enter a ticker first.";
+          elements.status.textContent = "Enter a ticker first.";
           return;
         }
 
-        analyzeBtn.disabled = true;
-        statusEl.className = "status-line";
-        statusEl.textContent = `Running ${ticker}...`;
+        elements.analyzeBtn.disabled = true;
+        elements.status.className = "status-line";
+        elements.status.textContent = `Analyzing ${ticker}...`;
 
         try {
           const response = await fetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}`);
           const payload = await response.json();
-          if (!response.ok) throw new Error(payload.detail || "Failed to analyze ticker.");
+          if (!response.ok) {
+            throw new Error(payload.detail || "Analysis failed.");
+          }
 
           renderAll(payload);
-
-          statusEl.className = "status-line ok";
-          statusEl.textContent = `${payload.run_summary.ticker} ${payload.run_summary.overall_label} (${fmtNumber(payload.run_summary.overall_score, 4)}) · transcripts ${payload.run_summary.transcripts_found} · news ${payload.run_summary.news_count} · social ${payload.run_summary.social_count}`;
-          switchTab("summary");
-        } catch (err) {
-          statusEl.className = "status-line error";
-          statusEl.textContent = `Error: ${err.message}`;
+          elements.status.className = "status-line ok";
+          elements.status.textContent = `${payload.ticker} ${payload.overall_sentiment_label} (${fmtNum(payload.overall_sentiment_score, 4)}) · transcripts ${payload.transcript.transcript_count_found}/${payload.transcript.transcript_count_requested}`;
+        } catch (error) {
+          elements.status.className = "status-line error";
+          elements.status.textContent = `Error: ${error.message}`;
         } finally {
-          analyzeBtn.disabled = false;
+          elements.analyzeBtn.disabled = false;
         }
       }
 
-      analyzeBtn.addEventListener("click", runAnalysis);
-      tickerInput.addEventListener("keydown", (event) => {
+      elements.analyzeBtn.addEventListener("click", runAnalysis);
+      elements.tickerInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter") runAnalysis();
       });
 
-      createTabButtons();
+      elements.modalClose.addEventListener("click", () => elements.modal.close());
+      elements.modal.addEventListener("click", (event) => {
+        const modalRect = elements.modal.getBoundingClientRect();
+        const inside =
+          event.clientX >= modalRect.left &&
+          event.clientX <= modalRect.right &&
+          event.clientY >= modalRect.top &&
+          event.clientY <= modalRect.bottom;
+        if (!inside) elements.modal.close();
+      });
+
+      buildSectionNav({
+        overview: "Overview",
+        transcript: "Transcript",
+        market_reaction: "Market Reaction",
+        fundamentals: "Fundamentals",
+        data_audit: "Data Audit",
+      });
     </script>
   </body>
 </html>

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -83,6 +83,7 @@ class SocialPost(BaseModel):
     source: str
     title: str
     body: str
+    excerpt: Optional[str] = None
     url: str
     subreddit: Optional[str] = None
     created_utc: Optional[int] = None
@@ -218,7 +219,138 @@ class ChartsPayload(BaseModel):
     fundamentals_trend: list[FundamentalsTrendPoint]
 
 
+class CopyDictionary(BaseModel):
+    app_title: str
+    app_subtitle: str
+    section_labels: dict[str, str]
+    ui_labels: dict[str, str]
+    empty_states: dict[str, str]
+    headings: dict[str, str] = Field(default_factory=dict)
+    microcopy: dict[str, str] = Field(default_factory=dict)
+
+
+class CompactMetric(BaseModel):
+    key: str
+    label: str
+    value: str
+
+
+class OverviewSection(BaseModel):
+    ticker: str
+    company_name: Optional[str] = None
+    stance_label: str
+    executive_summary: str
+    key_takeaways: list[str]
+    metrics: list[CompactMetric]
+
+
+class TranscriptParticipant(BaseModel):
+    name: str
+    role: Optional[str] = None
+
+
+class TranscriptSectionBlock(BaseModel):
+    section_type: Literal["prepared_remarks", "qa", "other"]
+    speaker: str
+    speaker_role: Optional[str] = None
+    text: str
+    order_index: int
+    evidence_snippets: list[str]
+
+
+class TranscriptSpeakerAnalysis(BaseModel):
+    speaker: str
+    section_type: Literal["prepared_remarks", "qa", "other"]
+    sentiment_direction: float = Field(ge=-1, le=1)
+    confidence: float = Field(ge=0, le=100)
+    evasiveness: float = Field(ge=0, le=100)
+    specificity: float = Field(ge=0, le=100)
+    forward_looking_strength: float = Field(ge=0, le=100)
+    risk_language_intensity: float = Field(ge=0, le=100)
+    topic_label: str
+    evidence_snippets: list[str]
+
+
+class TranscriptDocument(BaseModel):
+    ticker: str
+    company_name: Optional[str] = None
+    source: str
+    source_url: Optional[str] = None
+    title: Optional[str] = None
+    published_date: Optional[str] = None
+    has_full_transcript: bool
+    extraction_confidence: float = Field(ge=0, le=1)
+    parsing_warnings: list[str]
+    participants: list[TranscriptParticipant]
+    sections: list[TranscriptSectionBlock]
+    key_quotes: list[str]
+    normalization_mode: Literal["openai", "deterministic_degraded"]
+
+
+class TranscriptSectionPayload(BaseModel):
+    availability: Literal["available", "partial", "missing"]
+    transcript_count_requested: int
+    transcript_count_found: int
+    latest_summary: str
+    prepared_vs_qa_note: str
+    speaker_analysis: list[TranscriptSpeakerAnalysis]
+    key_quotes: list[str]
+    qa_pressure_points: list[str]
+    transcripts: list[TranscriptDocument]
+    speaker_confidence_profile: list[dict[str, Any]]
+    chart_enabled: bool
+    sparse_note: Optional[str] = None
+
+
+class MarketReactionSection(BaseModel):
+    balance_summary: str
+    news_count: int
+    social_count: int
+    news_items: list[NewsArticle]
+    social_items: list[SocialPost]
+    chart_enabled: bool
+    sparse_note: Optional[str] = None
+
+
+class FundamentalsWorkspaceSection(BaseModel):
+    operating_context: str
+    metrics: list[CompactMetric]
+    table: list[FundamentalsSnapshot]
+    trend_series: list[FundamentalsTrendPoint]
+    chart_enabled: bool
+    sparse_note: Optional[str] = None
+
+
+class TranscriptDiscoveryAudit(BaseModel):
+    pages_scanned: int
+    candidates_total: int
+    transcript_like_count: int
+    match_filtered_count: int
+    selected_count: int
+    discarded_near_matches: list[str]
+    fetch_failures: list[str]
+    playwright_fallback_used: bool
+
+
+class DataAuditSection(BaseModel):
+    transcript_discovery: TranscriptDiscoveryAudit
+    source_counts: dict[str, int]
+    dedupe_counts: dict[str, int]
+    parsing_warnings: list[str]
+    missing_items: list[str]
+    normalization_mode: Literal["openai", "deterministic_degraded"]
+    warnings: list[str]
+    confidence_note: str
+
+
 class AnalysisResponse(BaseModel):
+    analysis_version: str
+    ui_copy: CopyDictionary
+    overview: OverviewSection
+    transcript: TranscriptSectionPayload
+    market_reaction: MarketReactionSection
+    fundamentals_workspace: FundamentalsWorkspaceSection
+    data_audit: DataAuditSection
     ticker: str
     transcripts_found: int
     overall_sentiment_score: float

@@ -1,4 +1,4 @@
-"""Core analysis pipeline for transcript sentiment, confidence, and multi-stage synthesis."""
+"""Core earnings analysis pipeline for FinBERT Earnings Signals."""
 
 from __future__ import annotations
 
@@ -9,26 +9,39 @@ from statistics import mean
 from typing import Any, Optional
 
 from .finbert_model import get_engine
+from .normalizer import (
+    build_speaker_analysis,
+    normalize_transcript_document,
+    summarize_transcript_findings,
+)
 from .providers import (
-    TranscriptFetchDiagnostics,
+    FeedFetchAudit,
+    TranscriptDiscoveryAudit as ProviderTranscriptDiscoveryAudit,
+    TranscriptRecord,
     fetch_fundamentals,
-    fetch_last_4_transcripts,
     fetch_news_alpha_vantage,
     fetch_price_volume_history,
     fetch_social_reddit,
+    fetch_transcripts_motley_fool,
 )
 from .schemas import (
     AggregateScores,
     AnalysisResponse,
     AnalystSignal,
     ChartsPayload,
+    CompactMetric,
+    CopyDictionary,
+    DataAuditSection,
     DataHealth,
     FundamentalsSnapshot,
     FundamentalsSummary,
     FundamentalsTrendPoint,
+    FundamentalsWorkspaceSection,
     ManagerDecision,
+    MarketReactionSection,
     NewsArticle,
     NewsSummary,
+    OverviewSection,
     PriceVolumePoint,
     ReportKPI,
     ReportTab,
@@ -42,55 +55,18 @@ from .schemas import (
     SocialPost,
     SocialSummary,
     TraderProposal,
+    TranscriptDiscoveryAudit,
+    TranscriptDocument,
     TranscriptHealth,
     TranscriptQuarterStatus,
     TranscriptResult,
+    TranscriptSectionPayload,
+    TranscriptSpeakerAnalysis,
     WorkflowStage,
 )
 from .settings import Settings
 
-BULLISH_TERMS = {
-    "sequential improvement",
-    "share gain",
-    "share gains",
-    "pipeline expansion",
-    "disciplined guidance",
-    "bookings strength",
-    "better mix",
-    "stable backlog",
-    "design win",
-    "strong demand",
-    "margin expansion",
-}
-
-BEARISH_TERMS = {
-    "moderating demand",
-    "elongated sales cycles",
-    "macro uncertainty",
-    "promotional environment",
-    "margin headwind",
-    "inventory normalization",
-    "customer digestion",
-    "pacing issues",
-    "weaker demand",
-    "softness",
-    "headwind",
-}
-
-HEDGING_TERMS = {
-    "we believe",
-    "we expect",
-    "we remain confident",
-    "as we said",
-    "too early",
-    "cannot comment",
-    "not going to comment",
-    "prudently",
-    "assuming",
-    "could",
-    "may",
-    "might",
-}
+ANALYSIS_VERSION = "2026.04-earnings-signals-v1"
 
 FORWARD_LOOKING_MARKERS = {
     "we expect",
@@ -102,6 +78,84 @@ FORWARD_LOOKING_MARKERS = {
     "next quarter",
     "full year",
 }
+
+RISK_LANGUAGE_MARKERS = {
+    "headwind",
+    "pressure",
+    "uncertain",
+    "volatility",
+    "risk",
+    "challenging",
+    "softness",
+    "downturn",
+}
+
+UI_COPY = CopyDictionary(
+    app_title="FinBERT Earnings Signals",
+    app_subtitle="Transcript-first earnings intelligence with compact market context and auditability.",
+    section_labels={
+        "overview": "Overview",
+        "transcript": "Transcript",
+        "market_reaction": "Market Reaction",
+        "fundamentals": "Fundamentals",
+        "data_audit": "Data Audit",
+    },
+    ui_labels={
+        "run_analysis": "Run Analysis",
+        "ticker": "Ticker",
+        "coverage": "Coverage",
+        "confidence": "Confidence",
+        "missing": "Missing",
+        "degraded": "Degraded",
+    },
+    empty_states={
+        "transcript": "No transcript was retrieved for this ticker in the current scan window.",
+        "speaker_profile": "Not enough speaker diversity for a useful profile chart.",
+        "market_chart": "Not enough timeline depth for a useful sentiment chart.",
+        "fundamentals_chart": "Not enough quarterly depth for a useful fundamentals trend chart.",
+        "social": "No social items met the quality threshold.",
+        "news": "No news items met the quality threshold.",
+    },
+    headings={
+        "hero_kicker": "FinBERT Earnings Signals",
+        "overview": "Overview",
+        "transcript": "Transcript",
+        "market_reaction": "Market Reaction",
+        "fundamentals": "Fundamentals",
+        "data_audit": "Data Audit",
+        "speaker_profile_chart": "Speaker Confidence Profile",
+        "speaker_analysis_table": "Speaker Block Analysis",
+        "transcript_quotes": "Key Quotes",
+        "transcript_pressure": "Q&A Pressure Points",
+        "news_feed": "News Feed",
+        "social_feed": "Social Feed",
+        "sentiment_timeline_chart": "Sentiment Timeline",
+        "fundamentals_chart": "Quarterly Trend",
+        "audit_warnings": "Warnings",
+        "audit_missing": "Missing / Sparse",
+        "audit_dedupe": "Dedupe Stats",
+        "audit_failures": "Discovery Failures",
+        "audit_discarded": "Discarded Near-Matches",
+        "audit_parsing": "Parsing Warnings",
+    },
+    microcopy={
+        "query_note": "Primary transcript source: Motley Fool deterministic discovery and parsing.",
+        "modal_open_action": "Open source post",
+        "modal_close_action": "Close",
+        "news_open_action": "Open source",
+        "social_open_action": "View Full Post",
+    },
+)
+
+
+def _neutral_score() -> dict[str, float | str]:
+    return {
+        "positive": 0.0,
+        "negative": 0.0,
+        "neutral": 1.0,
+        "directional_score": 0.0,
+        "label": "mixed",
+    }
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
@@ -119,68 +173,12 @@ def _normalize_ticker(ticker: str) -> str:
     return cleaned
 
 
-def _split_sentences(text: str) -> list[str]:
-    cleaned = re.sub(r"\s+", " ", text)
-    parts = re.split(r"(?<=[.!?])\s+", cleaned)
-    return [p.strip() for p in parts if len(p.strip()) >= 20]
-
-
-def _contains_any(text: str, keywords: set[str]) -> bool:
-    lowered = text.lower()
-    return any(term in lowered for term in keywords)
-
-
-def _keyword_hits(sentences: list[str], keywords: set[str], limit: int = 6) -> list[str]:
-    hits = [s for s in sentences if _contains_any(s, keywords)]
-    return hits[:limit]
-
-
-def _estimate_confidence(sentences: list[str], hedging_hits: int) -> float:
-    if not sentences:
-        return 40.0
-    numeric_density = sum(1 for s in sentences if re.search(r"\d", s)) / len(sentences)
-    hedging_density = hedging_hits / len(sentences)
-    score = 45 + (numeric_density * 40) - (hedging_density * 35)
-    return _clamp(score)
-
-
-def _estimate_evasiveness(qa_sentences: list[str]) -> tuple[float, list[str]]:
-    if not qa_sentences:
-        return 35.0, []
-    evasive_hits = _keyword_hits(qa_sentences, HEDGING_TERMS, limit=8)
-    density = len(evasive_hits) / max(len(qa_sentences), 1)
-    return _clamp(30 + density * 80), evasive_hits
-
-
-def _qa_section(sentences: list[str]) -> list[str]:
-    start_idx = None
-    for i, sentence in enumerate(sentences):
-        lowered = sentence.lower()
-        if "question-and-answer" in lowered or "q&a" in lowered:
-            start_idx = i
-            break
-    if start_idx is None:
-        return []
-    return sentences[start_idx:]
-
-
-def _pick_quotes(sentence_scores: list[dict[str, Any]], sentiment_key: str, limit: int = 3) -> list[str]:
-    ranked = sorted(sentence_scores, key=lambda x: float(x.get(sentiment_key, 0.0)), reverse=True)
-    quotes: list[str] = []
-    for row in ranked:
-        sentence = str(row.get("sentence", "")).strip()
-        if len(sentence) < 30:
-            continue
-        quotes.append(sentence)
-        if len(quotes) >= limit:
-            break
-    return quotes
-
-
-def _as_percent(value: Optional[float]) -> float:
-    if value is None:
-        return 0.0
-    return float(value)
+def _stance_from_score(score: float) -> str:
+    if score >= 0.12:
+        return "bullish"
+    if score <= -0.12:
+        return "bearish"
+    return "mixed"
 
 
 def _label_from_sentiment_score(score: float) -> str:
@@ -195,174 +193,51 @@ def _label_from_sentiment_score(score: float) -> str:
     return "mixed"
 
 
-def _stance_from_score(score: float) -> str:
-    if score >= 0.12:
-        return "bullish"
-    if score <= -0.12:
-        return "bearish"
-    return "mixed"
-
-
-def _pct_text(value: Optional[float]) -> str:
+def _format_pct(value: Optional[float]) -> str:
     if value is None:
         return "n/a"
-    return f"{value:.2f}%"
+    return f"{value:.1f}%"
 
 
-def _float_text(value: Optional[float]) -> str:
+def _format_float(value: Optional[float]) -> str:
     if value is None:
         return "n/a"
     return f"{value:.2f}"
 
 
-def _fundamentals_signal_score(fundamentals: FundamentalsSummary) -> float:
-    rev_growth = _as_percent(fundamentals.revenue_qoq_growth_pct)
-    eps_growth = _as_percent(fundamentals.eps_qoq_growth_pct)
-    combined = (rev_growth * 0.55) + (eps_growth * 0.45)
-    return _clamp_unit(combined / 50.0)
+def _format_market_cap(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
+    abs_value = abs(value)
+    if abs_value >= 1_000_000_000_000:
+        return f"${value / 1_000_000_000_000:.2f}T"
+    if abs_value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.2f}B"
+    if abs_value >= 1_000_000:
+        return f"${value / 1_000_000:.2f}M"
+    return f"${value:,.0f}"
 
 
-def _build_fundamentals_key_points(fundamentals: FundamentalsSummary) -> list[str]:
-    points = [
-        f"Revenue QoQ growth: {_pct_text(fundamentals.revenue_qoq_growth_pct)}",
-        f"EPS QoQ growth: {_pct_text(fundamentals.eps_qoq_growth_pct)}",
-        f"Trailing PE: {_float_text(fundamentals.trailing_pe)} | Forward PE: {_float_text(fundamentals.forward_pe)}",
-    ]
-    if fundamentals.debt_to_equity is not None:
-        points.append(f"Debt/Equity: {fundamentals.debt_to_equity:.2f}")
-    return points
-
-
-def _top_items_by_score(
-    scored_text: list[tuple[float, str]],
-    positive: bool,
-    limit: int = 3,
-) -> list[str]:
-    filtered = [row for row in scored_text if row[1].strip()]
-    if not filtered:
-        return []
-    ranked = sorted(filtered, key=lambda x: x[0], reverse=positive)
-    return [text for _, text in ranked[:limit]]
-
-
-def _aggregate_scores(
-    transcript_results: list[TranscriptResult],
-    fundamentals: FundamentalsSummary,
-    news_avg_sentiment: float,
-    social_avg_sentiment: float,
-) -> AggregateScores:
-    if transcript_results:
-        avg_directional = mean(t.sentiment.directional_score for t in transcript_results)
-        avg_outlook = mean(t.outlook_score for t in transcript_results)
-        avg_confidence = mean(t.confidence_score for t in transcript_results)
-        avg_evasive = mean(t.evasiveness_score for t in transcript_results)
-    else:
-        avg_directional = 0.0
-        avg_outlook = 50.0
-        avg_confidence = 50.0
-        avg_evasive = 35.0
-
-    rev_growth = _as_percent(fundamentals.revenue_qoq_growth_pct)
-    eps_growth = _as_percent(fundamentals.eps_qoq_growth_pct)
-    fundamentals_boost = (rev_growth * 0.18) + (eps_growth * 0.24)
-    news_boost = news_avg_sentiment * 12.0
-    social_boost = social_avg_sentiment * 8.0
-
-    strength = _clamp(55 + (avg_directional * 35) + fundamentals_boost + news_boost + social_boost)
-
-    return AggregateScores(
-        company_strength_score=round(strength, 2),
-        outlook_score=round(_clamp(avg_outlook), 2),
-        confidence_score=round(_clamp(avg_confidence), 2),
-        evasiveness_score=round(_clamp(avg_evasive), 2),
-        sentiment_label=_label_from_sentiment_score(avg_directional),
-    )
-
-
-def _compute_overall_sentiment(
-    transcript_results: list[TranscriptResult],
-    fundamentals: FundamentalsSummary,
-    news_avg_sentiment: float,
-    social_avg_sentiment: float,
-) -> tuple[float, str]:
-    transcript_component = (
-        mean(t.sentiment.directional_score for t in transcript_results)
-        if transcript_results
-        else 0.0
-    )
-
-    fundamentals_component = _fundamentals_signal_score(fundamentals)
-
-    if transcript_results:
-        score = (
-            (transcript_component * 0.45)
-            + (news_avg_sentiment * 0.25)
-            + (social_avg_sentiment * 0.15)
-            + (fundamentals_component * 0.15)
-        )
-    else:
-        score = (
-            (news_avg_sentiment * 0.45)
-            + (social_avg_sentiment * 0.25)
-            + (fundamentals_component * 0.30)
-        )
-
-    normalized = _clamp_unit(score)
-    return round(normalized, 4), _label_from_sentiment_score(normalized)
-
-
-def _build_workflow(
-    transcripts_found: int,
-    news_count: int,
-    social_count: int,
-    decision_action: str,
-) -> list[WorkflowStage]:
-    ingestion_ready = transcripts_found + news_count + social_count
-    ingestion_status = "completed" if ingestion_ready >= 2 else "partial"
-
-    return [
-        WorkflowStage(
-            key="analyst_ingestion",
-            title="Analyst Ingestion",
-            status=ingestion_status,
-            detail=f"Transcripts {transcripts_found}, news {news_count}, social posts {social_count}",
-        ),
-        WorkflowStage(
-            key="research_team",
-            title="Research Team Debate",
-            status="completed",
-            detail="Bull and bear evidence synthesized from analyst outputs.",
-        ),
-        WorkflowStage(
-            key="trader_proposal",
-            title="Trader Proposal",
-            status="completed",
-            detail="Trader generated a directional plan from combined evidence.",
-        ),
-        WorkflowStage(
-            key="risk_management",
-            title="Risk Management",
-            status="completed",
-            detail="Risk team produced aggressive/neutral/conservative constraints.",
-        ),
-        WorkflowStage(
-            key="manager_decision",
-            title="Manager Decision",
-            status="completed" if decision_action != "hold" else "partial",
-            detail="Final execution decision applied with controls.",
-        ),
-    ]
+def _score_text(text: str, engine) -> dict[str, float | str]:
+    if engine is None or not text.strip():
+        return _neutral_score()
+    try:
+        return engine.score_text(text)
+    except Exception:
+        return _neutral_score()
 
 
 def _parse_news_datetime(raw: Optional[str]) -> Optional[str]:
     if not raw:
         return None
     try:
-        if "T" in raw:
+        if "T" in raw and raw.isdigit() is False:
             dt = datetime.strptime(raw, "%Y%m%dT%H%M%S")
             return dt.strftime("%Y-%m-%d")
-        dt = datetime.fromisoformat(raw)
-        return dt.strftime("%Y-%m-%d")
+        if raw.isdigit() and len(raw) == 8:
+            dt = datetime.strptime(raw, "%Y%m%d")
+            return dt.strftime("%Y-%m-%d")
+        return datetime.fromisoformat(raw).strftime("%Y-%m-%d")
     except Exception:
         return None
 
@@ -380,7 +255,7 @@ def _build_sentiment_timeline(news: list[NewsArticle], social: list[SocialPost])
             day = datetime.fromtimestamp(item.created_utc, tz=timezone.utc).strftime("%Y-%m-%d")
             buckets[day]["social"].append(item.sentiment_score)
 
-    points: list[SentimentTimelinePoint] = []
+    timeline: list[SentimentTimelinePoint] = []
     for day in sorted(buckets.keys()):
         news_scores = buckets[day]["news"]
         social_scores = buckets[day]["social"]
@@ -394,7 +269,7 @@ def _build_sentiment_timeline(news: list[NewsArticle], social: list[SocialPost])
             blended_values.append(social_avg)
         blended = mean(blended_values) if blended_values else 0.0
 
-        points.append(
+        timeline.append(
             SentimentTimelinePoint(
                 date=day,
                 news=round(news_avg, 4),
@@ -403,226 +278,444 @@ def _build_sentiment_timeline(news: list[NewsArticle], social: list[SocialPost])
             )
         )
 
-    return points
+    return timeline
+
+
+def _build_transcript_quarter_status(raw_records: list[TranscriptRecord]) -> list[str]:
+    return [f"{record.year}-Q{record.quarter}" for record in raw_records]
+
+
+def _compact_warnings(warnings: list[str], found: int, requested: int) -> list[str]:
+    compact = [f"Transcripts {found}/{requested} found."]
+    compact.extend(warnings[:6])
+    return compact[:8]
+
+
+def _aggregate_scores(
+    transcript_speaker_analysis: list[TranscriptSpeakerAnalysis],
+    fundamentals: FundamentalsSummary,
+    news_avg_sentiment: float,
+    social_avg_sentiment: float,
+) -> AggregateScores:
+    if transcript_speaker_analysis:
+        avg_directional = mean(s.sentiment_direction for s in transcript_speaker_analysis)
+        avg_outlook = mean(s.forward_looking_strength for s in transcript_speaker_analysis)
+        avg_confidence = mean(s.confidence for s in transcript_speaker_analysis)
+        avg_evasive = mean(s.evasiveness for s in transcript_speaker_analysis)
+    else:
+        avg_directional = 0.0
+        avg_outlook = 50.0
+        avg_confidence = 45.0
+        avg_evasive = 40.0
+
+    rev_growth = float(fundamentals.revenue_qoq_growth_pct or 0.0)
+    eps_growth = float(fundamentals.eps_qoq_growth_pct or 0.0)
+
+    strength = _clamp(
+        52
+        + (avg_directional * 32)
+        + (news_avg_sentiment * 10)
+        + (social_avg_sentiment * 6)
+        + (rev_growth * 0.18)
+        + (eps_growth * 0.20)
+    )
+
+    return AggregateScores(
+        company_strength_score=round(strength, 2),
+        outlook_score=round(_clamp(avg_outlook), 2),
+        confidence_score=round(_clamp(avg_confidence), 2),
+        evasiveness_score=round(_clamp(avg_evasive), 2),
+        sentiment_label=_label_from_sentiment_score(avg_directional),
+    )
 
 
 def _build_report_tabs(
-    symbol: str,
-    overall_score: float,
-    overall_label: str,
-    aggregate: AggregateScores,
-    analyst_team: list[AnalystSignal],
-    research_team: ResearchDebate,
-    trader_plan: TraderProposal,
-    risk_management: RiskManagementSummary,
-    manager_decision: ManagerDecision,
-    data_health: DataHealth,
+    overview: OverviewSection,
+    transcript_section: TranscriptSectionPayload,
+    market_reaction: MarketReactionSection,
+    fundamentals_section: FundamentalsWorkspaceSection,
+    data_audit: DataAuditSection,
 ) -> list[ReportTab]:
-    analyst_rows = [
-        [
-            report.name,
-            report.stance,
-            f"{report.signal_score:+.3f}",
-            f"{report.confidence_score:.1f}",
-        ]
-        for report in analyst_team
-    ]
-
-    summary_table = ReportTable(
-        title="Core KPI",
+    overview_table = ReportTable(
+        title="Overview Metrics",
         columns=["Metric", "Value"],
+        rows=[[m.label, m.value] for m in overview.metrics],
+    )
+
+    transcript_table = ReportTable(
+        title="Speaker Analysis",
+        columns=[
+            "Speaker",
+            "Section",
+            "Sentiment",
+            "Confidence",
+            "Evasiveness",
+            "Topic",
+        ],
         rows=[
-            ["Overall sentiment", f"{overall_label} ({overall_score:+.4f})"],
-            ["Company strength", f"{aggregate.company_strength_score:.2f}"],
-            ["Outlook", f"{aggregate.outlook_score:.2f}"],
-            ["Confidence", f"{aggregate.confidence_score:.2f}"],
-            ["Evasiveness", f"{aggregate.evasiveness_score:.2f}"],
+            [
+                s.speaker,
+                s.section_type,
+                f"{s.sentiment_direction:+.3f}",
+                f"{s.confidence:.1f}",
+                f"{s.evasiveness:.1f}",
+                s.topic_label,
+            ]
+            for s in transcript_section.speaker_analysis[:30]
         ],
     )
 
-    analyst_table = ReportTable(
-        title="Analyst Signal Matrix",
-        columns=["Analyst", "Stance", "Signal", "Confidence"],
-        rows=analyst_rows,
-    )
-
-    research_table = ReportTable(
-        title="Debate Scores",
-        columns=["Measure", "Value"],
+    market_table = ReportTable(
+        title="Market Reaction Coverage",
+        columns=["Source", "Count"],
         rows=[
-            ["Buy evidence", f"{research_team.buy_evidence_score:.2f}"],
-            ["Sell evidence", f"{research_team.sell_evidence_score:.2f}"],
+            ["News", str(market_reaction.news_count)],
+            ["Social", str(market_reaction.social_count)],
         ],
     )
 
-    trader_table = ReportTable(
-        title="Trader Decision",
-        columns=["Field", "Value"],
+    fundamentals_table = ReportTable(
+        title="Fundamentals Snapshot",
+        columns=["Quarter", "Revenue", "Net Income", "Reported EPS", "EPS Estimate"],
         rows=[
-            ["Action", trader_plan.action.upper()],
-            ["Conviction", f"{trader_plan.conviction_score:.2f}"],
-            ["Horizon", trader_plan.horizon],
-            ["Thesis", trader_plan.thesis],
+            [
+                row.quarter,
+                _format_float(row.revenue),
+                _format_float(row.net_income),
+                _format_float(row.reported_eps),
+                _format_float(row.eps_estimate),
+            ]
+            for row in fundamentals_section.table
         ],
     )
 
-    risk_rows = [
-        [view.profile, f"{view.max_position_pct:.1f}%", view.recommendation]
-        for view in risk_management.views
-    ]
-    risk_rows.append(["manager_action", manager_decision.action, " | ".join(manager_decision.rationale)])
-
-    risk_table = ReportTable(
-        title="Risk + Final Verdict",
-        columns=["Role", "Constraint", "Detail"],
-        rows=risk_rows,
+    audit_table = ReportTable(
+        title="Transcript Discovery Audit",
+        columns=["Item", "Value"],
+        rows=[
+            ["Pages scanned", str(data_audit.transcript_discovery.pages_scanned)],
+            ["Candidates total", str(data_audit.transcript_discovery.candidates_total)],
+            ["Transcript-like titles", str(data_audit.transcript_discovery.transcript_like_count)],
+            ["Match-filtered", str(data_audit.transcript_discovery.match_filtered_count)],
+            ["Selected", str(data_audit.transcript_discovery.selected_count)],
+            ["Normalization", data_audit.normalization_mode],
+        ],
     )
 
-    health_rows = [
-        [o.quarter, o.status, o.detail or ""]
-        for o in data_health.transcripts.outcomes
-    ]
-    health_table = ReportTable(
-        title="Transcript Retrieval Outcomes",
-        columns=["Quarter", "Status", "Detail"],
-        rows=health_rows,
-    )
-
-    tabs = [
+    return [
         ReportTab(
-            id="summary",
-            title="Summary",
+            id="overview",
+            title="Overview",
             markdown=(
-                f"# {symbol} Summary\n\n"
-                f"Overall stance: **{overall_label}** (`{overall_score:+.4f}`)\n\n"
-                f"Key orientation:\n"
-                f"- Strength: {aggregate.company_strength_score:.2f}\n"
-                f"- Outlook: {aggregate.outlook_score:.2f}\n"
-                f"- Confidence: {aggregate.confidence_score:.2f}\n"
-                f"- Evasiveness: {aggregate.evasiveness_score:.2f}\n\n"
-                "Deterministic KPI values are in the table below."
+                f"# {overview.ticker} Overview\n\n"
+                f"{overview.executive_summary}\n\n"
+                "## Key takeaways\n- "
+                + "\n- ".join(overview.key_takeaways)
             ),
-            kpis=[
-                ReportKPI(label="overall", value=f"{overall_label} ({overall_score:+.4f})"),
-                ReportKPI(label="strength", value=f"{aggregate.company_strength_score:.2f}"),
-                ReportKPI(label="outlook", value=f"{aggregate.outlook_score:.2f}"),
-            ],
-            tables=[summary_table],
+            kpis=[ReportKPI(label=m.label, value=m.value) for m in overview.metrics],
+            tables=[overview_table],
         ),
         ReportTab(
-            id="analyst",
-            title="Analyst Reports",
+            id="transcript",
+            title="Transcript",
             markdown=(
-                "# Analyst Signal Matrix\n\n"
-                "Structured matrix values are in the table below.\n\n"
-                + "\n".join(
-                    [f"## {r.name.title()} Analyst\n- " + "\n- ".join(r.key_points[:4]) for r in analyst_team]
-                )
+                "# Transcript\n\n"
+                f"{transcript_section.latest_summary}\n\n"
+                f"Prepared remarks vs Q&A: {transcript_section.prepared_vs_qa_note}\n\n"
+                "## Q&A pressure points\n- "
+                + "\n- ".join(transcript_section.qa_pressure_points or ["No pressure points were identified."])
             ),
             kpis=[
-                ReportKPI(label="analysts", value=str(len(analyst_team))),
+                ReportKPI(
+                    label="coverage",
+                    value=f"{transcript_section.transcript_count_found}/{transcript_section.transcript_count_requested}",
+                ),
+                ReportKPI(label="availability", value=transcript_section.availability),
             ],
-            tables=[analyst_table],
+            tables=[transcript_table],
         ),
         ReportTab(
-            id="research",
-            title="Research Debate",
+            id="market_reaction",
+            title="Market Reaction",
             markdown=(
-                "# Research Debate\n\n"
-                f"{research_team.discussion_summary}\n\n"
-                "Debate score breakdown is in the table below.\n\n"
-                "## Bullish points\n- "
-                + "\n- ".join(research_team.bullish_points)
-                + "\n\n## Bearish points\n- "
-                + "\n- ".join(research_team.bearish_points)
+                "# Market Reaction\n\n"
+                f"{market_reaction.balance_summary}\n\n"
+                f"News items: {market_reaction.news_count} | Social items: {market_reaction.social_count}"
             ),
             kpis=[
-                ReportKPI(label="buy evidence", value=f"{research_team.buy_evidence_score:.2f}"),
-                ReportKPI(label="sell evidence", value=f"{research_team.sell_evidence_score:.2f}"),
+                ReportKPI(label="news", value=str(market_reaction.news_count)),
+                ReportKPI(label="social", value=str(market_reaction.social_count)),
             ],
-            tables=[research_table],
+            tables=[market_table],
         ),
         ReportTab(
-            id="trader",
-            title="Trader Plan",
-            markdown="# Trader Plan\n\nDecision rows are shown in the table below.",
-            kpis=[
-                ReportKPI(label="action", value=trader_plan.action.upper()),
-                ReportKPI(label="conviction", value=f"{trader_plan.conviction_score:.2f}"),
-            ],
-            tables=[trader_table],
-        ),
-        ReportTab(
-            id="risk_manager",
-            title="Risk + Final Verdict",
+            id="fundamentals",
+            title="Fundamentals",
             markdown=(
-                "# Risk + Final Verdict\n\n"
-                f"Consensus: {risk_management.consensus}\n\n"
-                "Risk constraints and final verdict are in the table below.\n\n"
-                "## Execution plan\n- "
-                + "\n- ".join(manager_decision.execution_plan)
+                "# Fundamentals\n\n"
+                f"{fundamentals_section.operating_context}"
+            ),
+            kpis=[ReportKPI(label=m.label, value=m.value) for m in fundamentals_section.metrics],
+            tables=[fundamentals_table],
+        ),
+        ReportTab(
+            id="data_audit",
+            title="Data Audit",
+            markdown=(
+                "# Data Audit\n\n"
+                f"Normalization mode: {data_audit.normalization_mode}\n\n"
+                "## Warnings\n- "
+                + "\n- ".join(data_audit.warnings or ["No warnings."])
             ),
             kpis=[
-                ReportKPI(label="decision", value=manager_decision.action.upper()),
-                ReportKPI(label="risk views", value=str(len(risk_management.views))),
+                ReportKPI(label="normalization", value=data_audit.normalization_mode),
+                ReportKPI(label="warnings", value=str(len(data_audit.warnings))),
             ],
-            tables=[risk_table],
-        ),
-        ReportTab(
-            id="data_health",
-            title="Data Health",
-            markdown=(
-                "# Data Health\n\n"
-                f"Requested transcript quarters: {len(data_health.transcripts.requested_quarters)}\n\n"
-                f"Found: {len(data_health.transcripts.found_quarters)}\n"
-                f"Missing: {len(data_health.transcripts.missing_quarters)}\n"
-                f"Errors: {len(data_health.transcripts.errors)}\n\n"
-                + "Per-quarter outcomes are in the table below.\n\n## Compact warnings\n- "
-                + "\n- ".join(data_health.warnings_compact)
-            ),
-            kpis=[
-                ReportKPI(label="transcripts found", value=str(len(data_health.transcripts.found_quarters))),
-                ReportKPI(label="transcripts missing", value=str(len(data_health.transcripts.missing_quarters))),
-            ],
-            tables=[health_table],
+            tables=[audit_table],
         ),
     ]
 
-    return tabs
+
+def _workflow_from_sections(transcript_availability: str) -> list[WorkflowStage]:
+    transcript_status = "completed" if transcript_availability == "available" else "partial"
+    return [
+        WorkflowStage(key="overview", title="Overview", status="completed", detail="Run-level summary generated."),
+        WorkflowStage(
+            key="transcript",
+            title="Transcript",
+            status=transcript_status,
+            detail="Transcript normalization and speaker analysis completed.",
+        ),
+        WorkflowStage(
+            key="market_reaction",
+            title="Market Reaction",
+            status="completed",
+            detail="News and social feeds ranked and curated.",
+        ),
+        WorkflowStage(
+            key="fundamentals",
+            title="Fundamentals",
+            status="completed",
+            detail="Quarterly operating context assembled.",
+        ),
+        WorkflowStage(
+            key="data_audit",
+            title="Data Audit",
+            status="completed",
+            detail="Source coverage and parsing diagnostics assembled.",
+        ),
+    ]
 
 
-def _compact_warnings(warnings: list[str], diagnostics: TranscriptFetchDiagnostics) -> list[str]:
-    out: list[str] = []
+def _build_legacy_transcript_results(
+    normalized_docs: list[TranscriptDocument],
+    speaker_analysis_by_url: dict[str, list[TranscriptSpeakerAnalysis]],
+) -> list[TranscriptResult]:
+    out: list[TranscriptResult] = []
+    for doc in normalized_docs:
+        analysis_rows = speaker_analysis_by_url.get(doc.source_url or "", [])
+        directional = mean(a.sentiment_direction for a in analysis_rows) if analysis_rows else 0.0
+        confidence = mean(a.confidence for a in analysis_rows) if analysis_rows else 45.0
+        outlook = mean(a.forward_looking_strength for a in analysis_rows) if analysis_rows else 45.0
+        evasiveness = mean(a.evasiveness for a in analysis_rows) if analysis_rows else 40.0
 
-    if diagnostics.requested_quarters:
+        published = doc.published_date or ""
+        year = int(published[:4]) if len(published) >= 4 and published[:4].isdigit() else datetime.now().year
+        month = int(published[5:7]) if len(published) >= 7 and published[5:7].isdigit() else 1
+        quarter = ((month - 1) // 3) + 1
+
+        bullish_signals = [
+            row.evidence_snippets[0]
+            for row in analysis_rows
+            if row.sentiment_direction >= 0.12 and row.evidence_snippets
+        ][:4]
+        bearish_signals = [
+            row.evidence_snippets[0]
+            for row in analysis_rows
+            if row.sentiment_direction <= -0.12 and row.evidence_snippets
+        ][:4]
+        evasive_signals = [
+            row.evidence_snippets[0]
+            for row in analysis_rows
+            if row.evasiveness >= 55 and row.evidence_snippets
+        ][:4]
+
         out.append(
-            f"Transcripts {len(diagnostics.found_quarters)}/{len(diagnostics.requested_quarters)} found."
+            TranscriptResult(
+                year=year,
+                quarter=quarter,
+                date=doc.published_date,
+                source=doc.source,
+                sentiment=SentimentBreakdown(
+                    positive=max(directional, 0),
+                    negative=max(-directional, 0),
+                    neutral=max(0.0, 1.0 - abs(directional)),
+                    directional_score=round(directional, 4),
+                    label=_stance_from_score(directional),
+                ),
+                confidence_score=round(_clamp(confidence), 2),
+                outlook_score=round(_clamp(outlook), 2),
+                evasiveness_score=round(_clamp(evasiveness), 2),
+                bullish_signals=bullish_signals,
+                bearish_signals=bearish_signals,
+                evasive_signals=evasive_signals,
+                decision_relevant_quotes=doc.key_quotes[:4],
+            )
         )
-
-    if diagnostics.errors:
-        out.append(f"Transcript retrieval errors: {len(diagnostics.errors)}")
-
-    for warning in warnings[:4]:
-        out.append(warning)
-
-    if not out:
-        out.append("No critical data health warnings.")
-
     return out
+
+
+def _build_legacy_fields(
+    *,
+    aggregate: AggregateScores,
+    transcript_results: list[TranscriptResult],
+    fundamentals: FundamentalsSummary,
+    news: list[NewsArticle],
+    social: list[SocialPost],
+) -> tuple[list[AnalystSignal], ResearchDebate, TraderProposal, RiskManagementSummary, ManagerDecision]:
+    transcript_signal = (
+        mean(item.sentiment.directional_score for item in transcript_results)
+        if transcript_results
+        else 0.0
+    )
+    news_signal = mean(item.sentiment_score for item in news) if news else 0.0
+    social_signal = mean(item.sentiment_score for item in social) if social else 0.0
+
+    fundamentals_signal = _clamp_unit(
+        ((fundamentals.revenue_qoq_growth_pct or 0.0) * 0.55 + (fundamentals.eps_qoq_growth_pct or 0.0) * 0.45)
+        / 50.0
+    )
+
+    analyst_team = [
+        AnalystSignal(
+            name="transcript",
+            stance=_stance_from_score(transcript_signal),
+            signal_score=round(transcript_signal, 4),
+            confidence_score=round(mean((t.confidence_score for t in transcript_results)), 2)
+            if transcript_results
+            else 40.0,
+            key_points=[
+                f"Transcripts analyzed: {len(transcript_results)}",
+                f"Average outlook: {mean((t.outlook_score for t in transcript_results)):.1f}" if transcript_results else "Average outlook: n/a",
+                f"Average evasiveness: {mean((t.evasiveness_score for t in transcript_results)):.1f}" if transcript_results else "Average evasiveness: n/a",
+            ],
+            evidence=[quote for t in transcript_results for quote in t.decision_relevant_quotes][:4]
+            or ["No transcript quotes available."],
+        ),
+        AnalystSignal(
+            name="fundamentals",
+            stance=_stance_from_score(fundamentals_signal),
+            signal_score=round(fundamentals_signal, 4),
+            confidence_score=round(_clamp(42 + len(fundamentals.quarterly) * 12), 2),
+            key_points=[
+                f"Revenue QoQ growth: {_format_pct(fundamentals.revenue_qoq_growth_pct)}",
+                f"EPS QoQ growth: {_format_pct(fundamentals.eps_qoq_growth_pct)}",
+                f"Trailing PE: {_format_float(fundamentals.trailing_pe)} | Forward PE: {_format_float(fundamentals.forward_pe)}",
+            ],
+            evidence=[
+                f"{q.quarter}: revenue={_format_float(q.revenue)}, net_income={_format_float(q.net_income)}"
+                for q in fundamentals.quarterly[:3]
+            ]
+            or ["No recent fundamentals snapshots available."],
+        ),
+        AnalystSignal(
+            name="news",
+            stance=_stance_from_score(news_signal),
+            signal_score=round(news_signal, 4),
+            confidence_score=round(_clamp(30 + len(news) * 4), 2),
+            key_points=[
+                f"Articles analyzed: {len(news)}",
+                f"Average directional score: {news_signal:.3f}",
+                f"Dominant stance: {_stance_from_score(news_signal)}",
+            ],
+            evidence=[item.title for item in news[:4]] or ["No news evidence available."],
+        ),
+        AnalystSignal(
+            name="social",
+            stance=_stance_from_score(social_signal),
+            signal_score=round(social_signal, 4),
+            confidence_score=round(_clamp(30 + len(social) * 4), 2),
+            key_points=[
+                f"Posts analyzed: {len(social)}",
+                f"Average directional score: {social_signal:.3f}",
+                f"Top relevance: {max((item.relevance_score for item in social), default=0):.2f}",
+            ],
+            evidence=[item.title for item in social[:4]] or ["No social evidence available."],
+        ),
+    ]
+
+    composite = transcript_signal * 0.45 + fundamentals_signal * 0.2 + news_signal * 0.2 + social_signal * 0.15
+
+    research_team = ResearchDebate(
+        bullish_points=[f"{a.name}: {a.key_points[0]}" for a in analyst_team if a.signal_score > 0.05]
+        or ["No strong bullish cluster detected."],
+        bearish_points=[f"{a.name}: {a.key_points[0]}" for a in analyst_team if a.signal_score < -0.05]
+        or ["No strong bearish cluster detected."],
+        discussion_summary=(
+            "Legacy field: directional synthesis retained for compatibility. "
+            "Use canonical overview/transcript sections for current UX."
+        ),
+        buy_evidence_score=round(_clamp(50 + composite * 35), 2),
+        sell_evidence_score=round(_clamp(50 - composite * 35), 2),
+    )
+
+    trader_plan = TraderProposal(
+        action="hold",
+        conviction_score=round(_clamp(abs(composite) * 100), 2),
+        thesis="Legacy compatibility field. Execution guidance is intentionally suppressed in canonical sections.",
+        horizon="n/a",
+    )
+
+    risk_management = RiskManagementSummary(
+        views=[
+            RiskView(profile="aggressive", recommendation="Legacy compatibility field.", max_position_pct=0),
+            RiskView(profile="neutral", recommendation="Legacy compatibility field.", max_position_pct=0),
+            RiskView(profile="conservative", recommendation="Legacy compatibility field.", max_position_pct=0),
+        ],
+        consensus="Legacy compatibility field. Use transcript/data audit sections for analysis context.",
+    )
+
+    manager_decision = ManagerDecision(
+        action="hold",
+        rationale=[
+            "Legacy compatibility field.",
+            f"Aggregate confidence: {aggregate.confidence_score:.1f}",
+            f"Aggregate evasiveness: {aggregate.evasiveness_score:.1f}",
+        ],
+        execution_plan=["Execution guidance removed from canonical interface in this release."],
+    )
+
+    return analyst_team, research_team, trader_plan, risk_management, manager_decision
 
 
 def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
     symbol = _normalize_ticker(ticker)
 
-    transcripts, transcript_warnings, transcript_diagnostics = fetch_last_4_transcripts(symbol, settings)
-    news_records, news_warnings = fetch_news_alpha_vantage(symbol, settings, limit=12)
-    social_records, social_warnings = fetch_social_reddit(symbol, settings, limit=12)
+    fundamentals_dict = fetch_fundamentals(symbol)
+    company_name = str(fundamentals_dict.get("company_name") or symbol)
+
+    transcript_raw, transcript_warnings, transcript_diagnostics, transcript_discovery = fetch_transcripts_motley_fool(
+        symbol=symbol,
+        company_name=company_name,
+        settings=settings,
+        target_count=settings.transcript_target_count,
+    )
+
+    news_records, news_warnings, news_audit = fetch_news_alpha_vantage(
+        symbol,
+        settings,
+        limit=16,
+        pool_size=80,
+    )
+    social_records, social_warnings, social_audit = fetch_social_reddit(
+        symbol,
+        settings,
+        limit=16,
+        pool_size=120,
+    )
+
     warnings = transcript_warnings + news_warnings + social_warnings
 
-    if not transcripts and not news_records and not social_records:
-        warnings.append("No transcript, news, or social records were available for this query.")
-
-    fundamentals_dict = fetch_fundamentals(symbol)
     fundamentals = FundamentalsSummary(
         currency=fundamentals_dict.get("currency"),
         market_cap=fundamentals_dict.get("market_cap"),
@@ -634,23 +727,12 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         eps_qoq_growth_pct=fundamentals_dict.get("eps_qoq_growth_pct"),
     )
 
-    engine = (
-        get_engine(settings.finbert_model_name)
-        if (transcripts or news_records or social_records)
-        else None
-    )
+    engine = get_engine(settings.finbert_model_name)
 
     news: list[NewsArticle] = []
-    news_scored_text: list[tuple[float, str]] = []
     for item in news_records:
-        text = f"{item.title}. {item.summary}".strip()
-        if engine is not None and text:
-            scored = engine.score_text(text)
-            directional = float(scored["directional_score"])
-        else:
-            directional = float(item.sentiment_score)
-
-        stance = _stance_from_score(directional)
+        score = _score_text(f"{item.title}. {item.summary}", engine)
+        directional = float(score.get("directional_score", 0.0))
         news.append(
             NewsArticle(
                 title=item.title,
@@ -659,337 +741,285 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
                 source=item.source,
                 time_published=item.time_published,
                 sentiment_score=round(directional, 4),
-                sentiment_label=stance,
+                sentiment_label=_stance_from_score(directional),
             )
         )
-        news_scored_text.append((directional, item.title))
-
-    news_avg_sentiment = mean(item.sentiment_score for item in news) if news else 0.0
-    news_summary = NewsSummary(
-        article_count=len(news),
-        avg_sentiment_score=round(news_avg_sentiment, 4),
-        sentiment_label=_stance_from_score(news_avg_sentiment),
-    )
 
     social: list[SocialPost] = []
-    social_scored_text: list[tuple[float, str]] = []
     for item in social_records:
-        text = f"{item.title}. {item.body}".strip()
-        if engine is not None and text:
-            scored = engine.score_text(text)
-            directional = float(scored["directional_score"])
-        else:
-            directional = 0.0
-
-        stance = _stance_from_score(directional)
+        score = _score_text(f"{item.title}. {item.body}", engine)
+        directional = float(score.get("directional_score", 0.0))
         social.append(
             SocialPost(
                 source=item.source,
                 title=item.title,
                 body=item.body,
+                excerpt=item.excerpt,
                 url=item.url,
                 subreddit=item.subreddit,
                 created_utc=item.created_utc,
                 relevance_score=round(item.relevance_score, 3),
                 sentiment_score=round(directional, 4),
-                sentiment_label=stance,
+                sentiment_label=_stance_from_score(directional),
             )
         )
-        social_scored_text.append((directional, f"r/{item.subreddit or 'unknown'}: {item.title}"))
 
-    social_avg_sentiment = mean(item.sentiment_score for item in social) if social else 0.0
+    news_avg = mean(n.sentiment_score for n in news) if news else 0.0
+    social_avg = mean(s.sentiment_score for s in social) if social else 0.0
+
+    news_summary = NewsSummary(
+        article_count=len(news),
+        avg_sentiment_score=round(news_avg, 4),
+        sentiment_label=_stance_from_score(news_avg),
+    )
     social_summary = SocialSummary(
         post_count=len(social),
-        avg_sentiment_score=round(social_avg_sentiment, 4),
-        sentiment_label=_stance_from_score(social_avg_sentiment),
+        avg_sentiment_score=round(social_avg, 4),
+        sentiment_label=_stance_from_score(social_avg),
     )
 
-    transcript_results: list[TranscriptResult] = []
-    transcript_directionals: list[float] = []
+    normalized_documents: list[TranscriptDocument] = []
+    normalization_warnings: list[str] = []
+    speaker_analysis_by_url: dict[str, list[TranscriptSpeakerAnalysis]] = {}
+    all_speaker_analysis: list[TranscriptSpeakerAnalysis] = []
 
-    for transcript in transcripts:
-        if engine is None:
-            break
-        sentences = _split_sentences(transcript.content)
-        if len(sentences) > 250:
-            sentences = sentences[:250]
-            warnings.append(
-                f"{symbol} {transcript.year}-Q{transcript.quarter}: capped sentence analysis at 250 for local latency."
-            )
-
-        sentiment_raw = engine.score_text(transcript.content)
-        sentence_scores = engine.classify_sentences(sentences)
-
-        bullish_hits = _keyword_hits(sentences, BULLISH_TERMS)
-        bearish_hits = _keyword_hits(sentences, BEARISH_TERMS)
-        qa_sentences = _qa_section(sentences)
-        evasiveness_score, evasive_hits = _estimate_evasiveness(qa_sentences)
-
-        forward_sentences = [s for s in sentences if _contains_any(s, FORWARD_LOOKING_MARKERS)]
-        if forward_sentences:
-            forward_sentiment = engine.score_text(" ".join(forward_sentences))
-            outlook_score = _clamp(50 + (forward_sentiment["directional_score"] * 45))
-        else:
-            outlook_score = _clamp(50 + (sentiment_raw["directional_score"] * 35))
-
-        confidence_score = _estimate_confidence(sentences, len(evasive_hits))
-
-        top_positive_quotes = _pick_quotes(sentence_scores, "positive", limit=2)
-        top_negative_quotes = _pick_quotes(sentence_scores, "negative", limit=2)
-        quotes = top_positive_quotes + top_negative_quotes
-
-        directional = round(float(sentiment_raw["directional_score"]), 4)
-        transcript_directionals.append(directional)
-
-        transcript_results.append(
-            TranscriptResult(
-                year=transcript.year,
-                quarter=transcript.quarter,
-                date=transcript.date,
-                source=transcript.source,
-                sentiment=SentimentBreakdown(
-                    positive=round(float(sentiment_raw["positive"]), 4),
-                    negative=round(float(sentiment_raw["negative"]), 4),
-                    neutral=round(float(sentiment_raw["neutral"]), 4),
-                    directional_score=directional,
-                    label=_stance_from_score(directional),
-                ),
-                confidence_score=round(confidence_score, 2),
-                outlook_score=round(outlook_score, 2),
-                evasiveness_score=round(evasiveness_score, 2),
-                bullish_signals=bullish_hits,
-                bearish_signals=bearish_hits,
-                evasive_signals=evasive_hits,
-                decision_relevant_quotes=quotes,
-            )
+    for record in transcript_raw:
+        normalized = normalize_transcript_document(
+            ticker=symbol,
+            company_name=company_name,
+            source=record.source,
+            source_url=record.source_url,
+            title=record.title,
+            published_date=record.date,
+            content=record.content,
+            extraction_confidence=record.extraction_confidence,
+            parsing_warnings=record.parsing_warnings,
+            participants=record.participants,
+            settings=settings,
         )
+        normalized_documents.append(normalized.document)
+        normalization_warnings.extend(normalized.warnings)
 
-    aggregate = _aggregate_scores(
-        transcript_results,
-        fundamentals,
-        news_avg_sentiment,
-        social_avg_sentiment,
-    )
-    overall_score, overall_label = _compute_overall_sentiment(
-        transcript_results,
-        fundamentals,
-        news_avg_sentiment,
-        social_avg_sentiment,
-    )
+        analysis_rows = build_speaker_analysis(normalized.document.sections, lambda text: _score_text(text, engine))
+        speaker_analysis_by_url[normalized.document.source_url or f"doc-{len(speaker_analysis_by_url)}"] = analysis_rows
+        all_speaker_analysis.extend(analysis_rows)
 
-    transcript_signal = mean(transcript_directionals) if transcript_directionals else 0.0
-    transcript_confidence = (
-        mean(t.confidence_score for t in transcript_results) if transcript_results else 40.0
-    )
-    transcript_bull = [signal for t in transcript_results for signal in t.bullish_signals][:3]
-    transcript_bear = [signal for t in transcript_results for signal in t.bearish_signals][:3]
-    transcript_quotes = [quote for t in transcript_results for quote in t.decision_relevant_quotes][:4]
+    transcript_summary, transcript_takeaways, pressure_points = summarize_transcript_findings(all_speaker_analysis)
 
-    fundamentals_signal = _fundamentals_signal_score(fundamentals)
-    fundamentals_points = _build_fundamentals_key_points(fundamentals)
+    prepared_count = sum(1 for row in all_speaker_analysis if row.section_type == "prepared_remarks")
+    qa_count = sum(1 for row in all_speaker_analysis if row.section_type == "qa")
+    prepared_vs_qa_note = f"Prepared remarks blocks: {prepared_count}; Q&A blocks: {qa_count}."
 
-    analyst_team = [
-        AnalystSignal(
-            name="transcript",
-            stance=_stance_from_score(transcript_signal),
-            signal_score=round(transcript_signal, 4),
-            confidence_score=round(_clamp(transcript_confidence), 2),
-            key_points=[
-                f"Bullish cues: {len(transcript_bull)} | Bearish cues: {len(transcript_bear)}",
-                f"Outlook score (avg): {_float_text(mean(t.outlook_score for t in transcript_results) if transcript_results else 50.0)}",
-                f"Evasiveness score (avg): {_float_text(mean(t.evasiveness_score for t in transcript_results) if transcript_results else 35.0)}",
-            ],
-            evidence=(transcript_quotes or ["No transcript quotes available."]),
-        ),
-        AnalystSignal(
-            name="fundamentals",
-            stance=_stance_from_score(fundamentals_signal),
-            signal_score=round(fundamentals_signal, 4),
-            confidence_score=round(_clamp(45 + len(fundamentals.quarterly) * 12), 2),
-            key_points=fundamentals_points,
-            evidence=[
-                (
-                    f"{q.quarter}: revenue={_float_text(q.revenue)}, EPS={_float_text(q.reported_eps)}, "
-                    f"EPS est={_float_text(q.eps_estimate)}"
-                )
-                for q in fundamentals.quarterly[:3]
-            ]
-            or ["No recent fundamentals snapshots available."],
-        ),
-        AnalystSignal(
-            name="news",
-            stance=_stance_from_score(news_avg_sentiment),
-            signal_score=round(news_avg_sentiment, 4),
-            confidence_score=round(_clamp(35 + len(news) * 5), 2),
-            key_points=[
-                f"Articles analyzed: {len(news)}",
-                f"Average FinBERT directional score: {news_avg_sentiment:.3f}",
-                f"Dominant stance: {_stance_from_score(news_avg_sentiment)}",
-            ],
-            evidence=(
-                _top_items_by_score(news_scored_text, positive=True, limit=2)
-                + _top_items_by_score(news_scored_text, positive=False, limit=2)
-            )
-            or ["No news evidence available."],
-        ),
-        AnalystSignal(
-            name="social",
-            stance=_stance_from_score(social_avg_sentiment),
-            signal_score=round(social_avg_sentiment, 4),
-            confidence_score=round(_clamp(30 + len(social) * 6), 2),
-            key_points=[
-                f"Posts analyzed: {len(social)}",
-                f"Average FinBERT directional score: {social_avg_sentiment:.3f}",
-                f"Top relevance score: {max((p.relevance_score for p in social), default=0):.2f}",
-            ],
-            evidence=(
-                _top_items_by_score(social_scored_text, positive=True, limit=2)
-                + _top_items_by_score(social_scored_text, positive=False, limit=2)
-            )
-            or ["No social evidence available."],
-        ),
+    speaker_groups: dict[str, list[TranscriptSpeakerAnalysis]] = defaultdict(list)
+    for row in all_speaker_analysis:
+        speaker_groups[row.speaker].append(row)
+
+    speaker_confidence_profile = [
+        {
+            "speaker": speaker,
+            "confidence": round(mean(item.confidence for item in rows), 2),
+            "evasiveness": round(mean(item.evasiveness for item in rows), 2),
+            "sentiment": round(mean(item.sentiment_direction for item in rows), 4),
+        }
+        for speaker, rows in speaker_groups.items()
     ]
+    speaker_confidence_profile.sort(key=lambda item: item["confidence"], reverse=True)
 
-    combined_signal = round(
-        (
-            transcript_signal * 0.40
+    transcript_availability = "missing"
+    if normalized_documents and len(normalized_documents) >= settings.transcript_target_count:
+        transcript_availability = "available"
+    elif normalized_documents:
+        transcript_availability = "partial"
+
+    transcript_section = TranscriptSectionPayload(
+        availability=transcript_availability,
+        transcript_count_requested=settings.transcript_target_count,
+        transcript_count_found=len(normalized_documents),
+        latest_summary=transcript_summary,
+        prepared_vs_qa_note=prepared_vs_qa_note,
+        speaker_analysis=all_speaker_analysis,
+        key_quotes=[quote for doc in normalized_documents for quote in doc.key_quotes][:8],
+        qa_pressure_points=pressure_points,
+        transcripts=normalized_documents,
+        speaker_confidence_profile=speaker_confidence_profile,
+        chart_enabled=len(speaker_confidence_profile) >= 2,
+        sparse_note=None if len(speaker_confidence_profile) >= 2 else "Not enough speaker diversity for a useful profile chart.",
+    )
+
+    transcript_direction = mean(row.sentiment_direction for row in all_speaker_analysis) if all_speaker_analysis else 0.0
+    forward_strength = mean(row.forward_looking_strength for row in all_speaker_analysis) if all_speaker_analysis else 45.0
+    confidence_score = mean(row.confidence for row in all_speaker_analysis) if all_speaker_analysis else 45.0
+    evasiveness_score = mean(row.evasiveness for row in all_speaker_analysis) if all_speaker_analysis else 40.0
+
+    rev_growth = float(fundamentals.revenue_qoq_growth_pct or 0.0)
+    eps_growth = float(fundamentals.eps_qoq_growth_pct or 0.0)
+    fundamentals_signal = _clamp_unit((rev_growth * 0.55 + eps_growth * 0.45) / 50.0)
+
+    if normalized_documents:
+        overall_score = _clamp_unit(
+            transcript_direction * 0.45
+            + news_avg * 0.22
+            + social_avg * 0.13
             + fundamentals_signal * 0.20
-            + news_avg_sentiment * 0.25
-            + social_avg_sentiment * 0.15
-        ),
-        4,
-    )
-
-    bullish_points = [
-        f"{report.name.title()}: {report.key_points[0]}"
-        for report in analyst_team
-        if report.signal_score > 0.05
-    ]
-    bearish_points = [
-        f"{report.name.title()}: {report.key_points[0]}"
-        for report in analyst_team
-        if report.signal_score < -0.05
-    ]
-
-    if not bullish_points:
-        bullish_points = ["No strong bullish cluster detected across current modules."]
-    if not bearish_points:
-        bearish_points = ["No strong bearish cluster detected across current modules."]
-
-    buy_evidence_score = _clamp(50 + (combined_signal * 45) + (len(bullish_points) * 4) - (len(bearish_points) * 2))
-    sell_evidence_score = _clamp(50 - (combined_signal * 45) + (len(bearish_points) * 4) - (len(bullish_points) * 2))
-
-    research_team = ResearchDebate(
-        bullish_points=bullish_points[:5],
-        bearish_points=bearish_points[:5],
-        discussion_summary=(
-            f"Composite signal is {combined_signal:+.3f}. "
-            f"Buy evidence {buy_evidence_score:.1f} vs sell evidence {sell_evidence_score:.1f}."
-        ),
-        buy_evidence_score=round(buy_evidence_score, 2),
-        sell_evidence_score=round(sell_evidence_score, 2),
-    )
-
-    if combined_signal >= 0.20:
-        trader_action = "buy"
-    elif combined_signal <= -0.20:
-        trader_action = "sell"
+        )
     else:
-        trader_action = "hold"
+        overall_score = _clamp_unit(news_avg * 0.35 + social_avg * 0.2 + fundamentals_signal * 0.45)
 
-    conviction = _clamp(abs(combined_signal) * 100 + (abs(buy_evidence_score - sell_evidence_score) * 0.25))
-    trader_plan = TraderProposal(
-        action=trader_action,
-        conviction_score=round(conviction, 2),
-        thesis=(
-            f"Trader leans {trader_action.upper()} from blended analyst signal ({combined_signal:+.3f}) "
-            "after reconciling fundamentals, news, social, and transcript sentiment."
+    overall_label = _label_from_sentiment_score(overall_score)
+
+    overview_takeaways = transcript_takeaways[:3]
+    if len(overview_takeaways) < 5:
+        overview_takeaways.extend(
+            [
+                f"News coverage contributed {len(news)} curated records.",
+                f"Social coverage contributed {len(social)} curated records.",
+                f"Revenue QoQ growth is {_format_pct(fundamentals.revenue_qoq_growth_pct)}.",
+            ]
+        )
+    overview_takeaways = overview_takeaways[:5]
+
+    overview = OverviewSection(
+        ticker=symbol,
+        company_name=company_name,
+        stance_label=_stance_from_score(overall_score),
+        executive_summary=(
+            f"{company_name} shows an overall {_stance_from_score(overall_score)} communication profile. "
+            f"Transcript coverage is {len(normalized_documents)}/{settings.transcript_target_count}, "
+            f"with average confidence {confidence_score:.1f} and evasiveness {evasiveness_score:.1f}."
         ),
-        horizon="1-4 weeks",
-    )
-
-    disagreement = _clamp(100 - abs(buy_evidence_score - sell_evidence_score))
-    aggressive_size = 35.0 if trader_action != "hold" else 15.0
-    neutral_size = 20.0 if trader_action != "hold" else 10.0
-    conservative_size = 10.0 if trader_action != "hold" else 5.0
-
-    risk_views = [
-        RiskView(
-            profile="aggressive",
-            recommendation=(
-                f"Allow up to {aggressive_size:.0f}% position if momentum confirms and stop-loss discipline is enforced."
+        key_takeaways=overview_takeaways,
+        metrics=[
+            CompactMetric(key="management_confidence", label="Management Confidence", value=f"{confidence_score:.1f}"),
+            CompactMetric(key="evasiveness", label="Evasiveness", value=f"{evasiveness_score:.1f}"),
+            CompactMetric(key="outlook_strength", label="Outlook Strength", value=f"{forward_strength:.1f}"),
+            CompactMetric(
+                key="transcript_coverage",
+                label="Transcript Coverage",
+                value=f"{len(normalized_documents)}/{settings.transcript_target_count}",
             ),
-            max_position_pct=aggressive_size,
-        ),
-        RiskView(
-            profile="neutral",
-            recommendation=(
-                f"Cap initial allocation near {neutral_size:.0f}% and scale only if evidence spread widens."
-            ),
-            max_position_pct=neutral_size,
-        ),
-        RiskView(
-            profile="conservative",
-            recommendation=(
-                f"Limit to {conservative_size:.0f}% unless macro and earnings signals align for multiple cycles."
-            ),
-            max_position_pct=conservative_size,
-        ),
-    ]
-
-    if conviction < 55 or disagreement > 55:
-        risk_consensus = "High disagreement or low conviction: default to reduced risk posture."
-        manager_action = "hold"
-    elif trader_action == "buy":
-        risk_consensus = "Evidence favors controlled long exposure with staged entries."
-        manager_action = "approve_buy"
-    elif trader_action == "sell":
-        risk_consensus = "Evidence favors controlled de-risking with staged exits."
-        manager_action = "approve_sell"
-    else:
-        risk_consensus = "Balanced evidence: hold and wait for clearer directional setup."
-        manager_action = "hold"
-
-    risk_management = RiskManagementSummary(views=risk_views, consensus=risk_consensus)
-
-    if manager_action == "approve_buy":
-        execution_plan = [
-            "Enter in 2-3 tranches near support to reduce timing risk.",
-            "Use neutral-risk sizing as base allocation and scale only on confirming catalysts.",
-            "Place invalidation stop below the most recent structural support.",
-        ]
-    elif manager_action == "approve_sell":
-        execution_plan = [
-            "Reduce exposure in staged clips to avoid liquidity shock.",
-            "Prioritize trimming into strength while preserving optionality.",
-            "Keep a re-entry trigger list tied to earnings and guidance revisions.",
-        ]
-    else:
-        execution_plan = [
-            "No trade execution now; monitor incoming news and next transcript cycle.",
-            "Track spread between buy/sell evidence until conviction exceeds threshold.",
-            "Re-run analysis after major catalyst events.",
-        ]
-
-    manager_decision = ManagerDecision(
-        action=manager_action,
-        rationale=[
-            f"Trader action: {trader_action}",
-            f"Conviction score: {conviction:.1f}",
-            f"Debate spread: {abs(buy_evidence_score - sell_evidence_score):.1f}",
-            risk_consensus,
         ],
-        execution_plan=execution_plan,
     )
 
-    workflow = _build_workflow(
-        transcripts_found=len(transcript_results),
+    sentiment_timeline = _build_sentiment_timeline(news, social)
+    market_chart_enabled = len(sentiment_timeline) >= 3
+    market_reaction = MarketReactionSection(
+        balance_summary=(
+            f"News sentiment is {_stance_from_score(news_avg)} ({news_avg:+.3f}) and social sentiment is "
+            f"{_stance_from_score(social_avg)} ({social_avg:+.3f})."
+        ),
         news_count=len(news),
         social_count=len(social),
-        decision_action=manager_action,
+        news_items=news,
+        social_items=social,
+        chart_enabled=market_chart_enabled,
+        sparse_note=None if market_chart_enabled else UI_COPY.empty_states["market_chart"],
     )
 
-    compact_warnings = _compact_warnings(warnings, transcript_diagnostics)
+    fundamentals_trend = [
+        FundamentalsTrendPoint(
+            quarter=item.quarter,
+            revenue=item.revenue,
+            net_income=item.net_income,
+            eps=item.reported_eps,
+        )
+        for item in reversed(fundamentals.quarterly)
+    ]
+    fundamentals_chart_enabled = len(fundamentals_trend) >= 3
+
+    fundamentals_workspace = FundamentalsWorkspaceSection(
+        operating_context=(
+            f"Operating context combines valuation and quarterly momentum. Market cap is {_format_market_cap(fundamentals.market_cap)}. "
+            f"Trailing PE is {_format_float(fundamentals.trailing_pe)}, "
+            f"forward PE is {_format_float(fundamentals.forward_pe)}, and revenue QoQ growth is {_format_pct(fundamentals.revenue_qoq_growth_pct)}."
+        ),
+        metrics=[
+            CompactMetric(key="market_cap", label="Market Cap", value=_format_market_cap(fundamentals.market_cap)),
+            CompactMetric(key="trailing_pe", label="Trailing PE", value=_format_float(fundamentals.trailing_pe)),
+            CompactMetric(key="forward_pe", label="Forward PE", value=_format_float(fundamentals.forward_pe)),
+            CompactMetric(key="revenue_qoq", label="Revenue QoQ", value=_format_pct(fundamentals.revenue_qoq_growth_pct)),
+        ],
+        table=fundamentals.quarterly,
+        trend_series=fundamentals_trend,
+        chart_enabled=fundamentals_chart_enabled,
+        sparse_note=None if fundamentals_chart_enabled else UI_COPY.empty_states["fundamentals_chart"],
+    )
+
+    normalization_mode = (
+        "openai"
+        if normalized_documents and all(doc.normalization_mode == "openai" for doc in normalized_documents)
+        else "deterministic_degraded"
+    )
+
+    parsing_warnings = [warning for doc in normalized_documents for warning in doc.parsing_warnings]
+    parsing_warnings.extend(normalization_warnings)
+
+    missing_items: list[str] = []
+    if not normalized_documents:
+        missing_items.append("No transcript documents were successfully normalized.")
+    if not news:
+        missing_items.append("No news records were available after ranking.")
+    if not social:
+        missing_items.append("No social records were available after ranking.")
+
+    avg_extraction_confidence = (
+        mean(doc.extraction_confidence for doc in normalized_documents)
+        if normalized_documents
+        else 0.0
+    )
+    confidence_note = (
+        f"Average transcript extraction confidence is {avg_extraction_confidence:.2f}."
+        if normalized_documents
+        else "No transcript extraction confidence is available for this run."
+    )
+
+    data_audit = DataAuditSection(
+        transcript_discovery=TranscriptDiscoveryAudit(
+            pages_scanned=transcript_discovery.pages_scanned,
+            candidates_total=transcript_discovery.candidates_total,
+            transcript_like_count=transcript_discovery.transcript_like_count,
+            match_filtered_count=transcript_discovery.match_filtered_count,
+            selected_count=transcript_discovery.selected_count,
+            discarded_near_matches=transcript_discovery.discarded_near_matches,
+            fetch_failures=transcript_discovery.fetch_failures,
+            playwright_fallback_used=transcript_discovery.playwright_fallback_used,
+        ),
+        source_counts={
+            "transcripts": len(normalized_documents),
+            "news": len(news),
+            "social": len(social),
+        },
+        dedupe_counts={
+            "news_pool": news_audit.fetched_pool,
+            "news_deduped": news_audit.deduped_pool,
+            "social_pool": social_audit.fetched_pool,
+            "social_deduped": social_audit.deduped_pool,
+        },
+        parsing_warnings=parsing_warnings,
+        missing_items=missing_items,
+        normalization_mode=normalization_mode,
+        warnings=warnings,
+        confidence_note=confidence_note,
+    )
+
+    aggregate = _aggregate_scores(all_speaker_analysis, fundamentals, news_avg, social_avg)
+
+    transcript_results = _build_legacy_transcript_results(normalized_documents, speaker_analysis_by_url)
+    analyst_team, research_team, trader_plan, risk_management, manager_decision = _build_legacy_fields(
+        aggregate=aggregate,
+        transcript_results=transcript_results,
+        fundamentals=fundamentals,
+        news=news,
+        social=social,
+    )
+
+    run_summary = RunSummary(
+        ticker=symbol,
+        overall_label=overall_label,
+        overall_score=round(overall_score, 4),
+        transcripts_found=len(normalized_documents),
+        news_count=len(news),
+        social_count=len(social),
+    )
 
     data_health = DataHealth(
         transcripts=TranscriptHealth(
@@ -1006,54 +1036,44 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
                 for o in transcript_diagnostics.outcomes
             ],
         ),
-        warnings_compact=compact_warnings,
-    )
-
-    run_summary = RunSummary(
-        ticker=symbol,
-        overall_label=overall_label,
-        overall_score=overall_score,
-        transcripts_found=len(transcript_results),
-        news_count=len(news),
-        social_count=len(social),
+        warnings_compact=_compact_warnings(
+            warnings=warnings,
+            found=len(normalized_documents),
+            requested=settings.transcript_target_count,
+        ),
     )
 
     price_history = fetch_price_volume_history(symbol, period="3mo")
-
     charts = ChartsPayload(
         price_volume=[
-            PriceVolumePoint(date=p.date, close=round(p.close, 4), volume=round(p.volume, 2))
-            for p in price_history
+            PriceVolumePoint(date=item.date, close=round(item.close, 4), volume=round(item.volume, 2))
+            for item in price_history
         ],
-        sentiment_timeline=_build_sentiment_timeline(news, social),
-        fundamentals_trend=[
-            FundamentalsTrendPoint(
-                quarter=q.quarter,
-                revenue=q.revenue,
-                net_income=q.net_income,
-                eps=q.reported_eps,
-            )
-            for q in reversed(fundamentals.quarterly)
-        ],
+        sentiment_timeline=sentiment_timeline,
+        fundamentals_trend=fundamentals_trend,
     )
 
     report_tabs = _build_report_tabs(
-        symbol=symbol,
-        overall_score=overall_score,
-        overall_label=overall_label,
-        aggregate=aggregate,
-        analyst_team=analyst_team,
-        research_team=research_team,
-        trader_plan=trader_plan,
-        risk_management=risk_management,
-        manager_decision=manager_decision,
-        data_health=data_health,
+        overview=overview,
+        transcript_section=transcript_section,
+        market_reaction=market_reaction,
+        fundamentals_section=fundamentals_workspace,
+        data_audit=data_audit,
     )
 
+    workflow = _workflow_from_sections(transcript_availability)
+
     return AnalysisResponse(
+        analysis_version=ANALYSIS_VERSION,
+        ui_copy=UI_COPY,
+        overview=overview,
+        transcript=transcript_section,
+        market_reaction=market_reaction,
+        fundamentals_workspace=fundamentals_workspace,
+        data_audit=data_audit,
         ticker=symbol,
-        transcripts_found=len(transcript_results),
-        overall_sentiment_score=overall_score,
+        transcripts_found=len(normalized_documents),
+        overall_sentiment_score=round(overall_score, 4),
         overall_sentiment_label=overall_label,
         warnings=warnings,
         aggregate_scores=aggregate,

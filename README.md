@@ -1,81 +1,106 @@
-# FinBERT Report Desk (Local)
+# FinBERT Earnings Signals (Local)
 
-Local FastAPI app that keeps **FinBERT** as the core sentiment engine and renders a compact, tabbed trading research workflow.
+Local FastAPI app for transcript-first earnings analysis with FinBERT sentiment.
 
-## What This Build Implements
+## Product Structure
 
-- Dark Modrinth-inspired design language and compact layout
-  - left rail (progress + report nav)
-  - tabbed workspace (no tall stacked report columns)
-- Deterministic report tabs (markdown + structured KPI tables)
-  - `summary`, `analyst`, `research`, `trader`, `risk_manager`, `data_health`
-- Expanded API payload while preserving legacy compatibility
-  - new: `run_summary`, `data_health`, `report_tabs`, `charts`
-  - existing: `news`, `social`, `fundamentals`, `transcripts`, etc.
-- Transcript retrieval reliability upgrades (Alpha Vantage only)
-  - earnings-date quarter candidates + historical fallback scan
-  - stop after first 4 valid transcript payloads
-  - per-quarter outcome classification: `found` / `not_found` / `error`
-- Social ingestion quality upgrades
-  - broad Reddit ingestion + relevance ranking
-  - relevance score surfaced in social records
-- Three core charts
-  - price + volume (3 months)
-  - sentiment timeline (news/social/blended)
-  - fundamentals trend (revenue/net income/EPS)
+The app is organized into exactly 5 primary sections:
 
-## Can You Run FinBERT Locally on an M4 Mac (24GB RAM)?
+1. Overview
+2. Transcript
+3. Market Reaction
+4. Fundamentals
+5. Data Audit
 
-Yes. `ProsusAI/finbert` is a BERT-base scale model (~110M parameters) and runs locally on Apple Silicon with PyTorch MPS for this workload.
+Execution-role UI language (trader/risk/manager workflows) is removed from the primary interface. Legacy API fields remain for one migration window.
 
-## Project Structure
+## What This Refactor Implements
 
-- `finbert_site/main.py` — FastAPI routes (`/`, `/api/health`, `/api/analyze`)
-- `finbert_site/analysis.py` — deterministic analysis pipeline + report/chart assembly
-- `finbert_site/providers.py` — Alpha Vantage, yfinance, Reddit providers
-- `finbert_site/finbert_model.py` — local FinBERT scoring/chunking wrapper
-- `finbert_site/schemas.py` — API response models
-- `templates/index.html` — left-rail + tabbed report UI
-- `static/style.css` — dark design language styles
-- `docs/phased_implementation_plan.md` — implementation phases and checks
+- Transcript-first workspace IA with left-rail section navigation
+- Centralized UI copy dictionary for hard-coded labels and microcopy
+- Deterministic Motley Fool transcript discovery and parsing pipeline
+- Optional OpenAI normalization for strict transcript JSON output
+- Deterministic degraded normalization mode when OpenAI is unavailable
+- Market reaction feed ranking and social dedupe improvements
+- Social cards now show short excerpts only, with full-post modal view
+- Sparse-data chart gating:
+  - timeline charts require at least 3 points
+  - sparse states render explicit notes instead of filler charts
+- Canonical API section payloads + legacy compatibility contract
+
+## Transcript Pipeline (Current)
+
+Primary source is Motley Fool transcript surfaces:
+
+- `https://www.fool.com/earnings/call-transcripts/`
+- `https://www.fool.com/author/20032/` (+ pagination)
+
+Flow:
+
+1. Discover candidate transcript URLs
+2. Deterministically filter/rank by transcript title and ticker/company match
+3. Fetch raw HTML with requests/httpx
+4. Parse transcript body via start/stop markers
+5. Normalize into strict transcript structure (OpenAI default, deterministic fallback)
+
+No transcript fallback source is used in this phase. Missing transcript coverage is surfaced in Data Audit.
+
+## API Contract
+
+`GET /api/analyze?ticker=AAPL`
+
+Canonical fields:
+
+- `analysis_version`
+- `ui_copy`
+- `overview`
+- `transcript`
+- `market_reaction`
+- `fundamentals_workspace`
+- `data_audit`
+
+Legacy fields remain during migration:
+
+- `aggregate_scores`, `fundamentals`, `news_summary`, `social_summary`
+- `analyst_team`, `research_team`, `trader_plan`, `risk_management`, `manager_decision`
+- `report_tabs`, `charts`, `news`, `social`, `transcripts`
 
 ## Local Run
 
-1. Create and activate a virtual environment.
-2. Install dependencies:
+1. Create and activate virtual environment
+2. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Configure environment:
+3. Configure env
 
 ```bash
 cp .env.example .env
-# Add ALPHAVANTAGE_API_KEY in .env
 ```
 
-4. Start app:
+Optional keys:
+
+- `ALPHAVANTAGE_API_KEY` for Alpha Vantage news feed
+- `OPENAI_API_KEY` for transcript normalization
+- `OPENAI_NORMALIZER_MODEL` (default `gpt-4o-mini`)
+
+4. Start app
 
 ```bash
 uvicorn finbert_site.main:app --reload
 ```
 
-5. Open:
-
-- [http://127.0.0.1:8000](http://127.0.0.1:8000)
-
-## API Key
-
-- `ALPHAVANTAGE_API_KEY` is required for transcript and news retrieval.
-- Reddit social search currently uses public endpoint (no additional key in this build).
+5. Open [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
 ## Test
 
 ```bash
-pytest
+pytest -q
 ```
 
-## Note
+## Notes
 
-This is an analyst-support interface, not trading advice.
+- FinBERT (`ProsusAI/finbert`) is BERT-base scale and runs locally on Apple Silicon.
+- This tool is an analysis workspace, not trading advice.

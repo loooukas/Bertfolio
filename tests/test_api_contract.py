@@ -2,18 +2,90 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from finbert_site.main import app
 from finbert_site import main
+from finbert_site.main import app
 
 
 class _DummyAnalysisResult:
     def model_dump(self):
         return {
+            "analysis_version": "2026.04-earnings-signals-v1",
+            "ui_copy": {
+                "app_title": "FinBERT Earnings Signals",
+                "app_subtitle": "Transcript-first workspace",
+                "section_labels": {
+                    "overview": "Overview",
+                    "transcript": "Transcript",
+                    "market_reaction": "Market Reaction",
+                    "fundamentals": "Fundamentals",
+                    "data_audit": "Data Audit",
+                },
+                "ui_labels": {"run_analysis": "Run Analysis", "ticker": "Ticker"},
+                "empty_states": {"transcript": "No transcript"},
+            },
+            "overview": {
+                "ticker": "AAPL",
+                "company_name": "Apple Inc",
+                "stance_label": "bullish",
+                "executive_summary": "summary",
+                "key_takeaways": ["t1", "t2", "t3"],
+                "metrics": [{"key": "confidence", "label": "Management Confidence", "value": "74.0"}],
+            },
+            "transcript": {
+                "availability": "partial",
+                "transcript_count_requested": 4,
+                "transcript_count_found": 1,
+                "latest_summary": "latest summary",
+                "prepared_vs_qa_note": "Prepared remarks blocks: 2; Q&A blocks: 1.",
+                "speaker_analysis": [],
+                "key_quotes": ["quote"],
+                "qa_pressure_points": ["point"],
+                "transcripts": [],
+                "speaker_confidence_profile": [],
+                "chart_enabled": False,
+                "sparse_note": "Not enough speaker diversity",
+            },
+            "market_reaction": {
+                "balance_summary": "news bullish social mixed",
+                "news_count": 12,
+                "social_count": 12,
+                "news_items": [],
+                "social_items": [],
+                "chart_enabled": False,
+                "sparse_note": "Not enough timeline depth",
+            },
+            "fundamentals_workspace": {
+                "operating_context": "context",
+                "metrics": [{"key": "trailing_pe", "label": "Trailing PE", "value": "30"}],
+                "table": [],
+                "trend_series": [],
+                "chart_enabled": False,
+                "sparse_note": "Not enough quarterly depth",
+            },
+            "data_audit": {
+                "transcript_discovery": {
+                    "pages_scanned": 2,
+                    "candidates_total": 8,
+                    "transcript_like_count": 4,
+                    "match_filtered_count": 2,
+                    "selected_count": 1,
+                    "discarded_near_matches": [],
+                    "fetch_failures": [],
+                    "playwright_fallback_used": False,
+                },
+                "source_counts": {"transcripts": 1, "news": 12, "social": 12},
+                "dedupe_counts": {"news_pool": 20, "news_deduped": 14, "social_pool": 30, "social_deduped": 18},
+                "parsing_warnings": [],
+                "missing_items": [],
+                "normalization_mode": "deterministic_degraded",
+                "warnings": [],
+                "confidence_note": "Average transcript extraction confidence is 0.81.",
+            },
             "ticker": "AAPL",
             "transcripts_found": 1,
             "overall_sentiment_score": 0.2913,
             "overall_sentiment_label": "cautiously_bullish",
-            "warnings": ["No transcript for AAPL 2026-Q2"],
+            "warnings": [],
             "aggregate_scores": {
                 "company_strength_score": 66.44,
                 "outlook_score": 50.0,
@@ -31,39 +103,26 @@ class _DummyAnalysisResult:
                 "revenue_qoq_growth_pct": 40.3,
                 "eps_qoq_growth_pct": None,
             },
-            "news_summary": {
-                "article_count": 12,
-                "avg_sentiment_score": 0.367,
-                "sentiment_label": "bullish",
-            },
-            "social_summary": {
-                "post_count": 12,
-                "avg_sentiment_score": -0.028,
-                "sentiment_label": "mixed",
-            },
+            "news_summary": {"article_count": 12, "avg_sentiment_score": 0.367, "sentiment_label": "bullish"},
+            "social_summary": {"post_count": 12, "avg_sentiment_score": -0.028, "sentiment_label": "mixed"},
             "analyst_team": [],
             "research_team": {
                 "bullish_points": [],
                 "bearish_points": [],
-                "discussion_summary": "summary",
-                "buy_evidence_score": 63.93,
-                "sell_evidence_score": 42.07,
+                "discussion_summary": "legacy",
+                "buy_evidence_score": 55,
+                "sell_evidence_score": 45,
             },
-            "trader_plan": {
-                "action": "hold",
-                "conviction_score": 23.1,
-                "thesis": "thesis",
-                "horizon": "1-4 weeks",
-            },
+            "trader_plan": {"action": "hold", "conviction_score": 0, "thesis": "legacy", "horizon": "n/a"},
             "risk_management": {
-                "views": [],
-                "consensus": "consensus",
+                "views": [
+                    {"profile": "aggressive", "recommendation": "legacy", "max_position_pct": 0},
+                    {"profile": "neutral", "recommendation": "legacy", "max_position_pct": 0},
+                    {"profile": "conservative", "recommendation": "legacy", "max_position_pct": 0},
+                ],
+                "consensus": "legacy",
             },
-            "manager_decision": {
-                "action": "hold",
-                "rationale": ["r1"],
-                "execution_plan": ["p1"],
-            },
+            "manager_decision": {"action": "hold", "rationale": ["legacy"], "execution_plan": ["legacy"]},
             "workflow": [],
             "run_summary": {
                 "ticker": "AAPL",
@@ -88,9 +147,9 @@ class _DummyAnalysisResult:
             },
             "report_tabs": [
                 {
-                    "id": "summary",
-                    "title": "Summary",
-                    "markdown": "# Summary",
+                    "id": "overview",
+                    "title": "Overview",
+                    "markdown": "# Overview",
                     "kpis": [{"label": "overall", "value": "cautiously_bullish"}],
                     "tables": [{"title": "Core KPI", "columns": ["Metric", "Value"], "rows": [["Overall", "x"]]}],
                 }
@@ -106,7 +165,7 @@ class _DummyAnalysisResult:
         }
 
 
-def test_api_contract_includes_new_and_legacy_fields(monkeypatch):
+def test_api_contract_includes_new_sections_and_legacy_fields(monkeypatch):
     monkeypatch.setattr(main, "build_analysis", lambda ticker, settings: _DummyAnalysisResult())
 
     client = TestClient(app)
@@ -115,7 +174,15 @@ def test_api_contract_includes_new_and_legacy_fields(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
 
-    for key in ["run_summary", "data_health", "report_tabs", "charts"]:
+    for key in [
+        "analysis_version",
+        "ui_copy",
+        "overview",
+        "transcript",
+        "market_reaction",
+        "fundamentals_workspace",
+        "data_audit",
+    ]:
         assert key in payload
 
     for key in [
@@ -130,5 +197,7 @@ def test_api_contract_includes_new_and_legacy_fields(monkeypatch):
         "social",
         "transcripts",
         "workflow",
+        "trader_plan",
+        "manager_decision",
     ]:
         assert key in payload

@@ -1,106 +1,118 @@
 from __future__ import annotations
 
 from finbert_site import analysis
+from finbert_site.normalizer import NormalizationResult
 from finbert_site.providers import (
+    FeedFetchAudit,
     NewsRecord,
     PriceVolumeRecord,
     SocialRecord,
+    TranscriptDiscoveryAudit,
     TranscriptFetchDiagnostics,
     TranscriptFetchOutcome,
     TranscriptRecord,
 )
+from finbert_site.schemas import TranscriptDocument, TranscriptParticipant, TranscriptSectionBlock, TranscriptSpeakerAnalysis
 from finbert_site.settings import Settings
 
 
 class _StubEngine:
     def score_text(self, text: str):
         return {
-            "positive": 0.68,
-            "negative": 0.14,
-            "neutral": 0.18,
-            "directional_score": 0.54,
+            "positive": 0.6,
+            "negative": 0.2,
+            "neutral": 0.2,
+            "directional_score": 0.4,
             "label": "cautiously_positive",
         }
 
-    def classify_sentences(self, sentences):
-        return [
-            {
-                "sentence": sentence,
-                "label": "positive",
-                "score": 0.7,
-                "positive": 0.7,
-                "negative": 0.1,
-                "neutral": 0.2,
-            }
-            for sentence in sentences
-        ]
+
+def _settings() -> Settings:
+    return Settings(
+        alpha_vantage_api_key="x",
+        finbert_model_name="stub",
+        request_timeout_seconds=1,
+        transcript_target_count=4,
+        openai_api_key="",
+        openai_normalizer_model="gpt-4o-mini",
+    )
 
 
-def test_build_analysis_includes_data_health_report_tabs_and_charts(monkeypatch):
-    diagnostics = TranscriptFetchDiagnostics(
-        requested_quarters=["2026-Q2", "2026-Q1", "2025-Q4", "2025-Q3"],
-        found_quarters=["2025-Q4"],
-        missing_quarters=["2026-Q2", "2026-Q1", "2025-Q3"],
-        errors=["2026-Q1: timeout"],
-        outcomes=[
-            TranscriptFetchOutcome("2026-Q2", "not_found"),
-            TranscriptFetchOutcome("2026-Q1", "error", "timeout"),
-            TranscriptFetchOutcome("2025-Q4", "found"),
-            TranscriptFetchOutcome("2025-Q3", "not_found"),
-        ],
+def test_build_analysis_returns_new_sections_and_legacy_fields(monkeypatch):
+    transcript_record = TranscriptRecord(
+        symbol="AAPL",
+        year=2026,
+        quarter=1,
+        date="2026-01-29",
+        content="Prepared Remarks\nTim Cook: Demand remained strong.\nQuestions and Answers\nAnalyst: margins?",
+        source="motley_fool",
+        source_url="https://example.com/transcript",
+        title="Apple (AAPL) Q1 2026 Earnings Call Transcript",
+        extraction_confidence=0.88,
+        parsing_warnings=[],
+        participants=[{"name": "Tim Cook", "role": "CEO"}],
+    )
+
+    transcript_diag = TranscriptFetchDiagnostics(
+        requested_quarters=["2026-Q1"],
+        found_quarters=["2026-Q1"],
+        missing_quarters=[],
+        errors=[],
+        outcomes=[TranscriptFetchOutcome("2026-Q1", "found")],
+    )
+
+    transcript_discovery = TranscriptDiscoveryAudit(
+        pages_scanned=2,
+        candidates_total=8,
+        transcript_like_count=4,
+        match_filtered_count=2,
+        selected_count=1,
+        discarded_near_matches=["Apple Q4 2025 Earnings Call Transcript (...)"],
+        fetch_failures=[],
+        playwright_fallback_used=False,
     )
 
     monkeypatch.setattr(
         analysis,
-        "fetch_last_4_transcripts",
-        lambda symbol, settings: (
-            [
-                TranscriptRecord(
-                    symbol=symbol,
-                    year=2025,
-                    quarter=4,
-                    date="2025-12-20",
-                    content=(
-                        "We expect strong demand and margin expansion. "
-                        "Question-and-answer section follows. "
-                        "We remain confident in guidance."
-                    ),
-                    source="alpha_vantage",
-                )
-            ],
-            ["No transcript for AAPL 2026-Q2"],
-            diagnostics,
+        "fetch_transcripts_motley_fool",
+        lambda symbol, company_name, settings, target_count=4: (
+            [transcript_record],
+            [],
+            transcript_diag,
+            transcript_discovery,
         ),
     )
 
     monkeypatch.setattr(
         analysis,
         "fetch_news_alpha_vantage",
-        lambda symbol, settings, limit=12: (
+        lambda symbol, settings, limit=16, pool_size=80: (
             [
                 NewsRecord(
                     title="Apple demand remains resilient",
-                    summary="Supply chain looks stable.",
+                    summary="Supply chain commentary remains stable.",
                     url="https://example.com/news/1",
                     source="example",
                     time_published="20260416T120000",
-                    sentiment_score=0.32,
+                    sentiment_score=0.2,
                     sentiment_label="bullish",
                 )
             ],
             [],
+            FeedFetchAudit(fetched_pool=10, deduped_pool=6, displayed_count=1),
         ),
     )
 
     monkeypatch.setattr(
         analysis,
         "fetch_social_reddit",
-        lambda symbol, settings, limit=12: (
+        lambda symbol, settings, limit=16, pool_size=120: (
             [
                 SocialRecord(
                     source="reddit",
                     title="AAPL discussion thread",
-                    body="I think earnings sentiment improved this quarter.",
+                    body="Long body text for modal rendering.",
+                    excerpt="Long body text for modal rendering.",
                     url="https://reddit.com/r/stocks/aapl",
                     subreddit="stocks",
                     created_utc=1776316800,
@@ -108,6 +120,7 @@ def test_build_analysis_includes_data_health_report_tabs_and_charts(monkeypatch)
                 )
             ],
             [],
+            FeedFetchAudit(fetched_pool=20, deduped_pool=11, displayed_count=1),
         ),
     )
 
@@ -115,6 +128,7 @@ def test_build_analysis_includes_data_health_report_tabs_and_charts(monkeypatch)
         analysis,
         "fetch_fundamentals",
         lambda symbol: {
+            "company_name": "Apple Inc",
             "currency": "USD",
             "market_cap": 3500000000000,
             "trailing_pe": 32.1,
@@ -150,26 +164,83 @@ def test_build_analysis_includes_data_health_report_tabs_and_charts(monkeypatch)
         ],
     )
 
-    monkeypatch.setattr(analysis, "get_engine", lambda model_name: _StubEngine())
-
-    response = analysis.build_analysis(
+    normalized_document = TranscriptDocument(
         ticker="AAPL",
-        settings=Settings(alpha_vantage_api_key="x", finbert_model_name="stub", request_timeout_seconds=1),
+        company_name="Apple Inc",
+        source="motley_fool",
+        source_url="https://example.com/transcript",
+        title="Apple (AAPL) Q1 2026 Earnings Call Transcript",
+        published_date="2026-01-29",
+        has_full_transcript=True,
+        extraction_confidence=0.88,
+        parsing_warnings=[],
+        participants=[TranscriptParticipant(name="Tim Cook", role="CEO")],
+        sections=[
+            TranscriptSectionBlock(
+                section_type="prepared_remarks",
+                speaker="Tim Cook",
+                speaker_role="management",
+                text="Demand remained strong.",
+                order_index=0,
+                evidence_snippets=["Demand remained strong."],
+            )
+        ],
+        key_quotes=["Demand remained strong."],
+        normalization_mode="deterministic_degraded",
     )
 
-    assert response.run_summary.ticker == "AAPL"
-    assert response.data_health.transcripts.requested_quarters == diagnostics.requested_quarters
-    assert response.data_health.warnings_compact[0].startswith("Transcripts 1/4 found")
+    monkeypatch.setattr(
+        analysis,
+        "normalize_transcript_document",
+        lambda **kwargs: NormalizationResult(document=normalized_document, warnings=["OPENAI_API_KEY missing"]),
+    )
 
-    tab_ids = {tab.id for tab in response.report_tabs}
-    assert tab_ids == {"summary", "analyst", "research", "trader", "risk_manager", "data_health"}
-    for tab in response.report_tabs:
-        assert tab.kpis
-        assert tab.tables
+    monkeypatch.setattr(
+        analysis,
+        "build_speaker_analysis",
+        lambda sections, score_text_fn: [
+            TranscriptSpeakerAnalysis(
+                speaker="Tim Cook",
+                section_type="prepared_remarks",
+                sentiment_direction=0.41,
+                confidence=74.0,
+                evasiveness=29.0,
+                specificity=71.0,
+                forward_looking_strength=66.0,
+                risk_language_intensity=24.0,
+                topic_label="demand",
+                evidence_snippets=["Demand remained strong."],
+            )
+        ],
+    )
 
-    assert len(response.charts.price_volume) == 2
-    assert len(response.charts.sentiment_timeline) >= 1
-    assert len(response.charts.fundamentals_trend) == 2
+    monkeypatch.setattr(
+        analysis,
+        "summarize_transcript_findings",
+        lambda speaker_analysis: (
+            "Transcript shows confident tone with low evasiveness.",
+            ["Confidence stayed strong in prepared remarks."],
+            ["Margins question had softer specificity."],
+        ),
+    )
 
-    assert response.run_summary.news_count == len(response.news)
-    assert response.run_summary.social_count == len(response.social)
+    monkeypatch.setattr(analysis, "get_engine", lambda model_name: _StubEngine())
+
+    result = analysis.build_analysis("AAPL", _settings())
+
+    assert result.analysis_version.startswith("2026.04")
+    assert result.ui_copy.app_title == "FinBERT Earnings Signals"
+
+    assert result.overview.ticker == "AAPL"
+    assert result.transcript.transcript_count_found == 1
+    assert result.market_reaction.news_count == 1
+    assert result.fundamentals_workspace.table
+    assert result.data_audit.transcript_discovery.pages_scanned == 2
+
+    # strict chart gating for timeline: only one point should disable it
+    assert result.market_reaction.chart_enabled is False
+
+    # dual contract still present
+    assert result.trader_plan.action == "hold"
+    assert result.manager_decision.action == "hold"
+    assert result.report_tabs
