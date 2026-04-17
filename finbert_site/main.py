@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from .analysis import build_analysis
 from .settings import settings
 
-app = FastAPI(title="FinBERT Multi-Agent Signal Board", version="0.2.0")
+app = FastAPI(title="FinBERT Report Desk", version="0.3.0")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")

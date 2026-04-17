@@ -31,7 +31,15 @@ class FinBertEngine:
         }
 
     def score_text(self, text: str, chunk_size: int = 510) -> dict[str, float]:
-        tokens = self.tokenizer.encode(text, add_special_tokens=False)
+        # Use tokenizer call with verbose=False to avoid max-length warning spam.
+        tokens = self.tokenizer(
+            text,
+            add_special_tokens=False,
+            truncation=False,
+            return_attention_mask=False,
+            return_token_type_ids=False,
+            verbose=False,
+        )["input_ids"]
         if not tokens:
             return {
                 "positive": 0.0,

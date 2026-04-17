@@ -2,33 +2,48 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import datetime, timezone
 import re
 from statistics import mean
 from typing import Any, Optional
 
 from .finbert_model import get_engine
 from .providers import (
+    TranscriptFetchDiagnostics,
     fetch_fundamentals,
     fetch_last_4_transcripts,
     fetch_news_alpha_vantage,
+    fetch_price_volume_history,
     fetch_social_reddit,
 )
 from .schemas import (
     AggregateScores,
     AnalysisResponse,
     AnalystSignal,
+    ChartsPayload,
+    DataHealth,
     FundamentalsSnapshot,
     FundamentalsSummary,
+    FundamentalsTrendPoint,
     ManagerDecision,
     NewsArticle,
     NewsSummary,
+    PriceVolumePoint,
+    ReportKPI,
+    ReportTab,
+    ReportTable,
     ResearchDebate,
     RiskManagementSummary,
     RiskView,
+    RunSummary,
     SentimentBreakdown,
+    SentimentTimelinePoint,
     SocialPost,
     SocialSummary,
     TraderProposal,
+    TranscriptHealth,
+    TranscriptQuarterStatus,
     TranscriptResult,
     WorkflowStage,
 )
@@ -328,21 +343,278 @@ def _build_workflow(
             key="risk_management",
             title="Risk Management",
             status="completed",
-            detail="Aggressive, neutral, and conservative risk views applied to position sizing.",
+            detail="Risk team produced aggressive/neutral/conservative constraints.",
         ),
         WorkflowStage(
             key="manager_decision",
             title="Manager Decision",
             status="completed" if decision_action != "hold" else "partial",
-            detail="Final execution decision approved with controls.",
+            detail="Final execution decision applied with controls.",
         ),
     ]
+
+
+def _parse_news_datetime(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    try:
+        if "T" in raw:
+            dt = datetime.strptime(raw, "%Y%m%dT%H%M%S")
+            return dt.strftime("%Y-%m-%d")
+        dt = datetime.fromisoformat(raw)
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def _build_sentiment_timeline(news: list[NewsArticle], social: list[SocialPost]) -> list[SentimentTimelinePoint]:
+    buckets: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"news": [], "social": []})
+
+    for item in news:
+        day = _parse_news_datetime(item.time_published)
+        if day:
+            buckets[day]["news"].append(item.sentiment_score)
+
+    for item in social:
+        if item.created_utc:
+            day = datetime.fromtimestamp(item.created_utc, tz=timezone.utc).strftime("%Y-%m-%d")
+            buckets[day]["social"].append(item.sentiment_score)
+
+    points: list[SentimentTimelinePoint] = []
+    for day in sorted(buckets.keys()):
+        news_scores = buckets[day]["news"]
+        social_scores = buckets[day]["social"]
+        news_avg = mean(news_scores) if news_scores else 0.0
+        social_avg = mean(social_scores) if social_scores else 0.0
+
+        blended_values: list[float] = []
+        if news_scores:
+            blended_values.append(news_avg)
+        if social_scores:
+            blended_values.append(social_avg)
+        blended = mean(blended_values) if blended_values else 0.0
+
+        points.append(
+            SentimentTimelinePoint(
+                date=day,
+                news=round(news_avg, 4),
+                social=round(social_avg, 4),
+                blended=round(blended, 4),
+            )
+        )
+
+    return points
+
+
+def _build_report_tabs(
+    symbol: str,
+    overall_score: float,
+    overall_label: str,
+    aggregate: AggregateScores,
+    analyst_team: list[AnalystSignal],
+    research_team: ResearchDebate,
+    trader_plan: TraderProposal,
+    risk_management: RiskManagementSummary,
+    manager_decision: ManagerDecision,
+    data_health: DataHealth,
+) -> list[ReportTab]:
+    analyst_rows = [
+        [
+            report.name,
+            report.stance,
+            f"{report.signal_score:+.3f}",
+            f"{report.confidence_score:.1f}",
+        ]
+        for report in analyst_team
+    ]
+
+    summary_table = ReportTable(
+        title="Core KPI",
+        columns=["Metric", "Value"],
+        rows=[
+            ["Overall sentiment", f"{overall_label} ({overall_score:+.4f})"],
+            ["Company strength", f"{aggregate.company_strength_score:.2f}"],
+            ["Outlook", f"{aggregate.outlook_score:.2f}"],
+            ["Confidence", f"{aggregate.confidence_score:.2f}"],
+            ["Evasiveness", f"{aggregate.evasiveness_score:.2f}"],
+        ],
+    )
+
+    analyst_table = ReportTable(
+        title="Analyst Signal Matrix",
+        columns=["Analyst", "Stance", "Signal", "Confidence"],
+        rows=analyst_rows,
+    )
+
+    research_table = ReportTable(
+        title="Debate Scores",
+        columns=["Measure", "Value"],
+        rows=[
+            ["Buy evidence", f"{research_team.buy_evidence_score:.2f}"],
+            ["Sell evidence", f"{research_team.sell_evidence_score:.2f}"],
+        ],
+    )
+
+    trader_table = ReportTable(
+        title="Trader Decision",
+        columns=["Field", "Value"],
+        rows=[
+            ["Action", trader_plan.action.upper()],
+            ["Conviction", f"{trader_plan.conviction_score:.2f}"],
+            ["Horizon", trader_plan.horizon],
+            ["Thesis", trader_plan.thesis],
+        ],
+    )
+
+    risk_rows = [
+        [view.profile, f"{view.max_position_pct:.1f}%", view.recommendation]
+        for view in risk_management.views
+    ]
+    risk_rows.append(["manager_action", manager_decision.action, " | ".join(manager_decision.rationale)])
+
+    risk_table = ReportTable(
+        title="Risk + Final Verdict",
+        columns=["Role", "Constraint", "Detail"],
+        rows=risk_rows,
+    )
+
+    health_rows = [
+        [o.quarter, o.status, o.detail or ""]
+        for o in data_health.transcripts.outcomes
+    ]
+    health_table = ReportTable(
+        title="Transcript Retrieval Outcomes",
+        columns=["Quarter", "Status", "Detail"],
+        rows=health_rows,
+    )
+
+    tabs = [
+        ReportTab(
+            id="summary",
+            title="Summary",
+            markdown=(
+                f"# {symbol} Summary\n\n"
+                f"Overall stance: **{overall_label}** (`{overall_score:+.4f}`)\n\n"
+                f"Key orientation:\n"
+                f"- Strength: {aggregate.company_strength_score:.2f}\n"
+                f"- Outlook: {aggregate.outlook_score:.2f}\n"
+                f"- Confidence: {aggregate.confidence_score:.2f}\n"
+                f"- Evasiveness: {aggregate.evasiveness_score:.2f}\n\n"
+                "Deterministic KPI values are in the table below."
+            ),
+            kpis=[
+                ReportKPI(label="overall", value=f"{overall_label} ({overall_score:+.4f})"),
+                ReportKPI(label="strength", value=f"{aggregate.company_strength_score:.2f}"),
+                ReportKPI(label="outlook", value=f"{aggregate.outlook_score:.2f}"),
+            ],
+            tables=[summary_table],
+        ),
+        ReportTab(
+            id="analyst",
+            title="Analyst Reports",
+            markdown=(
+                "# Analyst Signal Matrix\n\n"
+                "Structured matrix values are in the table below.\n\n"
+                + "\n".join(
+                    [f"## {r.name.title()} Analyst\n- " + "\n- ".join(r.key_points[:4]) for r in analyst_team]
+                )
+            ),
+            kpis=[
+                ReportKPI(label="analysts", value=str(len(analyst_team))),
+            ],
+            tables=[analyst_table],
+        ),
+        ReportTab(
+            id="research",
+            title="Research Debate",
+            markdown=(
+                "# Research Debate\n\n"
+                f"{research_team.discussion_summary}\n\n"
+                "Debate score breakdown is in the table below.\n\n"
+                "## Bullish points\n- "
+                + "\n- ".join(research_team.bullish_points)
+                + "\n\n## Bearish points\n- "
+                + "\n- ".join(research_team.bearish_points)
+            ),
+            kpis=[
+                ReportKPI(label="buy evidence", value=f"{research_team.buy_evidence_score:.2f}"),
+                ReportKPI(label="sell evidence", value=f"{research_team.sell_evidence_score:.2f}"),
+            ],
+            tables=[research_table],
+        ),
+        ReportTab(
+            id="trader",
+            title="Trader Plan",
+            markdown="# Trader Plan\n\nDecision rows are shown in the table below.",
+            kpis=[
+                ReportKPI(label="action", value=trader_plan.action.upper()),
+                ReportKPI(label="conviction", value=f"{trader_plan.conviction_score:.2f}"),
+            ],
+            tables=[trader_table],
+        ),
+        ReportTab(
+            id="risk_manager",
+            title="Risk + Final Verdict",
+            markdown=(
+                "# Risk + Final Verdict\n\n"
+                f"Consensus: {risk_management.consensus}\n\n"
+                "Risk constraints and final verdict are in the table below.\n\n"
+                "## Execution plan\n- "
+                + "\n- ".join(manager_decision.execution_plan)
+            ),
+            kpis=[
+                ReportKPI(label="decision", value=manager_decision.action.upper()),
+                ReportKPI(label="risk views", value=str(len(risk_management.views))),
+            ],
+            tables=[risk_table],
+        ),
+        ReportTab(
+            id="data_health",
+            title="Data Health",
+            markdown=(
+                "# Data Health\n\n"
+                f"Requested transcript quarters: {len(data_health.transcripts.requested_quarters)}\n\n"
+                f"Found: {len(data_health.transcripts.found_quarters)}\n"
+                f"Missing: {len(data_health.transcripts.missing_quarters)}\n"
+                f"Errors: {len(data_health.transcripts.errors)}\n\n"
+                + "Per-quarter outcomes are in the table below.\n\n## Compact warnings\n- "
+                + "\n- ".join(data_health.warnings_compact)
+            ),
+            kpis=[
+                ReportKPI(label="transcripts found", value=str(len(data_health.transcripts.found_quarters))),
+                ReportKPI(label="transcripts missing", value=str(len(data_health.transcripts.missing_quarters))),
+            ],
+            tables=[health_table],
+        ),
+    ]
+
+    return tabs
+
+
+def _compact_warnings(warnings: list[str], diagnostics: TranscriptFetchDiagnostics) -> list[str]:
+    out: list[str] = []
+
+    if diagnostics.requested_quarters:
+        out.append(
+            f"Transcripts {len(diagnostics.found_quarters)}/{len(diagnostics.requested_quarters)} found."
+        )
+
+    if diagnostics.errors:
+        out.append(f"Transcript retrieval errors: {len(diagnostics.errors)}")
+
+    for warning in warnings[:4]:
+        out.append(warning)
+
+    if not out:
+        out.append("No critical data health warnings.")
+
+    return out
 
 
 def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
     symbol = _normalize_ticker(ticker)
 
-    transcripts, transcript_warnings = fetch_last_4_transcripts(symbol, settings)
+    transcripts, transcript_warnings, transcript_diagnostics = fetch_last_4_transcripts(symbol, settings)
     news_records, news_warnings = fetch_news_alpha_vantage(symbol, settings, limit=12)
     social_records, social_warnings = fetch_social_reddit(symbol, settings, limit=12)
     warnings = transcript_warnings + news_warnings + social_warnings
@@ -418,6 +690,7 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
                 url=item.url,
                 subreddit=item.subreddit,
                 created_utc=item.created_utc,
+                relevance_score=round(item.relevance_score, 3),
                 sentiment_score=round(directional, 4),
                 sentiment_label=stance,
             )
@@ -567,7 +840,7 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
             key_points=[
                 f"Posts analyzed: {len(social)}",
                 f"Average FinBERT directional score: {social_avg_sentiment:.3f}",
-                f"Dominant stance: {_stance_from_score(social_avg_sentiment)}",
+                f"Top relevance score: {max((p.relevance_score for p in social), default=0):.2f}",
             ],
             evidence=(
                 _top_items_by_score(social_scored_text, positive=True, limit=2)
@@ -716,6 +989,67 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         decision_action=manager_action,
     )
 
+    compact_warnings = _compact_warnings(warnings, transcript_diagnostics)
+
+    data_health = DataHealth(
+        transcripts=TranscriptHealth(
+            requested_quarters=transcript_diagnostics.requested_quarters,
+            found_quarters=transcript_diagnostics.found_quarters,
+            missing_quarters=transcript_diagnostics.missing_quarters,
+            errors=transcript_diagnostics.errors,
+            outcomes=[
+                TranscriptQuarterStatus(
+                    quarter=o.quarter,
+                    status=o.status,
+                    detail=o.detail,
+                )
+                for o in transcript_diagnostics.outcomes
+            ],
+        ),
+        warnings_compact=compact_warnings,
+    )
+
+    run_summary = RunSummary(
+        ticker=symbol,
+        overall_label=overall_label,
+        overall_score=overall_score,
+        transcripts_found=len(transcript_results),
+        news_count=len(news),
+        social_count=len(social),
+    )
+
+    price_history = fetch_price_volume_history(symbol, period="3mo")
+
+    charts = ChartsPayload(
+        price_volume=[
+            PriceVolumePoint(date=p.date, close=round(p.close, 4), volume=round(p.volume, 2))
+            for p in price_history
+        ],
+        sentiment_timeline=_build_sentiment_timeline(news, social),
+        fundamentals_trend=[
+            FundamentalsTrendPoint(
+                quarter=q.quarter,
+                revenue=q.revenue,
+                net_income=q.net_income,
+                eps=q.reported_eps,
+            )
+            for q in reversed(fundamentals.quarterly)
+        ],
+    )
+
+    report_tabs = _build_report_tabs(
+        symbol=symbol,
+        overall_score=overall_score,
+        overall_label=overall_label,
+        aggregate=aggregate,
+        analyst_team=analyst_team,
+        research_team=research_team,
+        trader_plan=trader_plan,
+        risk_management=risk_management,
+        manager_decision=manager_decision,
+        data_health=data_health,
+    )
+
     return AnalysisResponse(
         ticker=symbol,
         transcripts_found=len(transcript_results),
@@ -732,6 +1066,10 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         risk_management=risk_management,
         manager_decision=manager_decision,
         workflow=workflow,
+        run_summary=run_summary,
+        data_health=data_health,
+        report_tabs=report_tabs,
+        charts=charts,
         news=news,
         social=social,
         transcripts=transcript_results,

@@ -1,64 +1,80 @@
-# FinBERT + TradingAgents Flow Migration Plan
+# FinBERT Report Desk Redesign Plan (Implemented)
 
-## Goal
-Preserve FinBERT-specific sentiment analysis while upgrading the product flow to a multi-stage analyst/researcher/trader/risk/manager experience.
+## Scope
+Preserve FinBERT-first sentiment analysis while moving from a tall report stack to a compact left-rail + tabbed workspace with deterministic report outputs.
 
-## Phase Plan
-
-### Phase 1: Data + Signal Foundation
+## Phase 1: Retrieval + Scoring Reliability
 Status: Completed
 
-- Keep existing transcript/news/fundamentals ingestion.
-- Add social ingestion (`Reddit`) for short-horizon crowd signal.
-- Apply local FinBERT scoring across transcript/news/social text.
-- Extend API schema with stage-based outputs for downstream UI.
+- Transcript retrieval uses smarter quarter candidate generation:
+  - earnings-date candidates from yfinance when available
+  - historical fallback scan over 12 quarter labels
+  - stop after first 4 valid transcript payloads
+- Transcript diagnostics now track:
+  - requested quarters
+  - found/missing quarters
+  - per-quarter outcomes (`found` / `not_found` / `error`)
+- FinBERT scoring path keeps chunking and suppresses tokenizer max-length warning noise.
+- Social ingestion remains broad and is relevance-ranked instead of hard-filtered.
 
-### Phase 2: Multi-Stage Synthesis Engine
+## Phase 2: API Contract Expansion
 Status: Completed
 
-- Build analyst team outputs for:
-  - transcript analyst
-  - fundamentals analyst
-  - news analyst
-  - social analyst
-- Add bull/bear researcher synthesis with buy vs sell evidence scores.
-- Add deterministic trader proposal + conviction.
-- Add risk team (aggressive/neutral/conservative) and manager decision object.
+- Added response fields:
+  - `run_summary`
+  - `data_health`
+  - `report_tabs`
+  - `charts`
+- Kept compatibility fields for legacy UI/detail rendering:
+  - `news`, `social`, `fundamentals`, `transcripts`, etc.
 
-### Phase 3: UX Pipeline Board
+## Phase 3: UI Architecture Rewrite
 Status: Completed
 
-- Replace report-stacked UI with pipeline board layout:
-  - analyst ingestion
-  - research debate
-  - trader proposal
-  - risk management
-  - manager decision
-- Keep detailed drilldown panels (analysts, fundamentals, feeds, transcripts).
+- Replaced tall card-board layout with:
+  - left rail for workflow/progress + tab navigation
+  - tabbed main workspace for reports and data surfaces
+- Fixed tab set:
+  - Summary
+  - Analyst Reports
+  - Research Debate
+  - Trader Plan
+  - Risk + Final Verdict
+  - Data Health
+  - News Feed
+  - Social Feed
+  - Fundamentals
+  - Transcript
+- Top status is compact; warning detail moved into Data Health tab.
+- Removed excessive chip/tooltip-like visual clutter.
 
-### Phase 4: Design Language Alignment
+## Phase 4: Charts + Compact Presentation
 Status: Completed
 
-- Import and map the provided design language token system (Modrinth package):
-  - palette
-  - typography hierarchy
-  - border radius
-  - shadow system
-- Apply tokenized styling to all main views and cards.
+- Added normalized chart series payload and rendering for:
+  - `price_volume`
+  - `sentiment_timeline`
+  - `fundamentals_trend`
+- Added empty-state handling for charts and compact card spacing.
 
-## Next Recommended Phases
+## Phase 5: Testing + Validation
+Status: Completed
 
-### Phase 5: Local Inference Flex Layer
-Status: Pending
+- Provider tests cover:
+  - quarter candidate generation (earnings + fallback paths)
+  - scan stop condition after first four valid transcripts
+  - per-quarter outcome classification
+- Analysis tests cover:
+  - `data_health` and compact warnings
+  - deterministic report tab payload shape and chart outputs
+- API contract test covers:
+  - new fields present
+  - legacy fields preserved
 
-- Introduce pluggable sentiment backends:
-  - native HF/PyTorch FinBERT (default)
-  - optional local API adapter (e.g., OpenAI-compatible endpoint)
-- Add runtime backend health checks and latency telemetry.
+## Manual Acceptance Checklist
 
-### Phase 6: Evaluation + Guardrails
-Status: Pending
-
-- Add regression fixtures for representative tickers.
-- Snapshot API shape checks for stage outputs.
-- Add confidence/coverage guardrails for sparse-data scenarios.
+- Long inline warning string removed from top status area.
+- Left rail + tab navigation active on desktop/mobile breakpoints.
+- No oversized blank report columns in primary flow.
+- Three core charts render and show graceful empty states.
+- Transcript health explanation moved to Data Health tab.

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+import re
 import time
 from typing import Any, Dict, Optional, Tuple
 
@@ -16,6 +17,31 @@ from .settings import Settings
 _LAST_ALPHA_REQUEST_TS = 0.0
 _ALPHA_MIN_INTERVAL_SEC = 1.1
 
+_FINANCE_TERMS = {
+    "stock",
+    "shares",
+    "earnings",
+    "eps",
+    "revenue",
+    "guidance",
+    "valuation",
+    "market cap",
+    "dividend",
+    "buyback",
+    "analyst",
+    "quarter",
+}
+
+_FINANCE_SUBREDDIT_WEIGHTS = {
+    "stocks": 2.5,
+    "investing": 2.5,
+    "wallstreetbets": 2.0,
+    "stockmarket": 2.0,
+    "options": 1.5,
+    "securityanalysis": 2.5,
+    "valueinvesting": 2.5,
+}
+
 
 @dataclass
 class TranscriptRecord:
@@ -25,6 +51,22 @@ class TranscriptRecord:
     date: Optional[str]
     content: str
     source: str
+
+
+@dataclass
+class TranscriptFetchOutcome:
+    quarter: str
+    status: str
+    detail: Optional[str] = None
+
+
+@dataclass
+class TranscriptFetchDiagnostics:
+    requested_quarters: list[str]
+    found_quarters: list[str]
+    missing_quarters: list[str]
+    errors: list[str]
+    outcomes: list[TranscriptFetchOutcome]
 
 
 @dataclass
@@ -46,6 +88,14 @@ class SocialRecord:
     url: str
     subreddit: Optional[str]
     created_utc: Optional[int]
+    relevance_score: float
+
+
+@dataclass
+class PriceVolumeRecord:
+    date: str
+    close: float
+    volume: float
 
 
 def _quarter_from_month(month: int) -> int:
@@ -54,6 +104,11 @@ def _quarter_from_month(month: int) -> int:
 
 def _quarter_label(year: int, quarter: int) -> str:
     return f"{year}-Q{quarter}"
+
+
+def _quarter_tuple_from_label(label: str) -> tuple[int, int]:
+    year_part, q_part = label.split("-Q")
+    return int(year_part), int(q_part)
 
 
 def _alpha_get(params: Dict[str, str], timeout_seconds: int) -> Dict[str, Any]:
@@ -86,12 +141,12 @@ def _alpha_get(params: Dict[str, str], timeout_seconds: int) -> Dict[str, Any]:
     return payload
 
 
-def recent_quarters(symbol: str, limit: int = 4) -> list[tuple[int, int]]:
+def transcript_candidate_quarters(symbol: str, limit: int = 12) -> list[str]:
     ticker = yf.Ticker(symbol)
-    targets: list[tuple[int, int]] = []
+    labels: list[str] = []
 
     try:
-        earnings_dates = ticker.get_earnings_dates(limit=12)
+        earnings_dates = ticker.get_earnings_dates(limit=max(12, limit + 4))
     except Exception:
         earnings_dates = None
 
@@ -101,28 +156,26 @@ def recent_quarters(symbol: str, limit: int = 4) -> list[tuple[int, int]]:
             ts = pd.Timestamp(idx).tz_localize(None)
             if ts > now.tz_localize(None):
                 continue
-            year = int(ts.year)
-            quarter = _quarter_from_month(int(ts.month))
-            pair = (year, quarter)
-            if pair not in targets:
-                targets.append(pair)
-            if len(targets) >= limit:
+            label = _quarter_label(int(ts.year), _quarter_from_month(int(ts.month)))
+            if label not in labels:
+                labels.append(label)
+            if len(labels) >= limit:
                 break
 
-    if len(targets) < limit:
-        now = datetime.utcnow()
+    if len(labels) < limit:
+        now = datetime.now(timezone.utc)
         year = now.year
         quarter = _quarter_from_month(now.month)
-        while len(targets) < limit:
-            pair = (year, quarter)
-            if pair not in targets:
-                targets.append(pair)
+        while len(labels) < limit:
+            label = _quarter_label(year, quarter)
+            if label not in labels:
+                labels.append(label)
             quarter -= 1
             if quarter == 0:
                 quarter = 4
                 year -= 1
 
-    return targets[:limit]
+    return labels[:limit]
 
 
 def fetch_transcript_alpha_vantage(
@@ -159,14 +212,31 @@ def fetch_transcript_alpha_vantage(
     )
 
 
-def fetch_last_4_transcripts(symbol: str, settings: Settings) -> Tuple[list[TranscriptRecord], list[str]]:
+def fetch_last_4_transcripts(
+    symbol: str,
+    settings: Settings,
+) -> Tuple[list[TranscriptRecord], list[str], TranscriptFetchDiagnostics]:
     warnings: list[str] = []
     transcripts: list[TranscriptRecord] = []
 
     if not settings.alpha_vantage_api_key:
-        return [], ["ALPHAVANTAGE_API_KEY is missing in .env"]
+        diagnostics = TranscriptFetchDiagnostics(
+            requested_quarters=[],
+            found_quarters=[],
+            missing_quarters=[],
+            errors=["ALPHAVANTAGE_API_KEY is missing in .env"],
+            outcomes=[],
+        )
+        return [], ["ALPHAVANTAGE_API_KEY is missing in .env"], diagnostics
 
-    for year, quarter in recent_quarters(symbol, limit=4):
+    candidate_labels = transcript_candidate_quarters(symbol, limit=12)
+    outcomes: list[TranscriptFetchOutcome] = []
+
+    for label in candidate_labels:
+        if len(transcripts) >= 4:
+            break
+
+        year, quarter = _quarter_tuple_from_label(label)
         try:
             record = fetch_transcript_alpha_vantage(
                 symbol=symbol,
@@ -176,13 +246,32 @@ def fetch_last_4_transcripts(symbol: str, settings: Settings) -> Tuple[list[Tran
                 timeout_seconds=settings.request_timeout_seconds,
             )
             if record is None:
-                warnings.append(f"No transcript for {symbol} {_quarter_label(year, quarter)}")
+                outcomes.append(TranscriptFetchOutcome(quarter=label, status="not_found"))
                 continue
-            transcripts.append(record)
-        except Exception as exc:
-            warnings.append(f"Alpha Vantage transcript error for {symbol} {_quarter_label(year, quarter)}: {exc}")
 
-    return transcripts, warnings
+            transcripts.append(record)
+            outcomes.append(TranscriptFetchOutcome(quarter=label, status="found"))
+        except Exception as exc:
+            detail = str(exc)
+            warnings.append(f"Alpha Vantage transcript error for {symbol} {label}: {detail}")
+            outcomes.append(TranscriptFetchOutcome(quarter=label, status="error", detail=detail))
+
+    found_quarters = [o.quarter for o in outcomes if o.status == "found"]
+    missing_quarters = [o.quarter for o in outcomes if o.status == "not_found"]
+    errors = [f"{o.quarter}: {o.detail}" for o in outcomes if o.status == "error" and o.detail]
+
+    if not transcripts and not errors:
+        warnings.append(f"No transcript payload returned for {symbol} in scanned quarters.")
+
+    diagnostics = TranscriptFetchDiagnostics(
+        requested_quarters=[o.quarter for o in outcomes],
+        found_quarters=found_quarters,
+        missing_quarters=missing_quarters,
+        errors=errors,
+        outcomes=outcomes,
+    )
+
+    return transcripts, warnings, diagnostics
 
 
 def _parse_news_score(raw: Any) -> float:
@@ -248,6 +337,30 @@ def fetch_news_alpha_vantage(symbol: str, settings: Settings, limit: int = 12) -
     return results, warnings
 
 
+def _finance_relevance_score(
+    symbol: str,
+    title: str,
+    body: str,
+    subreddit: Optional[str],
+) -> float:
+    text = f"{title} {body}".lower()
+    symbol_l = symbol.lower()
+
+    score = 0.0
+
+    score += 3.0 * len(re.findall(rf"\b{re.escape(symbol_l)}\b", text))
+    score += 2.0 * text.count(f"${symbol_l}")
+
+    for term in _FINANCE_TERMS:
+        if term in text:
+            score += 0.4
+
+    if subreddit:
+        score += _FINANCE_SUBREDDIT_WEIGHTS.get(subreddit.lower(), 0.0)
+
+    return score
+
+
 def fetch_social_reddit(symbol: str, settings: Settings, limit: int = 12) -> Tuple[list[SocialRecord], list[str]]:
     warnings: list[str] = []
     query = f"${symbol} OR {symbol} stock"
@@ -259,11 +372,11 @@ def fetch_social_reddit(symbol: str, settings: Settings, limit: int = 12) -> Tup
             params={
                 "q": query,
                 "sort": "new",
-                "limit": str(limit),
+                "limit": str(max(limit * 2, 24)),
                 "type": "link",
                 "t": "week",
             },
-            headers={"User-Agent": "finbert-local-analyzer/0.2"},
+            headers={"User-Agent": "finbert-local-analyzer/0.3"},
             timeout=settings.request_timeout_seconds,
         )
         if response.status_code != 200:
@@ -281,20 +394,27 @@ def fetch_social_reddit(symbol: str, settings: Settings, limit: int = 12) -> Tup
             title = str(post.get("title") or "").strip()
             body = str(post.get("selftext") or "").strip()
             permalink = str(post.get("permalink") or "").strip()
+            subreddit = str(post.get("subreddit") or "").strip() or None
+
             if not title:
                 continue
 
             url = f"https://www.reddit.com{permalink}" if permalink else "https://www.reddit.com"
+            relevance = _finance_relevance_score(symbol, title, body, subreddit)
+
             records.append(
                 SocialRecord(
                     source="reddit",
                     title=title,
                     body=body,
                     url=url,
-                    subreddit=str(post.get("subreddit") or "") or None,
+                    subreddit=subreddit,
                     created_utc=int(post.get("created_utc")) if post.get("created_utc") else None,
+                    relevance_score=relevance,
                 )
             )
+
+        records.sort(key=lambda r: r.relevance_score, reverse=True)
 
         if not records:
             warnings.append(f"No Reddit posts found for {symbol} in the recent window.")
@@ -302,6 +422,31 @@ def fetch_social_reddit(symbol: str, settings: Settings, limit: int = 12) -> Tup
         return records[:limit], warnings
     except Exception as exc:
         return [], [f"Reddit social feed error for {symbol}: {exc}"]
+
+
+def fetch_price_volume_history(symbol: str, period: str = "3mo") -> list[PriceVolumeRecord]:
+    try:
+        ticker = yf.Ticker(symbol)
+        history = ticker.history(period=period)
+        if not isinstance(history, pd.DataFrame) or history.empty:
+            return []
+
+        out: list[PriceVolumeRecord] = []
+        for idx, row in history.iterrows():
+            try:
+                ts = pd.Timestamp(idx)
+                out.append(
+                    PriceVolumeRecord(
+                        date=ts.strftime("%Y-%m-%d"),
+                        close=float(row.get("Close") or 0.0),
+                        volume=float(row.get("Volume") or 0.0),
+                    )
+                )
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return []
 
 
 def _find_series_row(

@@ -86,6 +86,7 @@ class SocialPost(BaseModel):
     url: str
     subreddit: Optional[str] = None
     created_utc: Optional[int] = None
+    relevance_score: float = Field(ge=0)
     sentiment_score: float
     sentiment_label: str
 
@@ -144,6 +145,79 @@ class WorkflowStage(BaseModel):
     detail: str
 
 
+class RunSummary(BaseModel):
+    ticker: str
+    overall_label: str
+    overall_score: float
+    transcripts_found: int
+    news_count: int
+    social_count: int
+
+
+class TranscriptQuarterStatus(BaseModel):
+    quarter: str
+    status: Literal["found", "not_found", "error"]
+    detail: Optional[str] = None
+
+
+class TranscriptHealth(BaseModel):
+    requested_quarters: list[str]
+    found_quarters: list[str]
+    missing_quarters: list[str]
+    errors: list[str]
+    outcomes: list[TranscriptQuarterStatus]
+
+
+class DataHealth(BaseModel):
+    transcripts: TranscriptHealth
+    warnings_compact: list[str]
+
+
+class ReportKPI(BaseModel):
+    label: str
+    value: str
+
+
+class ReportTable(BaseModel):
+    title: str
+    columns: list[str]
+    rows: list[list[str]]
+
+
+class ReportTab(BaseModel):
+    id: str
+    title: str
+    markdown: str
+    kpis: list[ReportKPI]
+    tables: list[ReportTable]
+
+
+class PriceVolumePoint(BaseModel):
+    date: str
+    close: float
+    volume: float
+
+
+class SentimentTimelinePoint(BaseModel):
+    date: str
+    news: float
+    social: float
+    blended: float
+
+
+class FundamentalsTrendPoint(BaseModel):
+    quarter: str
+    revenue: Optional[float] = None
+    net_income: Optional[float] = None
+    eps: Optional[float] = None
+
+
+class ChartsPayload(BaseModel):
+    price_volume: list[PriceVolumePoint]
+    sentiment_timeline: list[SentimentTimelinePoint]
+    fundamentals_trend: list[FundamentalsTrendPoint]
+
+
 class AnalysisResponse(BaseModel):
     ticker: str
     transcripts_found: int
@@ -160,6 +234,10 @@ class AnalysisResponse(BaseModel):
     risk_management: RiskManagementSummary
     manager_decision: ManagerDecision
     workflow: list[WorkflowStage]
+    run_summary: RunSummary
+    data_health: DataHealth
+    report_tabs: list[ReportTab]
+    charts: ChartsPayload
     news: list[NewsArticle]
     social: list[SocialPost]
     transcripts: list[TranscriptResult]

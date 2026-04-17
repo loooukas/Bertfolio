@@ -1,51 +1,45 @@
-# FinBERT Multi-Agent Signal Board (Local)
+# FinBERT Report Desk (Local)
 
-A local FastAPI app that keeps **FinBERT** as the sentiment engine, but now uses a
-TradingAgents-style decision flow:
+Local FastAPI app that keeps **FinBERT** as the core sentiment engine and renders a compact, tabbed trading research workflow.
 
-1. Analyst ingestion (`fundamentals`, `news`, `social`, `transcripts`)
-2. Bull vs bear researcher synthesis
-3. Trader proposal
-4. Risk management team views
-5. Manager execution decision
+## What This Build Implements
 
-The UI now follows a pipeline board format and uses the imported Modrinth design-language token set (color, spacing, radii, and shadow system).
+- Dark Modrinth-inspired design language and compact layout
+  - left rail (progress + report nav)
+  - tabbed workspace (no tall stacked report columns)
+- Deterministic report tabs (markdown + structured KPI tables)
+  - `summary`, `analyst`, `research`, `trader`, `risk_manager`, `data_health`
+- Expanded API payload while preserving legacy compatibility
+  - new: `run_summary`, `data_health`, `report_tabs`, `charts`
+  - existing: `news`, `social`, `fundamentals`, `transcripts`, etc.
+- Transcript retrieval reliability upgrades (Alpha Vantage only)
+  - earnings-date quarter candidates + historical fallback scan
+  - stop after first 4 valid transcript payloads
+  - per-quarter outcome classification: `found` / `not_found` / `error`
+- Social ingestion quality upgrades
+  - broad Reddit ingestion + relevance ranking
+  - relevance score surfaced in social records
+- Three core charts
+  - price + volume (3 months)
+  - sentiment timeline (news/social/blended)
+  - fundamentals trend (revenue/net income/EPS)
 
-## What Changed
+## Can You Run FinBERT Locally on an M4 Mac (24GB RAM)?
 
-- FinBERT sentiment now scores:
-  - Earnings transcripts
-  - News headlines/summaries
-  - Social posts (Reddit)
-- New API response stages:
-  - `analyst_team`
-  - `research_team`
-  - `trader_plan`
-  - `risk_management`
-  - `manager_decision`
-  - `workflow`
-- Existing evidence surfaces are preserved:
-  - fundamentals snapshots + chart
-  - news/social feed cards
-  - transcript signal/quotes drilldown
-
-## Can This Run on a 24GB M4 Mac?
-
-Yes. This workload is realistic on Apple Silicon with local PyTorch (`mps`) for FinBERT inference.
-The current model default is `ProsusAI/finbert`.
+Yes. `ProsusAI/finbert` is a BERT-base scale model (~110M parameters) and runs locally on Apple Silicon with PyTorch MPS for this workload.
 
 ## Project Structure
 
-- `finbert_site/main.py` — FastAPI entrypoint + endpoints
-- `finbert_site/providers.py` — Alpha Vantage + Yahoo Finance + Reddit data providers
-- `finbert_site/finbert_model.py` — local FinBERT wrapper
-- `finbert_site/analysis.py` — multi-stage scoring and synthesis pipeline
-- `finbert_site/schemas.py` — API contracts for analyst/research/trader/risk/manager stages
-- `templates/index.html` — pipeline board UI
-- `static/style.css` — Modrinth token-based styling
-- `docs/phased_implementation_plan.md` — migration plan and phase tracking
+- `finbert_site/main.py` — FastAPI routes (`/`, `/api/health`, `/api/analyze`)
+- `finbert_site/analysis.py` — deterministic analysis pipeline + report/chart assembly
+- `finbert_site/providers.py` — Alpha Vantage, yfinance, Reddit providers
+- `finbert_site/finbert_model.py` — local FinBERT scoring/chunking wrapper
+- `finbert_site/schemas.py` — API response models
+- `templates/index.html` — left-rail + tabbed report UI
+- `static/style.css` — dark design language styles
+- `docs/phased_implementation_plan.md` — implementation phases and checks
 
-## Setup
+## Local Run
 
 1. Create and activate a virtual environment.
 2. Install dependencies:
@@ -54,13 +48,14 @@ The current model default is `ProsusAI/finbert`.
 pip install -r requirements.txt
 ```
 
-3. Copy environment file and add keys:
+3. Configure environment:
 
 ```bash
 cp .env.example .env
+# Add ALPHAVANTAGE_API_KEY in .env
 ```
 
-4. Run server:
+4. Start app:
 
 ```bash
 uvicorn finbert_site.main:app --reload
@@ -70,12 +65,17 @@ uvicorn finbert_site.main:app --reload
 
 - [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
-## API Keys
+## API Key
 
-- `ALPHAVANTAGE_API_KEY`: required for transcripts and Alpha Vantage news.
+- `ALPHAVANTAGE_API_KEY` is required for transcript and news retrieval.
+- Reddit social search currently uses public endpoint (no additional key in this build).
 
-Social feed currently uses Reddit search and does not require an additional key.
+## Test
 
-## Caveat
+```bash
+pytest
+```
 
-This is an analyst-support tool, not trading advice. It is designed for `Augment & Verify` human oversight.
+## Note
+
+This is an analyst-support interface, not trading advice.

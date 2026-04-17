@@ -1,24 +1,29 @@
-# Week 1 Deliverable Mapping
+# Implementation Notes
 
-## Problem framing implemented
+## Current behavior
 
-The app is built as an analyst-support system for reducing transcript review time while keeping traceability:
+- The app is a deterministic analyst-support pipeline built around FinBERT sentiment scoring.
+- It synthesizes fundamentals, news, social, and transcript signals into staged outputs:
+  - analyst reports
+  - research debate
+  - trader plan
+  - risk views
+  - manager decision
+- Output remains evidence-linked through structured report tables and source cards.
 
-- transcript ingestion is explicit and auditable
-- Alpha Vantage news ingestion adds current external sentiment context
-- sentiment and confidence are separated from factual transcript text
-- warnings are surfaced when transcript quality/source access is insufficient
+## Transcript health behavior
 
-## Constitution-oriented behavior
+- Transcript retrieval is Alpha Vantage-only in this build.
+- Missing transcript data is treated as coverage degradation, not a fatal UI error.
+- Retrieval diagnostics are surfaced in `data_health` with per-quarter outcomes.
 
-- No investment recommendation outputs (no buy/sell/hold).
-- Quotes and keyword evidence are returned for interpretive claims.
-- Ambiguous / low-data cases fail with explicit warnings instead of forced conclusions.
-- Evasiveness is estimated from Q&A hedging density and reported as a score, not a claim of intent.
+## UX behavior
 
-## Oversight Matrix posture
+- Top header shows compact run status only.
+- Full warning detail and retrieval outcomes are isolated to the Data Health tab.
+- News/social cards are rendered beneath summary metadata to reduce visual noise.
 
-This implementation intentionally targets **Augment & Verify**:
+## Guardrails
 
-- AI performs repetitive extraction and scoring.
-- Human reviews evidence quotes, warning flags, and fundamentals before acting.
+- The interface is decision-support tooling, not financial advice.
+- Sparse data conditions are explicitly surfaced via compact warnings and health diagnostics.
