@@ -105,7 +105,11 @@ pytest -q
 
 ## OpenAI Web-Search Transcript Slug Test
 
-This prototype script asks the OpenAI Responses API to web-search Motley Fool transcript pages and then reduces the output to the last 4 consecutive quarters with structured JSON output.
+This prototype script now uses a strict 3-step flow per ticker:
+
+1. OpenAI `web_search` discovers Motley Fool transcript URLs.
+2. The script fetches page text from each selected URL (browser-render text when available, static text otherwise).
+3. The page text is sent to OpenAI for speaker-by-speaker JSON structuring.
 
 ```bash
 python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty
@@ -122,6 +126,25 @@ Discover links and scrape the most recent 4 transcript pages into per-speaker JS
 ```bash
 python scripts/openai_motley_transcript_cli.py AAPL --pretty --verbose --scrape --scrape-count 4
 ```
+
+Write JSON + verbose logs to files:
+
+```bash
+mkdir -p output
+TS=$(date +"%Y%m%d_%H%M%S")
+JSON="output/openai_motley_${TS}.json"
+LOG="output/openai_motley_${TS}.log"
+.venv/bin/python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty --verbose --scrape --scrape-count 4 --cache-mode refresh > "$JSON" 2> "$LOG"
+echo "$JSON"
+echo "$LOG"
+```
+
+Cache controls for scraped transcript JSON:
+
+- `--cache-mode refresh` (default): always fetch + re-run OpenAI structuring, then overwrite cache
+- `--cache-mode use`: use cached transcript JSON when present, fetch only on cache miss
+- `--cache-mode off`: disable cache read/write
+- `--cache-dir output/openai_motley_cache`: override cache location
 
 Optional browser-render fallback for difficult pages:
 
@@ -151,11 +174,11 @@ Output shape (per ticker):
 - `selected_recent_links`, `scraped_transcripts`, and `scrape_errors` when `--scrape` is enabled
 - `scrape_method`, `line_source`, `marker_detection`, and `line_count` diagnostics on scraped transcript payloads
 - `section_parse_method` (`regex` or `openai`) and optional `section_parse_reason` when speaker fallback is used
-- Scraping now runs a source-first OpenAI transcript structuring step using page source/text, then falls back to regex parsing only if OpenAI structuring fails.
+- Scraping runs OpenAI transcript structuring from extracted page text. If OpenAI fails, it attempts a regex fallback from the same extracted page text.
 - OpenAI HTTP calls use a retrying session and capped read timeout to reduce hangs from intermittent `RemoteDisconnected` transport errors.
 - `llm_input_diagnostics` and `llm_input_preview` show the actual page-derived content passed to OpenAI for transcript structuring.
-- If only low-quality parser output is available, scraping now records a `scrape_error` instead of returning misleading single `unknown` speaker sections.
-- If discovery web search succeeds but the model omits structured JSON, discovery now falls back to building candidates from `web_search` source URLs instead of failing the ticker.
+- If only low-quality parser output is available, scraping records a `scrape_error` instead of returning misleading single `unknown` speaker sections.
+- Discovery is source-first: candidates are built from `web_search` source URLs so missing schema output no longer hard-fails discovery.
 
 ## Notes
 

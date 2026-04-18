@@ -218,6 +218,98 @@ def test_scrape_recent_transcripts_for_report_uses_selected_links(monkeypatch) -
     assert payload["scrape_errors"] == []
 
 
+def test_scrape_recent_transcripts_cache_use_mode_reads_cached_payload(monkeypatch, tmp_path) -> None:
+    report = {
+        "ticker": "AAPL",
+        "candidate_pool": [
+            {
+                "quarter": "2026-Q1",
+                "title": "T1",
+                "url": "https://www.fool.com/earnings/call-transcripts/2026/01/29/a/",
+                "published_date": "2026-01-29",
+            }
+        ],
+    }
+
+    def _fake_fetch(**kwargs):
+        return {
+            "quarter": kwargs["quarter"],
+            "title": kwargs["title"],
+            "url": kwargs["url"],
+            "published_date": kwargs["published_date"],
+            "participants": [],
+            "speaker_sections": [
+                {
+                    "speaker": "Fetched",
+                    "speaker_role": None,
+                    "section_type": "other",
+                    "order_index": 0,
+                    "text": "fetched",
+                }
+            ],
+            "speaker_count": 1,
+            "speakers": ["Fetched"],
+            "section_count": 1,
+            "transcript_line_count": 1,
+            "transcript_char_count": 7,
+        }
+
+    monkeypatch.setattr("finbert_site.openai_motley_search._fetch_transcript_sections", _fake_fetch)
+
+    cache_dir = tmp_path / "cache"
+    payload_refresh = scrape_recent_transcripts_for_report(
+        report=report,
+        scrape_count=1,
+        timeout_seconds=10,
+        cache_mode="refresh",
+        cache_dir=str(cache_dir),
+        api_key="test-key",
+        model="gpt-5-mini",
+        retry_attempts=1,
+        log_fn=lambda _: None,
+    )
+    assert payload_refresh["scraped_count"] == 1
+    cache_file = payload_refresh["scraped_transcripts"][0]["cache_file"]
+
+    # Overwrite the cached file with a known payload, then ensure use-mode returns it.
+    cached = {
+        "quarter": "2026-Q1",
+        "title": "T1",
+        "url": "https://www.fool.com/earnings/call-transcripts/2026/01/29/a/",
+        "published_date": "2026-01-29",
+        "participants": [],
+        "speaker_sections": [{"speaker": "Cached", "speaker_role": None, "section_type": "other", "order_index": 0, "text": "cached"}],
+        "speaker_count": 1,
+        "speakers": ["Cached"],
+        "section_count": 1,
+        "transcript_line_count": 1,
+        "transcript_char_count": 6,
+    }
+    from pathlib import Path
+    import json
+
+    Path(cache_file).write_text(json.dumps(cached), encoding="utf-8")
+
+    def _should_not_fetch(**kwargs):
+        raise AssertionError("fetch should not be called when cache_mode=use and cache exists")
+
+    monkeypatch.setattr("finbert_site.openai_motley_search._fetch_transcript_sections", _should_not_fetch)
+    payload_use = scrape_recent_transcripts_for_report(
+        report=report,
+        scrape_count=1,
+        timeout_seconds=10,
+        cache_mode="use",
+        cache_dir=str(cache_dir),
+        api_key="test-key",
+        model="gpt-5-mini",
+        retry_attempts=1,
+        log_fn=lambda _: None,
+    )
+    assert payload_use["scraped_count"] == 1
+    assert payload_use["scraped_transcripts"][0]["from_cache"] is True
+    assert payload_use["scraped_transcripts"][0]["speaker_sections"][0]["speaker"] == "Cached"
+
+
 def test_extract_text_lines_relaxed_supports_div_only_content() -> None:
     from bs4 import BeautifulSoup
 
@@ -279,8 +371,7 @@ def test_discover_last_quarter_links_uses_source_fallback_when_structured_missin
     )
     assert report["found_quarters"] == ["2026-Q1"]
     assert len(report["candidate_pool"]) >= 1
-    assert "Structured output missing" in report.get("notes", "")
-    assert any("source-only fallback" in warning for warning in report.get("warnings", []))
+    assert "Candidates derived from OpenAI web_search sources" in report.get("notes", "")
 
 
 def test_parse_transcript_from_html_semantic_dom_source() -> None:
@@ -494,7 +585,7 @@ def test_fetch_transcript_sections_low_quality_uses_openai_section_fallback(monk
         openai_api_key="test-key",
         openai_model="gpt-5-mini",
     )
-    assert payload["section_parse_method"] == "openai_source_first"
+    assert payload["section_parse_method"] == "openai_page_text"
     assert payload["section_count"] == 2
     assert payload["speaker_sections"][0]["speaker"] == "Operator"
 
@@ -548,5 +639,5 @@ def test_fetch_transcript_sections_low_quality_parser_becomes_error(monkeypatch)
             timeout_seconds=10,
         )
 
-    assert "Low-quality transcript parse" in str(exc.value)
+    assert "Unable to produce high-quality speaker sections from page text." in str(exc.value)
     assert exc.value.diagnostics.get("low_quality_reason") in {"script_wrapped_text", "single_unknown_section"}

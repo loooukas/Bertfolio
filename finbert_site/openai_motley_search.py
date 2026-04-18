@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+import hashlib
 import html as html_lib
 import json
 import os
+from pathlib import Path
 import re
 import sys
 import time
@@ -26,9 +28,12 @@ DEFAULT_OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v
 DEFAULT_OPENAI_SEARCH_MODEL = os.getenv("OPENAI_SEARCH_MODEL", "gpt-5-mini")
 DEFAULT_TIMEOUT_SECONDS = 45
 DEFAULT_OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "3"))
-DEFAULT_TRANSCRIPT_INPUT_MAX_CHARS = int(os.getenv("TRANSCRIPT_INPUT_MAX_CHARS", "30000"))
+DEFAULT_TRANSCRIPT_INPUT_MAX_CHARS = int(os.getenv("TRANSCRIPT_INPUT_MAX_CHARS", "120000"))
 DEFAULT_OPENAI_CONNECT_TIMEOUT_SECONDS = float(os.getenv("OPENAI_CONNECT_TIMEOUT_SECONDS", "10"))
 DEFAULT_OPENAI_READ_TIMEOUT_CAP_SECONDS = float(os.getenv("OPENAI_READ_TIMEOUT_CAP_SECONDS", "50"))
+DEFAULT_TRANSCRIPT_SEGMENT_CHARS = int(os.getenv("TRANSCRIPT_SEGMENT_CHARS", "12000"))
+DEFAULT_SCRAPE_CACHE_DIR = os.getenv("MOTLEY_SCRAPE_CACHE_DIR", "output/openai_motley_cache")
+DEFAULT_SCRAPE_CACHE_MODE = os.getenv("MOTLEY_SCRAPE_CACHE_MODE", "refresh")
 
 _TITLE_QUARTER_PATTERNS = (
     re.compile(r"\bQ([1-4])\s+(20\d{2})\b", flags=re.IGNORECASE),
@@ -118,6 +123,31 @@ class TranscriptExtractionError(RuntimeError):
 def _normalize_ticker(ticker: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9.-]", "", ticker.strip().upper())
     return cleaned
+
+
+def _safe_filename_component(value: str, fallback: str = "item", max_len: int = 80) -> str:
+    raw = re.sub(r"[^A-Za-z0-9._-]+", "-", (value or "").strip())
+    raw = raw.strip("-._")
+    if not raw:
+        raw = fallback
+    return raw[:max_len]
+
+
+def _build_scrape_cache_key(ticker: str, quarter: str, url: str) -> str:
+    normalized = _normalize_url(url) or url
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"{_normalize_ticker(ticker)}::{quarter or 'unknown'}::{digest}"
+
+
+def _resolve_scrape_cache_path(cache_dir: str, ticker: str, quarter: str, url: str, published_date: str) -> Path:
+    root = Path(cache_dir)
+    symbol = _normalize_ticker(ticker) or "UNKNOWN"
+    quarter_safe = _safe_filename_component(quarter or "unknown-quarter", fallback="unknown-quarter")
+    date_safe = _safe_filename_component(published_date or "unknown-date", fallback="unknown-date")
+    slug = _safe_filename_component(urlparse(url).path.rstrip("/").split("/")[-1], fallback="transcript")
+    key = _build_scrape_cache_key(symbol, quarter, url).split("::")[-1]
+    filename = f"{symbol}_{quarter_safe}_{date_safe}_{slug}_{key}.json"
+    return root / symbol / filename
 
 
 def _default_logger(message: str) -> None:
@@ -680,174 +710,127 @@ def _fetch_transcript_sections(
 
     browser_html: Optional[str] = None
     browser_visible_text: Optional[str] = None
-    source_input: Optional[dict[str, Any]] = None
-    if openai_api_key:
-        source_input = _build_source_first_llm_input(static_html=html)
-        if source_input.get("input_speaker_line_count", 0) < 5:
-            try:
-                browser_html, browser_visible_text = _render_playwright_snapshot(url=url, timeout_seconds=timeout_seconds)
-                source_input = _build_source_first_llm_input(
-                    static_html=html,
-                    browser_html=browser_html,
-                    browser_visible_text=browser_visible_text,
-                )
-                log(
-                    "scrape: source-first LLM input upgraded with browser html "
-                    f"(source={source_input.get('input_source')}:{source_input.get('input_source_detail')})"
-                )
-            except Exception as exc:
-                log(f"scrape: browser render unavailable for source-first input ({exc})")
-
-        transcript_text = str(source_input.get("text") or "").strip()
-        if transcript_text:
-            try:
-                log(
-                    "scrape: source-first OpenAI structuring "
-                    f"(source={source_input.get('input_source')}:{source_input.get('input_source_detail')}, "
-                    f"chars={source_input.get('input_char_count')})"
-                )
-                structured = _structure_transcript_with_openai(
-                    api_key=openai_api_key,
-                    model=openai_model,
-                    base_url=openai_base_url,
-                    timeout_seconds=timeout_seconds,
-                    retry_attempts=max(openai_retry_attempts, 1),
-                    ticker=ticker,
-                    quarter=quarter,
-                    title=title,
-                    url=url,
-                    published_date=published_date,
-                    transcript_text=transcript_text,
-                    log_fn=log_fn,
-                )
-                return {
-                    "quarter": quarter,
-                    "title": title,
-                    "url": url,
-                    "published_date": published_date,
-                    **structured,
-                    "scrape_method": (
-                        "browser" if str(source_input.get("input_source") or "").startswith("browser") else "static"
-                    ),
-                    "line_source": f"{source_input.get('input_source')}:{source_input.get('input_source_detail')}",
-                    "marker_detection": {
-                        "mode": "source_first_llm",
-                        "input_source": source_input.get("input_source"),
-                        "input_source_detail": source_input.get("input_source_detail"),
-                    },
-                    "line_count": {
-                        "source_line_count": int(source_input.get("input_line_count") or 0),
-                        "transcript_line_count": int(structured.get("transcript_line_count") or 0),
-                        "input_char_count": int(source_input.get("input_char_count") or 0),
-                    },
-                    "section_parse_method": "openai_source_first",
-                    "section_parse_reason": "source_page_text",
-                    "llm_input_diagnostics": source_input,
-                    "llm_input_preview": transcript_text[:2000],
-                }
-            except Exception as exc:
-                log(f"scrape: source-first OpenAI structuring failed ({exc}); falling back to parser")
-        else:
-            log("scrape: source-first LLM input is empty; falling back to parser")
-
-    parsed: Optional[dict[str, Any]] = None
-    low_quality_reason = ""
-    static_exc: Optional[TranscriptExtractionError] = None
-
+    browser_error: Optional[str] = None
     try:
-        static_parsed = _parse_transcript_from_html(
-            html=html,
-            scrape_method="static",
-            log_fn=log_fn,
-        )
-        static_low_quality, static_reason = _is_low_quality_speaker_parse(static_parsed)
-        if static_low_quality:
-            low_quality_reason = static_reason
-            log(
-                f"scrape: static extraction returned low-quality sections ({static_reason}); "
-                "trying browser fallback"
-            )
-            parsed = static_parsed
-        else:
-            parsed = static_parsed
-            log(f"scrape: static extraction succeeded via {parsed.get('line_source')}")
-    except TranscriptExtractionError as exc:
-        static_exc = exc
-        log(f"scrape: static extraction failed ({exc}); trying browser fallback")
-        parsed = None
+        browser_html, browser_visible_text = _render_playwright_snapshot(url=url, timeout_seconds=timeout_seconds)
+        log("scrape: browser render captured for page text extraction")
+    except Exception as exc:
+        browser_error = str(exc)
+        log(f"scrape: browser render unavailable ({exc}); continuing with static HTML text")
 
-    needs_browser_attempt = parsed is None or bool(low_quality_reason)
-    if needs_browser_attempt:
+    source_input = _build_source_first_llm_input(
+        static_html=html,
+        browser_html=browser_html,
+        browser_visible_text=browser_visible_text,
+    )
+    transcript_text = str(source_input.get("text") or "").strip()
+    source_label = f"{source_input.get('input_source')}:{source_input.get('input_source_detail')}"
+    scrape_method = "browser" if str(source_input.get("input_source") or "").startswith("browser") else "static"
+
+    if not transcript_text:
+        message = "No transcript-like page text was extracted for OpenAI structuring."
+        if browser_error:
+            message = f"{message} Browser fallback unavailable: {browser_error}"
+        error_scrape_method = "browser" if browser_error else scrape_method
+        raise TranscriptExtractionError(
+            message,
+            scrape_method=error_scrape_method,
+            diagnostics={
+                "line_source": source_label,
+                "llm_input_diagnostics": source_input,
+                "browser_error": browser_error,
+            },
+        )
+
+    log(
+        "scrape: page text prepared "
+        f"(source={source_label}, chars={source_input.get('input_char_count')}, "
+        f"speaker_lines={source_input.get('input_speaker_line_count')})"
+    )
+
+    openai_error: Optional[str] = None
+    if openai_api_key:
         try:
-            if browser_html is None:
-                browser_html, browser_visible_text = _render_playwright_snapshot(url=url, timeout_seconds=timeout_seconds)
-            browser_parsed = _parse_transcript_from_html(
-                html=browser_html,
-                scrape_method="browser",
+            log("scrape: structuring page text with OpenAI")
+            structured = _structure_transcript_with_openai(
+                api_key=openai_api_key,
+                model=openai_model,
+                base_url=openai_base_url,
+                timeout_seconds=timeout_seconds,
+                retry_attempts=max(openai_retry_attempts, 1),
+                ticker=ticker,
+                quarter=quarter,
+                title=title,
+                url=url,
+                published_date=published_date,
+                transcript_text=transcript_text,
                 log_fn=log_fn,
             )
-            browser_low_quality, browser_reason = _is_low_quality_speaker_parse(browser_parsed)
-            if browser_low_quality:
-                log(
-                    f"scrape: browser extraction is still low quality ({browser_reason}); "
-                    "keeping best available parse for regex fallback"
-                )
-                if parsed is None:
-                    parsed = browser_parsed
-                if not low_quality_reason:
-                    low_quality_reason = browser_reason
-            else:
-                parsed = browser_parsed
-                low_quality_reason = ""
-                log(f"scrape: browser extraction succeeded via {parsed.get('line_source')}")
-        except Exception as browser_exc:
-            if parsed is None:
-                diagnostics = {
-                    "static": static_exc.diagnostics if static_exc else {},
-                    "browser_error": str(browser_exc),
-                }
-                raise TranscriptExtractionError(
-                    (
-                        f"{static_exc} Browser fallback failed: {browser_exc}"
-                        if static_exc is not None
-                        else f"Browser fallback failed: {browser_exc}"
-                    ),
-                    scrape_method="browser",
-                    diagnostics=diagnostics,
-                ) from browser_exc
-            log(f"scrape: browser fallback unavailable ({browser_exc}); using static parse")
+            return {
+                "quarter": quarter,
+                "title": title,
+                "url": url,
+                "published_date": published_date,
+                **structured,
+                "scrape_method": scrape_method,
+                "line_source": source_label,
+                "marker_detection": source_input.get("marker_detection") or {},
+                "line_count": {
+                    "source_line_count": int(source_input.get("input_line_count") or 0),
+                    "transcript_line_count": int(structured.get("transcript_line_count") or 0),
+                    "input_char_count": int(source_input.get("input_char_count") or 0),
+                },
+                "section_parse_method": "openai_page_text",
+                "section_parse_reason": "page_text_structured_by_openai",
+                "llm_input_diagnostics": source_input,
+                "llm_input_preview": transcript_text[:2000],
+            }
+        except Exception as exc:
+            openai_error = str(exc)
+            log(f"scrape: OpenAI structuring failed ({exc}); trying regex fallback on extracted page text")
 
-    if parsed is None:
-        raise RuntimeError("Transcript parsing failed without diagnostics.")
-
-    if not low_quality_reason:
-        low_quality, low_quality_reason = _is_low_quality_speaker_parse(parsed)
-        if not low_quality:
-            low_quality_reason = ""
-
-    if low_quality_reason:
-        diagnostics = {
+    parsed_from_text = _parse_speaker_sections_from_text(transcript_text)
+    low_quality, low_quality_reason = _is_low_quality_speaker_parse(parsed_from_text)
+    if low_quality:
+        diagnostics: dict[str, Any] = {
             "low_quality_reason": low_quality_reason,
-            "line_source": parsed.get("line_source"),
-            "line_count": parsed.get("line_count"),
-            "marker_detection": parsed.get("marker_detection"),
+            "line_source": source_label,
+            "line_count": parsed_from_text.get("line_count"),
+            "marker_detection": parsed_from_text.get("marker_detection"),
+            "llm_input_diagnostics": source_input,
+            "llm_input_preview": transcript_text[:2000],
         }
-        if source_input:
-            diagnostics["llm_input_diagnostics"] = source_input
-            diagnostics["llm_input_preview"] = str(source_input.get("text") or "")[:2000]
+        if openai_error:
+            diagnostics["openai_error"] = openai_error
+        if browser_error:
+            diagnostics["browser_error"] = browser_error
+        message = "Unable to produce high-quality speaker sections from page text."
+        if browser_error:
+            message = f"{message} Browser fallback unavailable: {browser_error}"
+        error_scrape_method = "browser" if browser_error else scrape_method
         raise TranscriptExtractionError(
-            "Low-quality transcript parse after source-first and parser fallback.",
-            scrape_method=str(parsed.get("scrape_method") or "static"),
+            message,
+            scrape_method=error_scrape_method,
             diagnostics=diagnostics,
         )
-    parsed.pop("raw_text", None)
 
+    parsed_from_text["section_parse_reason"] = (
+        "openai_unavailable_or_failed" if openai_error else "openai_not_requested"
+    )
     return {
         "quarter": quarter,
         "title": title,
         "url": url,
         "published_date": published_date,
-        **parsed,
+        **parsed_from_text,
+        "scrape_method": scrape_method,
+        "line_source": source_label,
+        "line_count": {
+            **(parsed_from_text.get("line_count") or {}),
+            "input_char_count": int(source_input.get("input_char_count") or 0),
+        },
+        "llm_input_diagnostics": source_input,
+        "llm_input_preview": transcript_text[:2000],
     }
 
 
@@ -1079,12 +1062,11 @@ def _build_transcript_structure_schema() -> dict[str, Any]:
 
 def _build_search_prompt(ticker: str, max_candidates: int) -> str:
     return (
-        "Find Motley Fool earnings call transcript pages for the stock ticker "
+        "Use web search to find Motley Fool earnings call transcript pages for the stock ticker "
         f"{ticker}.\n"
-        "Return only Motley Fool transcript URLs under /earnings/call-transcripts/.\n"
-        "Prefer entries where ticker/company match is explicit in title/slug.\n"
-        f"Return up to {max_candidates} unique candidates ordered newest to oldest.\n"
-        "Use YYYY-MM-DD for published_date when available, otherwise empty string."
+        "Focus on URLs under /earnings/call-transcripts/ on www.fool.com.\n"
+        f"Find at least {max_candidates} likely transcript pages if available, newest first.\n"
+        "The tool sources are the main output we will parse."
     )
 
 
@@ -1096,15 +1078,25 @@ def _build_transcript_structure_prompt(
     url: str,
     published_date: str,
     transcript_text: str,
+    segment_index: int = 0,
+    segment_count: int = 1,
 ) -> str:
+    segment_header = ""
+    if segment_count > 1:
+        segment_header = (
+            f"Segment: {segment_index + 1} of {segment_count}.\n"
+            "Return sections only for this segment.\n"
+            "order_index should start at 0 for this segment.\n"
+        )
     return (
         "Convert the provided earnings-call transcript content into structured JSON with speaker-by-speaker sections.\n"
         "Do not summarize. Preserve what each speaker said as faithfully as possible.\n"
         "Each time the transcript switches speakers, create a new speaker_sections item.\n"
-        "A valid transcript should usually produce many speaker_sections, not one giant block.\n"
         "If text includes escaped JSON/Next.js script wrappers, recover the human-readable transcript first.\n"
         "Use section_type values: prepared_remarks, qa, or other.\n"
-        "order_index must be 0-based and strictly increasing.\n\n"
+        "Each speaker_sections.text value should contain only what that speaker said in this segment.\n"
+        "Never return an empty speaker_sections array unless the segment truly has no speaker lines.\n\n"
+        f"{segment_header}"
         f"Ticker: {ticker}\n"
         f"Quarter: {quarter}\n"
         f"Title: {title}\n"
@@ -1149,18 +1141,10 @@ def _build_request_payload(
 ) -> dict[str, Any]:
     return {
         "model": model,
-        "max_output_tokens": 1200,
+        "max_output_tokens": 800,
         "tool_choice": "required",
         "input": _build_search_prompt(ticker=ticker, max_candidates=max_candidates),
         "tools": [_build_tool(tool_type)],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "motley_fool_transcript_candidates",
-                "strict": True,
-                "schema": _build_response_schema(),
-            }
-        },
         "include": ["web_search_call.action.sources"],
     }
 
@@ -1196,7 +1180,7 @@ def _openai_post_responses(
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "Connection": "keep-alive",
+            "Connection": "close",
         },
         json=payload,
         timeout=(DEFAULT_OPENAI_CONNECT_TIMEOUT_SECONDS, read_timeout),
@@ -1483,33 +1467,22 @@ def _build_source_first_llm_input(
         if soup.body is not None:
             body_text = soup.body.get_text("\n", strip=True)
         script_payload_text = "\n".join(_extract_text_lines_from_script_payloads(soup))
-        html_window = _extract_focus_html_window(html)
 
-        sources = [
-            ("article_text", article_text),
-            ("script_payload_text", script_payload_text),
-            ("body_text", body_text),
-            ("focus_html_window", html_window),
-        ]
-        transformed_sources: list[tuple[str, str, float, bool]] = []
+        sources = [("article_text", article_text), ("body_text", body_text), ("script_payload_text", script_payload_text)]
+        transformed_sources: list[tuple[str, str, float, bool, dict[str, Any]]] = []
         for source_name, source_text in sources:
-            sliced, slice_found, _ = _slice_transcript_like_text(source_text)
+            sliced, slice_found, marker = _slice_transcript_like_text(source_text)
             score = _score_llm_input_text(sliced)
             if slice_found:
                 score += 35.0
-            transformed_sources.append((source_name, sliced, score, slice_found))
+            transformed_sources.append((source_name, sliced, score, slice_found, marker))
 
-        best_name, best_text, best_score, best_slice_found = max(transformed_sources, key=lambda item: item[2])
+        best_name, best_text, best_score, best_slice_found, best_marker = max(
+            transformed_sources,
+            key=lambda item: item[2],
+        )
 
-        blocks: list[str] = []
-        if best_text.strip():
-            blocks.append(f"[{source_label}:{best_name}]\n{best_text.strip()[:max_chars]}")
-        if best_name != "script_payload_text" and script_payload_text.strip() and best_slice_found:
-            blocks.append(f"[{source_label}:script_payload_text]\n{script_payload_text.strip()[: max_chars // 2]}")
-        if best_name != "article_text" and article_text.strip() and best_slice_found:
-            blocks.append(f"[{source_label}:article_text]\n{article_text.strip()[: max_chars // 2]}")
-
-        merged = "\n\n".join(blocks).strip()[:max_chars]
+        merged = best_text.strip()[:max_chars]
         candidates.append(
             {
                 "source": source_label,
@@ -1520,6 +1493,7 @@ def _build_source_first_llm_input(
                 "char_count": len(merged),
                 "line_count": len(merged.splitlines()),
                 "transcript_slice_found": best_slice_found,
+                "marker_detection": best_marker,
             }
         )
 
@@ -1528,7 +1502,7 @@ def _build_source_first_llm_input(
         _candidate_from_html("browser_html", browser_html)
     if browser_visible_text and browser_visible_text.strip():
         visible_text = browser_visible_text.strip()
-        visible_slice, visible_slice_found, _ = _slice_transcript_like_text(visible_text)
+        visible_slice, visible_slice_found, marker = _slice_transcript_like_text(visible_text)
         candidate_text = visible_slice if visible_slice else visible_text
         visible_score = _score_llm_input_text(candidate_text)
         if visible_slice_found:
@@ -1545,6 +1519,7 @@ def _build_source_first_llm_input(
                 "char_count": min(len(candidate_text), max_chars),
                 "line_count": len(candidate_text.splitlines()),
                 "transcript_slice_found": visible_slice_found,
+                "marker_detection": marker,
             }
         )
 
@@ -1556,6 +1531,7 @@ def _build_source_first_llm_input(
         "input_char_count": chosen["char_count"],
         "input_speaker_line_count": chosen["speaker_line_count"],
         "input_line_count": chosen["line_count"],
+        "marker_detection": chosen.get("marker_detection") or {},
         "input_candidates": [
             {
                 "source": item["source"],
@@ -1565,6 +1541,7 @@ def _build_source_first_llm_input(
                 "speaker_line_count": item["speaker_line_count"],
                 "line_count": item["line_count"],
                 "transcript_slice_found": bool(item.get("transcript_slice_found")),
+                "marker_detection": item.get("marker_detection") or {},
             }
             for item in candidates
         ],
@@ -1574,14 +1551,74 @@ def _build_source_first_llm_input(
 def _is_low_quality_structured_sections(sections: list[dict[str, Any]]) -> tuple[bool, str]:
     if not sections:
         return True, "no_sections"
-    if len(sections) < 2:
-        return True, "too_few_sections"
     unknown_count = sum(1 for section in sections if str(section.get("speaker") or "").strip().lower() in {"", "unknown"})
     if unknown_count == len(sections):
         return True, "all_unknown_speakers"
-    if unknown_count / max(len(sections), 1) > 0.75:
+    if unknown_count / max(len(sections), 1) > 0.9:
         return True, "mostly_unknown_speakers"
     return False, ""
+
+
+def _parse_speaker_sections_from_text(transcript_text: str) -> dict[str, Any]:
+    lines = _normalize_text_lines(transcript_text)
+    transcript_lines, marker_detection = _extract_transcript_lines_with_diagnostics(lines)
+    working_lines = transcript_lines or lines
+    participants = _extract_participants_from_lines(lines)
+    sections = _build_speaker_sections(working_lines)
+    speakers = sorted({str(section.get("speaker") or "").strip() for section in sections if section.get("speaker")})
+    return {
+        "participants": participants,
+        "speaker_sections": sections,
+        "speaker_count": len(speakers),
+        "speakers": speakers,
+        "section_count": len(sections),
+        "transcript_line_count": len(working_lines),
+        "transcript_char_count": len("\n".join(working_lines)),
+        "marker_detection": marker_detection,
+        "line_count": {
+            "source_line_count": len(lines),
+            "transcript_line_count": len(working_lines),
+        },
+        "section_parse_method": "regex_from_page_text",
+        "section_parse_reason": "openai_failed",
+    }
+
+
+def _segment_transcript_text(transcript_text: str, max_segment_chars: int = DEFAULT_TRANSCRIPT_SEGMENT_CHARS) -> list[str]:
+    if not transcript_text.strip():
+        return []
+
+    parsed = _parse_speaker_sections_from_text(transcript_text)
+    sections = parsed.get("speaker_sections")
+    if not isinstance(sections, list) or not sections:
+        return [transcript_text.strip()]
+
+    max_segment_chars = max(4000, max_segment_chars)
+    chunks: list[str] = []
+    current: list[str] = []
+    current_chars = 0
+
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        speaker = str(section.get("speaker") or "unknown").strip() or "unknown"
+        text = str(section.get("text") or "").strip()
+        if not text:
+            continue
+        block = f"{speaker}: {text}"
+        block_len = len(block) + 2
+        if current and current_chars + block_len > max_segment_chars:
+            chunks.append("\n\n".join(current).strip())
+            current = [block]
+            current_chars = len(block)
+        else:
+            current.append(block)
+            current_chars += block_len
+
+    if current:
+        chunks.append("\n\n".join(current).strip())
+
+    return [chunk for chunk in chunks if chunk]
 
 
 def _structure_transcript_with_openai(
@@ -1600,72 +1637,111 @@ def _structure_transcript_with_openai(
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> dict[str, Any]:
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for transcript structuring fallback.")
+        raise RuntimeError("OPENAI_API_KEY is required for transcript structuring.")
+
+    transcript_text = str(transcript_text or "").strip()
+    if not transcript_text:
+        raise RuntimeError("Transcript text is empty after extraction.")
 
     log = log_fn or (lambda _: None)
-    payload = {
-        "model": model,
-        "max_output_tokens": 4500,
-        "input": _build_transcript_structure_prompt(
-            ticker=ticker,
-            quarter=quarter,
-            title=title,
-            url=url,
-            published_date=published_date,
-            transcript_text=transcript_text,
-        ),
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "transcript_speaker_sections",
-                "strict": True,
-                "schema": _build_transcript_structure_schema(),
-            }
-        },
-    }
-
     retry_attempts = max(1, retry_attempts)
-    last_exc: Optional[Exception] = None
-    for attempt in range(1, retry_attempts + 1):
-        try:
-            log(f"scrape: structuring transcript with OpenAI (attempt {attempt}/{retry_attempts})")
-            response = _openai_post_responses(
-                base_url=base_url,
-                api_key=api_key,
-                payload=payload,
-                timeout_seconds=timeout_seconds,
+    segments = _segment_transcript_text(transcript_text)
+    if not segments:
+        raise RuntimeError("Transcript segmentation produced no usable segments.")
+    log(f"scrape: OpenAI structuring will process {len(segments)} segment(s)")
+
+    all_participants: list[dict[str, str]] = []
+    all_sections: list[dict[str, Any]] = []
+    notes: list[str] = []
+
+    for segment_index, segment_text in enumerate(segments):
+        payload = {
+            "model": model,
+            "max_output_tokens": 4500,
+            "input": _build_transcript_structure_prompt(
+                ticker=ticker,
+                quarter=quarter,
+                title=title,
+                url=url,
+                published_date=published_date,
+                transcript_text=segment_text,
+                segment_index=segment_index,
+                segment_count=len(segments),
+            ),
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "transcript_speaker_sections",
+                    "strict": True,
+                    "schema": _build_transcript_structure_schema(),
+                }
+            },
+        }
+
+        last_exc: Optional[Exception] = None
+        segment_structured: Optional[dict[str, Any]] = None
+        for attempt in range(1, retry_attempts + 1):
+            try:
+                log(
+                    "scrape: structuring transcript with OpenAI "
+                    f"(segment {segment_index + 1}/{len(segments)}, attempt {attempt}/{retry_attempts})"
+                )
+                response = _openai_post_responses(
+                    base_url=base_url,
+                    api_key=api_key,
+                    payload=payload,
+                    timeout_seconds=timeout_seconds,
+                )
+                if response.status_code >= 400:
+                    raise RuntimeError(_extract_error_message(response))
+                segment_structured = _extract_structured_output(response.json())
+                break
+            except Exception as exc:
+                last_exc = exc
+                log(
+                    "scrape: OpenAI structuring failed "
+                    f"(segment {segment_index + 1}/{len(segments)}, attempt {attempt}): {exc}"
+                )
+                if attempt < retry_attempts:
+                    backoff_seconds = min(4.0, 1.2 * attempt)
+                    time.sleep(backoff_seconds)
+
+        if segment_structured is None:
+            raise RuntimeError(f"OpenAI transcript structuring failed on segment {segment_index + 1}: {last_exc}")
+
+        participants = _normalize_participants(segment_structured.get("participants"))
+        segment_sections = _normalize_speaker_sections(segment_structured.get("speaker_sections"))
+        if not segment_sections:
+            raise RuntimeError(f"OpenAI transcript structuring returned no speaker sections for segment {segment_index + 1}.")
+
+        low_quality, low_reason = _is_low_quality_structured_sections(segment_sections)
+        if low_quality:
+            raise RuntimeError(
+                f"OpenAI transcript structuring quality check failed on segment {segment_index + 1}: {low_reason}"
             )
-            if response.status_code >= 400:
-                raise RuntimeError(_extract_error_message(response))
-            structured = _extract_structured_output(response.json())
-            participants = _normalize_participants(structured.get("participants"))
-            sections = _normalize_speaker_sections(structured.get("speaker_sections"))
-            if not sections:
-                raise RuntimeError("OpenAI transcript structuring returned no speaker sections.")
-            low_quality, low_reason = _is_low_quality_structured_sections(sections)
-            if low_quality:
-                raise RuntimeError(f"OpenAI transcript structuring quality check failed: {low_reason}")
 
-            speakers = sorted({str(section.get("speaker") or "").strip() for section in sections if section.get("speaker")})
-            return {
-                "participants": participants,
-                "speaker_sections": sections,
-                "speaker_count": len(speakers),
-                "speakers": speakers,
-                "section_count": len(sections),
-                "transcript_line_count": sum(section["text"].count("\n") + 1 for section in sections),
-                "transcript_char_count": len("\n\n".join(section["text"] for section in sections)),
-                "section_parse_method": "openai",
-                "section_parse_notes": str(structured.get("notes") or ""),
-            }
-        except Exception as exc:
-            last_exc = exc
-            log(f"scrape: OpenAI structuring failed on attempt {attempt}: {exc}")
-            if attempt < retry_attempts:
-                backoff_seconds = min(4.0, 1.2 * attempt)
-                time.sleep(backoff_seconds)
+        all_participants.extend(participants)
+        all_sections.extend(segment_sections)
+        notes.append(str(segment_structured.get("notes") or "").strip())
 
-    raise RuntimeError(f"OpenAI transcript structuring failed: {last_exc}")
+    merged_sections = _normalize_speaker_sections(all_sections)
+    low_quality, low_reason = _is_low_quality_structured_sections(merged_sections)
+    if low_quality:
+        raise RuntimeError(f"OpenAI transcript structuring quality check failed: {low_reason}")
+
+    normalized_participants = _normalize_participants(all_participants)
+    speakers = sorted({str(section.get("speaker") or "").strip() for section in merged_sections if section.get("speaker")})
+    return {
+        "participants": normalized_participants,
+        "speaker_sections": merged_sections,
+        "speaker_count": len(speakers),
+        "speakers": speakers,
+        "section_count": len(merged_sections),
+        "transcript_line_count": sum(section["text"].count("\n") + 1 for section in merged_sections),
+        "transcript_char_count": len("\n\n".join(section["text"] for section in merged_sections)),
+        "section_parse_method": "openai",
+        "section_parse_notes": " | ".join(note for note in notes if note),
+    }
 
 
 def _extract_sources(response_payload: dict[str, Any]) -> list[str]:
@@ -1868,34 +1944,43 @@ def discover_last_quarter_links(
     if response_payload is None:
         raise RuntimeError("OpenAI web-search request failed. " + " | ".join(tool_errors))
 
-    structured_notes = ""
-    used_source_fallback = False
-    try:
-        structured = _extract_structured_output(response_payload)
-        raw_candidates = structured.get("candidates")
-        if not isinstance(raw_candidates, list):
-            raw_candidates = []
-        structured_notes = str(structured.get("notes") or "")
-        log(f"{symbol}: model returned {len(raw_candidates)} raw candidates")
-    except Exception as exc:
-        used_source_fallback = True
-        raw_candidates = _fallback_candidates_from_sources(
-            ticker=symbol,
-            response_payload=response_payload,
-            max_candidates=max_candidates,
-        )
-        structured_notes = (
-            f"Structured output missing ({exc}); "
-            f"using {len(raw_candidates)} candidates derived from web_search sources."
-        )
-        log(f"{symbol}: structured output missing; using source fallback candidates={len(raw_candidates)}")
+    search_sources = _extract_sources(response_payload)
+    raw_candidates = _fallback_candidates_from_sources(
+        ticker=symbol,
+        response_payload=response_payload,
+        max_candidates=max_candidates,
+    )
+    structured_notes = (
+        "Candidates derived from OpenAI web_search sources "
+        f"(sources={len(search_sources)}, candidates={len(raw_candidates)})."
+    )
+    if raw_candidates:
+        log(f"{symbol}: built {len(raw_candidates)} raw candidates from web-search sources")
+    else:
+        # Last-resort fallback: try to parse any structured output if sources were empty.
+        try:
+            structured = _extract_structured_output(response_payload)
+            structured_candidates = structured.get("candidates")
+            if isinstance(structured_candidates, list):
+                raw_candidates = [item for item in structured_candidates if isinstance(item, dict)]
+                structured_notes = (
+                    "No web_search source URLs were returned; "
+                    f"used {len(raw_candidates)} candidates from structured model output."
+                )
+                log(f"{symbol}: source URLs were empty; used structured candidates={len(raw_candidates)}")
+        except Exception as exc:
+            structured_notes = (
+                "No web_search source URLs were returned and structured candidate parsing failed "
+                f"({exc})."
+            )
+            log(f"{symbol}: discovery produced no parseable source URLs or structured candidates")
 
     cleaned_candidates, clean_warnings = _clean_candidates(
         ticker=symbol,
         raw_candidates=[item for item in raw_candidates if isinstance(item, dict)],
     )
-    if used_source_fallback:
-        clean_warnings.append("Used source-only fallback because model response lacked parseable structured JSON output.")
+    if not search_sources:
+        clean_warnings.append("No web_search source URLs returned by OpenAI for discovery.")
     log(
         f"{symbol}: accepted {len(cleaned_candidates)} candidate URLs after Motley filter "
         f"(warnings={len(clean_warnings)})"
@@ -1945,7 +2030,6 @@ def discover_last_quarter_links(
             }
         )
 
-    search_sources = _extract_sources(response_payload)
     found_transcript_links = [
         {
             "quarter": row["quarter"],
@@ -2000,12 +2084,20 @@ def scrape_recent_transcripts_for_report(
     model: str = DEFAULT_OPENAI_SEARCH_MODEL,
     base_url: str = DEFAULT_OPENAI_BASE_URL,
     retry_attempts: int = DEFAULT_OPENAI_RETRY_ATTEMPTS,
+    cache_mode: str = DEFAULT_SCRAPE_CACHE_MODE,
+    cache_dir: str = DEFAULT_SCRAPE_CACHE_DIR,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> dict[str, Any]:
     log = log_fn or (lambda _: None)
     ticker = str(report.get("ticker") or "")
     selected = _select_most_recent_candidates(report, scrape_count)
-    log(f"{ticker}: selected {len(selected)} recent transcript links for scraping")
+    cache_mode = (cache_mode or DEFAULT_SCRAPE_CACHE_MODE).strip().lower()
+    if cache_mode not in {"refresh", "use", "off"}:
+        cache_mode = DEFAULT_SCRAPE_CACHE_MODE
+    log(
+        f"{ticker}: selected {len(selected)} recent transcript links for scraping "
+        f"(cache_mode={cache_mode})"
+    )
 
     scraped: list[dict[str, Any]] = []
     scrape_errors: list[dict[str, Any]] = []
@@ -2014,6 +2106,31 @@ def scrape_recent_transcripts_for_report(
         quarter = item["quarter"]
         title = item["title"]
         published_date = item["published_date"]
+        cache_key = _build_scrape_cache_key(ticker, quarter, url)
+        cache_path = _resolve_scrape_cache_path(
+            cache_dir=cache_dir,
+            ticker=ticker,
+            quarter=quarter,
+            url=url,
+            published_date=published_date,
+        )
+
+        if cache_mode == "use" and cache_path.exists():
+            try:
+                cached_payload = json.loads(cache_path.read_text(encoding="utf-8"))
+                if isinstance(cached_payload, dict):
+                    cached_payload = {
+                        **cached_payload,
+                        "from_cache": True,
+                        "cache_key": cache_key,
+                        "cache_file": str(cache_path),
+                    }
+                    scraped.append(cached_payload)
+                    log(f"{ticker}: loaded {quarter or 'unknown-quarter'} from cache ({cache_path})")
+                    continue
+            except Exception as cache_read_exc:
+                log(f"{ticker}: cache read failed for {quarter or 'unknown-quarter'} ({cache_read_exc}); refetching")
+
         try:
             payload = _fetch_transcript_sections(
                 url=url,
@@ -2028,6 +2145,16 @@ def scrape_recent_transcripts_for_report(
                 openai_retry_attempts=retry_attempts,
                 log_fn=log_fn,
             )
+            payload = {
+                **payload,
+                "from_cache": False,
+                "cache_key": cache_key,
+                "cache_file": str(cache_path),
+            }
+            if cache_mode in {"refresh", "use"}:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                log(f"{ticker}: cached {quarter or 'unknown-quarter'} -> {cache_path}")
             scraped.append(payload)
             log(
                 f"{ticker}: scraped {quarter or 'unknown-quarter'} "
@@ -2038,6 +2165,8 @@ def scrape_recent_transcripts_for_report(
                 "quarter": quarter,
                 "url": url,
                 "error": str(exc),
+                "cache_key": cache_key,
+                "cache_file": str(cache_path),
             }
             if isinstance(exc, TranscriptExtractionError):
                 error_payload["scrape_method"] = exc.scrape_method
@@ -2094,6 +2223,21 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         default=4,
         help="How many most-recent transcript links to scrape per ticker when --scrape is set",
     )
+    parser.add_argument(
+        "--cache-mode",
+        choices=["refresh", "use", "off"],
+        default=DEFAULT_SCRAPE_CACHE_MODE if DEFAULT_SCRAPE_CACHE_MODE in {"refresh", "use", "off"} else "refresh",
+        help=(
+            "Cache behavior for scraped transcript JSON: "
+            "'refresh' (default) always refetch and overwrite cache, "
+            "'use' reads cache when available, 'off' disables cache read/write."
+        ),
+    )
+    parser.add_argument(
+        "--cache-dir",
+        default=DEFAULT_SCRAPE_CACHE_DIR,
+        help="Directory for transcript scrape cache files.",
+    )
 
     args = parser.parse_args(argv)
     if not args.api_key:
@@ -2110,7 +2254,8 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
     if args.verbose:
         _default_logger(
             f"Starting run for {len(args.tickers)} ticker(s): {', '.join(args.tickers)} "
-            f"(model={args.model}, timeout={args.timeout}s, retries={max(args.openai_retries, 1)})"
+            f"(model={args.model}, timeout={args.timeout}s, retries={max(args.openai_retries, 1)}, "
+            f"cache_mode={args.cache_mode})"
         )
 
     for ticker in args.tickers:
@@ -2139,6 +2284,8 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
                     model=args.model,
                     base_url=args.base_url,
                     retry_attempts=max(args.openai_retries, 1),
+                    cache_mode=args.cache_mode,
+                    cache_dir=args.cache_dir,
                     log_fn=log_fn,
                 )
                 report = {**report, **scrape_payload}
