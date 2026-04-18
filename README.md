@@ -126,8 +126,8 @@ python scripts/openai_motley_transcript_cli.py AAPL --pretty --verbose --scrape 
 Optional browser-render fallback for difficult pages:
 
 ```bash
-pip install playwright
-python -m playwright install chromium
+.venv/bin/python -m pip install playwright
+.venv/bin/python -m playwright install chromium
 ```
 
 If OpenAI web-search calls are flaky, increase retries:
@@ -144,6 +144,7 @@ Output shape (per ticker):
 - `candidate_pool` and `search_sources` for debugging slug discovery quality
 - `selected_recent_links`, `scraped_transcripts`, and `scrape_errors` when `--scrape` is enabled
 - `scrape_method`, `line_source`, `marker_detection`, and `line_count` diagnostics on scraped transcript payloads
+- `section_parse_method` (`regex` or `openai`) and optional `section_parse_reason` when speaker fallback is used
 
 ## Notes
 
