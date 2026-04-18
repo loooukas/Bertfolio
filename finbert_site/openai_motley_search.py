@@ -26,7 +26,7 @@ DEFAULT_OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v
 DEFAULT_OPENAI_SEARCH_MODEL = os.getenv("OPENAI_SEARCH_MODEL", "gpt-5-mini")
 DEFAULT_TIMEOUT_SECONDS = 45
 DEFAULT_OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "3"))
-DEFAULT_TRANSCRIPT_INPUT_MAX_CHARS = int(os.getenv("TRANSCRIPT_INPUT_MAX_CHARS", "55000"))
+DEFAULT_TRANSCRIPT_INPUT_MAX_CHARS = int(os.getenv("TRANSCRIPT_INPUT_MAX_CHARS", "30000"))
 DEFAULT_OPENAI_CONNECT_TIMEOUT_SECONDS = float(os.getenv("OPENAI_CONNECT_TIMEOUT_SECONDS", "10"))
 DEFAULT_OPENAI_READ_TIMEOUT_CAP_SECONDS = float(os.getenv("OPENAI_READ_TIMEOUT_CAP_SECONDS", "50"))
 
@@ -680,6 +680,7 @@ def _fetch_transcript_sections(
 
     browser_html: Optional[str] = None
     browser_visible_text: Optional[str] = None
+    source_input: Optional[dict[str, Any]] = None
     if openai_api_key:
         source_input = _build_source_first_llm_input(static_html=html)
         if source_input.get("input_speaker_line_count", 0) < 5:
@@ -742,6 +743,7 @@ def _fetch_transcript_sections(
                     "section_parse_method": "openai_source_first",
                     "section_parse_reason": "source_page_text",
                     "llm_input_diagnostics": source_input,
+                    "llm_input_preview": transcript_text[:2000],
                 }
             except Exception as exc:
                 log(f"scrape: source-first OpenAI structuring failed ({exc}); falling back to parser")
@@ -824,7 +826,20 @@ def _fetch_transcript_sections(
             low_quality_reason = ""
 
     if low_quality_reason:
-        parsed = {**parsed, "section_parse_method": "regex", "section_parse_reason": low_quality_reason}
+        diagnostics = {
+            "low_quality_reason": low_quality_reason,
+            "line_source": parsed.get("line_source"),
+            "line_count": parsed.get("line_count"),
+            "marker_detection": parsed.get("marker_detection"),
+        }
+        if source_input:
+            diagnostics["llm_input_diagnostics"] = source_input
+            diagnostics["llm_input_preview"] = str(source_input.get("text") or "")[:2000]
+        raise TranscriptExtractionError(
+            "Low-quality transcript parse after source-first and parser fallback.",
+            scrape_method=str(parsed.get("scrape_method") or "static"),
+            diagnostics=diagnostics,
+        )
     parsed.pop("raw_text", None)
 
     return {
@@ -1349,6 +1364,25 @@ def _speaker_line_count(text: str, max_lines: int = 3000) -> int:
     return count
 
 
+def _normalize_text_lines(text: str) -> list[str]:
+    out: list[str] = []
+    for raw in text.splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        if line:
+            out.append(line)
+    return out
+
+
+def _slice_transcript_like_text(text: str) -> tuple[str, bool, dict[str, Any]]:
+    lines = _normalize_text_lines(text)
+    if not lines:
+        return "", False, {"start_found": False, "start_reason": "no_lines"}
+    transcript_lines, marker = _extract_transcript_lines_with_diagnostics(lines)
+    if transcript_lines and len(transcript_lines) >= 8:
+        return "\n".join(transcript_lines), True, marker
+    return "\n".join(lines), False, marker
+
+
 def _score_llm_input_text(text: str) -> float:
     if not text:
         return 0.0
@@ -1405,15 +1439,22 @@ def _build_source_first_llm_input(
             ("body_text", body_text),
             ("focus_html_window", html_window),
         ]
-        best_name, best_text = max(sources, key=lambda item: _score_llm_input_text(item[1]))
-        best_score = _score_llm_input_text(best_text)
+        transformed_sources: list[tuple[str, str, float, bool]] = []
+        for source_name, source_text in sources:
+            sliced, slice_found, _ = _slice_transcript_like_text(source_text)
+            score = _score_llm_input_text(sliced)
+            if slice_found:
+                score += 35.0
+            transformed_sources.append((source_name, sliced, score, slice_found))
+
+        best_name, best_text, best_score, best_slice_found = max(transformed_sources, key=lambda item: item[2])
 
         blocks: list[str] = []
         if best_text.strip():
             blocks.append(f"[{source_label}:{best_name}]\n{best_text.strip()[:max_chars]}")
-        if best_name != "script_payload_text" and script_payload_text.strip():
+        if best_name != "script_payload_text" and script_payload_text.strip() and best_slice_found:
             blocks.append(f"[{source_label}:script_payload_text]\n{script_payload_text.strip()[: max_chars // 2]}")
-        if best_name != "article_text" and article_text.strip():
+        if best_name != "article_text" and article_text.strip() and best_slice_found:
             blocks.append(f"[{source_label}:article_text]\n{article_text.strip()[: max_chars // 2]}")
 
         merged = "\n\n".join(blocks).strip()[:max_chars]
@@ -1426,6 +1467,7 @@ def _build_source_first_llm_input(
                 "speaker_line_count": _speaker_line_count(merged),
                 "char_count": len(merged),
                 "line_count": len(merged.splitlines()),
+                "transcript_slice_found": best_slice_found,
             }
         )
 
@@ -1434,15 +1476,23 @@ def _build_source_first_llm_input(
         _candidate_from_html("browser_html", browser_html)
     if browser_visible_text and browser_visible_text.strip():
         visible_text = browser_visible_text.strip()
+        visible_slice, visible_slice_found, _ = _slice_transcript_like_text(visible_text)
+        candidate_text = visible_slice if visible_slice else visible_text
+        visible_score = _score_llm_input_text(candidate_text)
+        if visible_slice_found:
+            visible_score += 80.0
+        if _speaker_line_count(candidate_text) >= 8:
+            visible_score += 40.0
         candidates.append(
             {
                 "source": "browser_visible_text",
                 "best_source": "inner_text",
-                "score": round(_score_llm_input_text(visible_text), 3),
-                "text": visible_text[:max_chars],
-                "speaker_line_count": _speaker_line_count(visible_text),
-                "char_count": min(len(visible_text), max_chars),
-                "line_count": len(visible_text.splitlines()),
+                "score": round(visible_score, 3),
+                "text": candidate_text[:max_chars],
+                "speaker_line_count": _speaker_line_count(candidate_text),
+                "char_count": min(len(candidate_text), max_chars),
+                "line_count": len(candidate_text.splitlines()),
+                "transcript_slice_found": visible_slice_found,
             }
         )
 
@@ -1462,6 +1512,7 @@ def _build_source_first_llm_input(
                 "char_count": item["char_count"],
                 "speaker_line_count": item["speaker_line_count"],
                 "line_count": item["line_count"],
+                "transcript_slice_found": bool(item.get("transcript_slice_found")),
             }
             for item in candidates
         ],

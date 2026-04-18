@@ -457,3 +457,56 @@ def test_fetch_transcript_sections_low_quality_uses_openai_section_fallback(monk
     assert payload["section_parse_method"] == "openai_source_first"
     assert payload["section_count"] == 2
     assert payload["speaker_sections"][0]["speaker"] == "Operator"
+
+
+def test_fetch_transcript_sections_low_quality_parser_becomes_error(monkeypatch) -> None:
+    class _Resp:
+        status_code = 200
+        text = "<html><body><article><div>stub</div></article></body></html>"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    low_quality_payload = {
+        "participants": [],
+        "speaker_sections": [
+            {
+                "speaker": "unknown",
+                "speaker_role": None,
+                "section_type": "other",
+                "order_index": 0,
+                "text": 'self.__next_f.push([1,"46:[\\"$\\",..."])',
+            }
+        ],
+        "speaker_count": 1,
+        "speakers": ["unknown"],
+        "section_count": 1,
+        "transcript_line_count": 1,
+        "transcript_char_count": 42,
+        "scrape_method": "static",
+        "line_source": "script_payload",
+        "marker_detection": {"start_found": True},
+        "line_count": {"source_line_count": 12, "transcript_line_count": 1},
+        "section_parse_method": "regex",
+        "raw_text": "self.__next_f.push([1,\\\"46:[\\\\\\\"$\\\\\\\",...\\\"])",
+    }
+
+    monkeypatch.setattr("finbert_site.openai_motley_search.requests.get", lambda *args, **kwargs: _Resp())
+    monkeypatch.setattr("finbert_site.openai_motley_search._parse_transcript_from_html", lambda **kwargs: low_quality_payload)
+    monkeypatch.setattr(
+        "finbert_site.openai_motley_search._render_playwright_snapshot",
+        lambda **kwargs: ("<html><body>stub</body></html>", ""),
+    )
+
+    with pytest.raises(TranscriptExtractionError) as exc:
+        _fetch_transcript_sections(
+            url="https://www.fool.com/earnings/call-transcripts/x/",
+            ticker="MSFT",
+            quarter="2025-Q4",
+            title="T",
+            published_date="2025-10-31",
+            timeout_seconds=10,
+        )
+
+    assert "Low-quality transcript parse" in str(exc.value)
+    assert exc.value.diagnostics.get("low_quality_reason") in {"script_wrapped_text", "single_unknown_section"}

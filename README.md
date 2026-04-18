@@ -153,6 +153,8 @@ Output shape (per ticker):
 - `section_parse_method` (`regex` or `openai`) and optional `section_parse_reason` when speaker fallback is used
 - Scraping now runs a source-first OpenAI transcript structuring step using page source/text, then falls back to regex parsing only if OpenAI structuring fails.
 - OpenAI HTTP calls use a retrying session and capped read timeout to reduce hangs from intermittent `RemoteDisconnected` transport errors.
+- `llm_input_diagnostics` and `llm_input_preview` show the actual page-derived content passed to OpenAI for transcript structuring.
+- If only low-quality parser output is available, scraping now records a `scrape_error` instead of returning misleading single `unknown` speaker sections.
 
 ## Notes
 
