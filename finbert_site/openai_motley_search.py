@@ -1240,6 +1240,58 @@ def _extract_structured_output(response_payload: dict[str, Any]) -> dict[str, An
     raise RuntimeError("OpenAI response did not include parseable structured JSON output.")
 
 
+def _candidate_title_from_url(url: str, ticker: str) -> str:
+    parsed = urlparse(url)
+    slug = parsed.path.rstrip("/").split("/")[-1]
+    slug = slug.replace(".aspx", "")
+    if not slug:
+        return f"{ticker} Earnings Call Transcript"
+
+    words = [w for w in slug.split("-") if w]
+    if not words:
+        return f"{ticker} Earnings Call Transcript"
+
+    title_words: list[str] = []
+    for word in words:
+        upper = word.upper()
+        if re.fullmatch(r"q[1-4]", word, flags=re.IGNORECASE):
+            title_words.append(upper)
+        elif re.fullmatch(r"20\d{2}", word):
+            title_words.append(word)
+        elif word.lower() == ticker.lower():
+            title_words.append(ticker.upper())
+        else:
+            title_words.append(word.capitalize())
+
+    title = " ".join(title_words)
+    if "earnings call transcript" not in title.lower():
+        title = f"{title} Earnings Call Transcript".strip()
+    return title
+
+
+def _fallback_candidates_from_sources(
+    *,
+    ticker: str,
+    response_payload: dict[str, Any],
+    max_candidates: int,
+) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for url in _extract_sources(response_payload):
+        if not _is_motley_transcript_url(url):
+            continue
+        out.append(
+            {
+                "title": _candidate_title_from_url(url=url, ticker=ticker),
+                "url": url,
+                "published_date": _date_from_motley_url(url),
+                "source": "web_search_source_fallback",
+            }
+        )
+        if len(out) >= max_candidates:
+            break
+    return out
+
+
 def _normalize_participants(raw_participants: Any) -> list[dict[str, str]]:
     if not isinstance(raw_participants, list):
         return []
@@ -1816,16 +1868,34 @@ def discover_last_quarter_links(
     if response_payload is None:
         raise RuntimeError("OpenAI web-search request failed. " + " | ".join(tool_errors))
 
-    structured = _extract_structured_output(response_payload)
-    raw_candidates = structured.get("candidates")
-    if not isinstance(raw_candidates, list):
-        raw_candidates = []
-    log(f"{symbol}: model returned {len(raw_candidates)} raw candidates")
+    structured_notes = ""
+    used_source_fallback = False
+    try:
+        structured = _extract_structured_output(response_payload)
+        raw_candidates = structured.get("candidates")
+        if not isinstance(raw_candidates, list):
+            raw_candidates = []
+        structured_notes = str(structured.get("notes") or "")
+        log(f"{symbol}: model returned {len(raw_candidates)} raw candidates")
+    except Exception as exc:
+        used_source_fallback = True
+        raw_candidates = _fallback_candidates_from_sources(
+            ticker=symbol,
+            response_payload=response_payload,
+            max_candidates=max_candidates,
+        )
+        structured_notes = (
+            f"Structured output missing ({exc}); "
+            f"using {len(raw_candidates)} candidates derived from web_search sources."
+        )
+        log(f"{symbol}: structured output missing; using source fallback candidates={len(raw_candidates)}")
 
     cleaned_candidates, clean_warnings = _clean_candidates(
         ticker=symbol,
         raw_candidates=[item for item in raw_candidates if isinstance(item, dict)],
     )
+    if used_source_fallback:
+        clean_warnings.append("Used source-only fallback because model response lacked parseable structured JSON output.")
     log(
         f"{symbol}: accepted {len(cleaned_candidates)} candidate URLs after Motley filter "
         f"(warnings={len(clean_warnings)})"
@@ -1917,7 +1987,7 @@ def discover_last_quarter_links(
         ],
         "search_sources": search_sources,
         "warnings": clean_warnings,
-        "notes": str(structured.get("notes") or ""),
+        "notes": structured_notes,
     }
 
 

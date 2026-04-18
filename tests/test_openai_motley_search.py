@@ -16,6 +16,7 @@ from finbert_site.openai_motley_search import (
     _pick_best_candidate_by_quarter,
     _quarter_window,
     _select_most_recent_candidates,
+    discover_last_quarter_links,
     infer_year_quarter,
     scrape_recent_transcripts_for_report,
 )
@@ -241,6 +242,45 @@ def test_extract_text_lines_from_script_payloads_supports_embedded_json() -> Non
     assert "Call participants" in lines
     assert "Full Conference Call Transcript" in lines
     assert "Timothy D. Cook: Welcome everyone." in lines
+
+
+def test_discover_last_quarter_links_uses_source_fallback_when_structured_missing(monkeypatch) -> None:
+    class _Resp:
+        status_code = 200
+
+        def json(self) -> dict:
+            return {
+                "output": [
+                    {
+                        "type": "web_search_call",
+                        "action": {
+                            "sources": [
+                                {
+                                    "url": "https://www.fool.com/earnings/call-transcripts/2026/01/29/apple-aapl-q1-2026-earnings-call-transcript/"
+                                }
+                            ]
+                        },
+                    }
+                ]
+            }
+
+    monkeypatch.setattr("finbert_site.openai_motley_search._openai_post_responses", lambda **kwargs: _Resp())
+    monkeypatch.setattr(
+        "finbert_site.openai_motley_search._extract_structured_output",
+        lambda payload: (_ for _ in ()).throw(RuntimeError("no schema payload")),
+    )
+
+    report = discover_last_quarter_links(
+        ticker="AAPL",
+        api_key="test-key",
+        target_quarters=1,
+        max_candidates=4,
+        retry_attempts=1,
+    )
+    assert report["found_quarters"] == ["2026-Q1"]
+    assert len(report["candidate_pool"]) >= 1
+    assert "Structured output missing" in report.get("notes", "")
+    assert any("source-only fallback" in warning for warning in report.get("warnings", []))
 
 
 def test_parse_transcript_from_html_semantic_dom_source() -> None:

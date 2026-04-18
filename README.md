@@ -155,6 +155,7 @@ Output shape (per ticker):
 - OpenAI HTTP calls use a retrying session and capped read timeout to reduce hangs from intermittent `RemoteDisconnected` transport errors.
 - `llm_input_diagnostics` and `llm_input_preview` show the actual page-derived content passed to OpenAI for transcript structuring.
 - If only low-quality parser output is available, scraping now records a `scrape_error` instead of returning misleading single `unknown` speaker sections.
+- If discovery web search succeeds but the model omits structured JSON, discovery now falls back to building candidates from `web_search` source URLs instead of failing the ticker.
 
 ## Notes
 
