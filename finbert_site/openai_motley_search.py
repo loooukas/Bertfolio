@@ -42,6 +42,8 @@ _TRANSCRIPT_END_MARKERS = {
     "the motley fool has a disclosure policy",
     "terms of use",
     "about the motley fool",
+    "need a quote from a motley fool analyst",
+    "this conference call transcript",
 }
 
 _TRANSCRIPT_START_MARKERS = {
@@ -76,6 +78,13 @@ class MotleyTranscriptCandidate:
     year: Optional[int]
     quarter: Optional[int]
     quality_score: float
+
+
+class TranscriptExtractionError(RuntimeError):
+    def __init__(self, message: str, *, scrape_method: str, diagnostics: Optional[dict[str, Any]] = None):
+        super().__init__(message)
+        self.scrape_method = scrape_method
+        self.diagnostics = diagnostics or {}
 
 
 def _normalize_ticker(ticker: str) -> str:
@@ -137,6 +146,32 @@ def _extract_text_lines(container: BeautifulSoup) -> list[str]:
         compact.append(line)
         last = line
     return compact
+
+
+def _extract_article_body_from_jsonld(soup: BeautifulSoup) -> list[str]:
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+
+        candidates: list[dict[str, Any]] = []
+        if isinstance(payload, dict):
+            candidates = [payload]
+        elif isinstance(payload, list):
+            candidates = [item for item in payload if isinstance(item, dict)]
+
+        for node in candidates:
+            article_body = node.get("articleBody")
+            if not isinstance(article_body, str) or not article_body.strip():
+                continue
+            lines = [line.strip() for line in article_body.splitlines() if line.strip()]
+            if lines:
+                return lines
+    return []
 
 
 def _extract_text_lines_relaxed(container: BeautifulSoup) -> list[str]:
@@ -275,28 +310,91 @@ def _extract_participants_from_lines(lines: list[str]) -> list[dict[str, str]]:
     return unique[:30]
 
 
-def _extract_transcript_lines(lines: list[str]) -> list[str]:
+def _find_repeated_speaker_start(lines: list[str], window: int = 25) -> Optional[int]:
+    speaker_points: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        match = _speaker_line_match(line)
+        if not match:
+            continue
+        speaker_points.append((idx, match[0]))
+
+    if len(speaker_points) < 2:
+        return None
+
+    for idx, _ in speaker_points:
+        in_window = [(i, name) for i, name in speaker_points if idx <= i <= idx + window]
+        if len(in_window) < 2:
+            continue
+        names = {name for _, name in in_window}
+        if len(names) >= 1:
+            return idx
+    return None
+
+
+def _extract_transcript_lines_with_diagnostics(lines: list[str]) -> tuple[list[str], dict[str, Any]]:
     start_idx = None
+    start_marker = None
+    start_reason = None
     for i, line in enumerate(lines):
         lowered = line.lower()
-        if any(marker in lowered for marker in _TRANSCRIPT_START_MARKERS):
+        marker = next((m for m in _TRANSCRIPT_START_MARKERS if m in lowered), None)
+        if marker:
             start_idx = i + (1 if "full conference call transcript" in lowered else 0)
-            break
-        if _speaker_line_match(line):
-            start_idx = i
+            start_marker = marker
+            start_reason = "marker"
             break
 
     if start_idx is None:
-        return []
+        repeated_idx = _find_repeated_speaker_start(lines)
+        if repeated_idx is not None:
+            start_idx = repeated_idx
+            start_reason = "repeated_speaker"
+
+    if start_idx is None:
+        for i, line in enumerate(lines):
+            if _speaker_line_match(line):
+                start_idx = i
+                start_reason = "single_speaker_fallback"
+                break
+
+    if start_idx is None:
+        return [], {
+            "start_found": False,
+            "start_reason": "not_found",
+            "start_marker": None,
+            "start_index": None,
+            "stop_marker": None,
+            "stop_index": None,
+            "source_line_count": len(lines),
+            "transcript_line_count": 0,
+        }
 
     stop_idx = len(lines)
+    stop_marker = None
     for i in range(start_idx + 1, len(lines)):
         lowered = lines[i].lower()
-        if any(marker in lowered for marker in _TRANSCRIPT_END_MARKERS):
+        marker = next((m for m in _TRANSCRIPT_END_MARKERS if m in lowered), None)
+        if marker:
             stop_idx = i
+            stop_marker = marker
             break
 
-    return lines[start_idx:stop_idx]
+    transcript_lines = lines[start_idx:stop_idx]
+    return transcript_lines, {
+        "start_found": True,
+        "start_reason": start_reason,
+        "start_marker": start_marker,
+        "start_index": start_idx,
+        "stop_marker": stop_marker,
+        "stop_index": stop_idx if stop_marker else None,
+        "source_line_count": len(lines),
+        "transcript_line_count": len(transcript_lines),
+    }
+
+
+def _extract_transcript_lines(lines: list[str]) -> list[str]:
+    transcript_lines, _ = _extract_transcript_lines_with_diagnostics(lines)
+    return transcript_lines
 
 
 def _build_speaker_sections(transcript_lines: list[str]) -> list[dict[str, Any]]:
@@ -360,6 +458,133 @@ def _build_speaker_sections(transcript_lines: list[str]) -> list[dict[str, Any]]
     return sections
 
 
+def _extract_line_sources(
+    *,
+    raw_soup: BeautifulSoup,
+    sanitized_soup: BeautifulSoup,
+) -> list[tuple[str, list[str]]]:
+    container = (
+        sanitized_soup.select_one("article")
+        or sanitized_soup.select_one("main")
+        or sanitized_soup.select_one("div[class*='article']")
+        or sanitized_soup.body
+    )
+    if container is None:
+        return []
+
+    sources: list[tuple[str, list[str]]] = []
+    sources.append(("semantic_dom", _extract_text_lines(container)))
+    sources.append(("jsonld_article_body", _extract_article_body_from_jsonld(raw_soup)))
+    sources.append(("script_payload", _extract_text_lines_from_script_payloads(raw_soup)))
+    if sanitized_soup.body is not None:
+        sources.append(("relaxed_body", _extract_text_lines_relaxed(sanitized_soup.body)))
+    return sources
+
+
+def _parse_transcript_from_html(
+    *,
+    html: str,
+    scrape_method: str,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> dict[str, Any]:
+    log = log_fn or (lambda _: None)
+    raw_soup = BeautifulSoup(html, "html.parser")
+    sanitized_soup = BeautifulSoup(html, "html.parser")
+    for node in sanitized_soup(["script", "style", "noscript", "svg", "button", "form", "header", "footer", "nav"]):
+        node.decompose()
+
+    line_sources = _extract_line_sources(raw_soup=raw_soup, sanitized_soup=sanitized_soup)
+    if not line_sources:
+        raise TranscriptExtractionError(
+            "No content container found for transcript page.",
+            scrape_method=scrape_method,
+            diagnostics={"line_sources": []},
+        )
+
+    attempts: list[dict[str, Any]] = []
+    had_any_lines = False
+
+    for source_name, lines in line_sources:
+        log(f"scrape: {scrape_method} source '{source_name}' yielded {len(lines)} lines")
+        marker_detection = {
+            "start_found": False,
+            "start_reason": "not_checked",
+            "start_marker": None,
+            "start_index": None,
+            "stop_marker": None,
+            "stop_index": None,
+            "source_line_count": len(lines),
+            "transcript_line_count": 0,
+        }
+        if lines:
+            had_any_lines = True
+            transcript_lines, marker_detection = _extract_transcript_lines_with_diagnostics(lines)
+            if transcript_lines:
+                participants = _extract_participants_from_lines(lines)
+                speaker_sections = _build_speaker_sections(transcript_lines)
+                speaker_names = [section["speaker"] for section in speaker_sections if section.get("speaker")]
+                speaker_unique = sorted({name for name in speaker_names if name})
+                return {
+                    "participants": participants,
+                    "speaker_sections": speaker_sections,
+                    "speaker_count": len(speaker_unique),
+                    "speakers": speaker_unique,
+                    "section_count": len(speaker_sections),
+                    "transcript_line_count": len(transcript_lines),
+                    "transcript_char_count": len("\n".join(transcript_lines)),
+                    "scrape_method": scrape_method,
+                    "line_source": source_name,
+                    "marker_detection": {**marker_detection, "line_source": source_name},
+                    "line_count": {
+                        "source_line_count": len(lines),
+                        "transcript_line_count": len(transcript_lines),
+                    },
+                }
+
+        attempts.append(
+            {
+                "line_source": source_name,
+                "line_count": len(lines),
+                "marker_detection": marker_detection,
+            }
+        )
+
+    if not had_any_lines:
+        raise TranscriptExtractionError(
+            "No text lines found in transcript page.",
+            scrape_method=scrape_method,
+            diagnostics={"line_sources": attempts},
+        )
+
+    raise TranscriptExtractionError(
+        "Transcript section markers were not found on page.",
+        scrape_method=scrape_method,
+        diagnostics={"line_sources": attempts},
+    )
+
+
+def _render_html_with_playwright(url: str, timeout_seconds: int) -> str:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:  # pragma: no cover - environment-dependent
+        raise RuntimeError(
+            "Playwright is not installed. Install optional browser fallback with "
+            "`pip install playwright` and `python -m playwright install chromium`."
+        ) from exc
+
+    try:  # pragma: no cover - browser runtime is environment-dependent
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(user_agent=_REQUEST_HEADERS["User-Agent"])
+            page.goto(url, wait_until="domcontentloaded", timeout=int(timeout_seconds * 1000))
+            page.wait_for_timeout(1500)
+            html = page.content()
+            browser.close()
+            return html
+    except Exception as exc:
+        raise RuntimeError(f"Playwright render failed: {exc}") from exc
+
+
 def _fetch_transcript_sections(
     *,
     url: str,
@@ -376,54 +601,40 @@ def _fetch_transcript_sections(
     response.raise_for_status()
     html = response.text
 
-    raw_soup = BeautifulSoup(html, "html.parser")
-    soup = BeautifulSoup(html, "html.parser")
-    for node in soup(["script", "style", "noscript", "svg", "button", "form", "header", "footer", "nav"]):
-        node.decompose()
-
-    container = (
-        soup.select_one("article")
-        or soup.select_one("main")
-        or soup.select_one("div[class*='article']")
-        or soup.body
-    )
-    if container is None:
-        raise RuntimeError("No content container found for transcript page.")
-
-    lines = _extract_text_lines(container)
-    if not lines:
-        log("scrape: strict tag extraction produced 0 lines; trying relaxed extraction")
-        lines = _extract_text_lines_relaxed(container)
-    if not lines and soup.body is not None:
-        log("scrape: relaxed container extraction produced 0 lines; trying page body")
-        lines = _extract_text_lines_relaxed(soup.body)
-    if not lines:
-        log("scrape: body extraction produced 0 lines; trying script payload extraction")
-        lines = _extract_text_lines_from_script_payloads(raw_soup)
-    if not lines:
-        raise RuntimeError("No text lines found in transcript page.")
-
-    participants = _extract_participants_from_lines(lines)
-    transcript_lines = _extract_transcript_lines(lines)
-    if not transcript_lines:
-        raise RuntimeError("Transcript section markers were not found on page.")
-
-    speaker_sections = _build_speaker_sections(transcript_lines)
-    speaker_names = [section["speaker"] for section in speaker_sections if section.get("speaker")]
-    speaker_unique = sorted({name for name in speaker_names if name})
+    try:
+        parsed = _parse_transcript_from_html(
+            html=html,
+            scrape_method="static",
+            log_fn=log_fn,
+        )
+        log(f"scrape: static extraction succeeded via {parsed.get('line_source')}")
+    except TranscriptExtractionError as static_exc:
+        log(f"scrape: static extraction failed ({static_exc}); trying browser fallback")
+        try:
+            browser_html = _render_html_with_playwright(url=url, timeout_seconds=timeout_seconds)
+            parsed = _parse_transcript_from_html(
+                html=browser_html,
+                scrape_method="browser",
+                log_fn=log_fn,
+            )
+            log(f"scrape: browser extraction succeeded via {parsed.get('line_source')}")
+        except Exception as browser_exc:
+            diagnostics = {
+                "static": static_exc.diagnostics,
+                "browser_error": str(browser_exc),
+            }
+            raise TranscriptExtractionError(
+                f"{static_exc} Browser fallback failed: {browser_exc}",
+                scrape_method="browser",
+                diagnostics=diagnostics,
+            ) from browser_exc
 
     return {
         "quarter": quarter,
         "title": title,
         "url": url,
         "published_date": published_date,
-        "participants": participants,
-        "speaker_sections": speaker_sections,
-        "speaker_count": len(speaker_unique),
-        "speakers": speaker_unique,
-        "section_count": len(speaker_sections),
-        "transcript_line_count": len(transcript_lines),
-        "transcript_char_count": len("\n".join(transcript_lines)),
+        **parsed,
     }
 
 
@@ -1047,7 +1258,7 @@ def scrape_recent_transcripts_for_report(
     log(f"{ticker}: selected {len(selected)} recent transcript links for scraping")
 
     scraped: list[dict[str, Any]] = []
-    scrape_errors: list[dict[str, str]] = []
+    scrape_errors: list[dict[str, Any]] = []
     for item in selected:
         url = item["url"]
         quarter = item["quarter"]
@@ -1068,13 +1279,16 @@ def scrape_recent_transcripts_for_report(
                 f"(sections={payload['section_count']}, speakers={payload['speaker_count']})"
             )
         except Exception as exc:
-            scrape_errors.append(
-                {
-                    "quarter": quarter,
-                    "url": url,
-                    "error": str(exc),
-                }
-            )
+            error_payload: dict[str, Any] = {
+                "quarter": quarter,
+                "url": url,
+                "error": str(exc),
+            }
+            if isinstance(exc, TranscriptExtractionError):
+                error_payload["scrape_method"] = exc.scrape_method
+                if exc.diagnostics:
+                    error_payload["diagnostics"] = exc.diagnostics
+            scrape_errors.append(error_payload)
             log(f"{ticker}: scrape failed for {quarter or 'unknown-quarter'} ({exc})")
 
     return {

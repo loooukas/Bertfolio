@@ -1,5 +1,8 @@
+import pytest
+
 from finbert_site.openai_motley_search import (
     MotleyTranscriptCandidate,
+    TranscriptExtractionError,
     _build_request_payload,
     _build_speaker_sections,
     _dedupe_links,
@@ -8,6 +11,8 @@ from finbert_site.openai_motley_search import (
     _extract_text_lines_relaxed,
     _extract_transcript_lines,
     _extract_sources,
+    _fetch_transcript_sections,
+    _parse_transcript_from_html,
     _pick_best_candidate_by_quarter,
     _quarter_window,
     _select_most_recent_candidates,
@@ -236,3 +241,131 @@ def test_extract_text_lines_from_script_payloads_supports_embedded_json() -> Non
     assert "Call participants" in lines
     assert "Full Conference Call Transcript" in lines
     assert "Timothy D. Cook: Welcome everyone." in lines
+
+
+def test_parse_transcript_from_html_semantic_dom_source() -> None:
+    html = """
+    <html><body><article>
+      <h2>Call participants</h2>
+      <p>Chief Executive Officer — Satya Nadella</p>
+      <h2>Full Conference Call Transcript</h2>
+      <p>Operator: Welcome everyone.</p>
+      <p>Satya Nadella: Thank you for joining.</p>
+      <p>Read Next</p>
+    </article></body></html>
+    """
+    payload = _parse_transcript_from_html(html=html, scrape_method="static")
+    assert payload["line_source"] == "semantic_dom"
+    assert payload["scrape_method"] == "static"
+    assert payload["section_count"] >= 1
+    assert payload["line_count"]["transcript_line_count"] >= 2
+    assert payload["marker_detection"]["start_found"] is True
+
+
+def test_parse_transcript_from_html_jsonld_source() -> None:
+    html = """
+    <html><body>
+      <script type="application/ld+json">
+        {"@type":"NewsArticle","articleBody":"Call participants\\nChief Executive Officer — Satya Nadella\\nFull Conference Call Transcript\\nOperator: Welcome everyone.\\nSatya Nadella: Thanks all.\\nRead Next"}
+      </script>
+      <main><div>No transcript in rendered DOM.</div></main>
+    </body></html>
+    """
+    payload = _parse_transcript_from_html(html=html, scrape_method="static")
+    assert payload["line_source"] == "jsonld_article_body"
+    assert payload["section_count"] >= 1
+
+
+def test_parse_transcript_from_html_script_payload_source() -> None:
+    html = """
+    <html><body>
+      <script id="__NEXT_DATA__" type="application/json">
+        {"props":{"pageProps":{"content":"Call participants\\nChief Executive Officer — Satya Nadella\\nFull Conference Call Transcript\\nOperator: Welcome everyone.\\nSatya Nadella: Thanks all.\\nRead Next"}}}
+      </script>
+      <main><div>No transcript in rendered DOM.</div></main>
+    </body></html>
+    """
+    payload = _parse_transcript_from_html(html=html, scrape_method="static")
+    assert payload["line_source"] == "script_payload"
+    assert payload["section_count"] >= 1
+
+
+def test_parse_transcript_from_html_repeated_speaker_fallback_without_markers() -> None:
+    html = """
+    <html><body><article>
+      <div>Market data and intro content</div>
+      <div>Operator: Welcome everyone.</div>
+      <div>Satya Nadella: Thank you for joining.</div>
+      <div>Amy Hood: Let me walk through the quarter.</div>
+      <div>Read Next</div>
+    </article></body></html>
+    """
+    payload = _parse_transcript_from_html(html=html, scrape_method="static")
+    assert payload["marker_detection"]["start_reason"] in {"repeated_speaker", "single_speaker_fallback"}
+    assert payload["section_count"] >= 2
+
+
+def test_parse_transcript_from_html_no_transcript_content_raises() -> None:
+    html = "<html><body><article><div>Generic page without call text.</div></article></body></html>"
+    with pytest.raises(TranscriptExtractionError) as exc:
+        _parse_transcript_from_html(html=html, scrape_method="static")
+    assert "Transcript section markers were not found" in str(exc.value)
+    assert exc.value.scrape_method == "static"
+
+
+def test_fetch_transcript_sections_falls_back_to_browser(monkeypatch) -> None:
+    class _Resp:
+        status_code = 200
+        text = "<html><body><article><div>No transcript in static html.</div></article></body></html>"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    browser_html = """
+    <html><body><article>
+      <h2>Full Conference Call Transcript</h2>
+      <p>Operator: Welcome.</p>
+      <p>Satya Nadella: Thanks everyone.</p>
+      <p>Read Next</p>
+    </article></body></html>
+    """
+
+    monkeypatch.setattr("finbert_site.openai_motley_search.requests.get", lambda *args, **kwargs: _Resp())
+    monkeypatch.setattr("finbert_site.openai_motley_search._render_html_with_playwright", lambda **kwargs: browser_html)
+
+    payload = _fetch_transcript_sections(
+        url="https://www.fool.com/earnings/call-transcripts/x/",
+        quarter="2025-Q4",
+        title="T",
+        published_date="2025-10-31",
+        timeout_seconds=10,
+    )
+    assert payload["scrape_method"] == "browser"
+    assert payload["section_count"] >= 1
+    assert payload["marker_detection"]["start_found"] is True
+
+
+def test_fetch_transcript_sections_browser_unavailable_returns_install_hint(monkeypatch) -> None:
+    class _Resp:
+        status_code = 200
+        text = "<html><body><article><div>No transcript in static html.</div></article></body></html>"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr("finbert_site.openai_motley_search.requests.get", lambda *args, **kwargs: _Resp())
+    monkeypatch.setattr(
+        "finbert_site.openai_motley_search._render_html_with_playwright",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("Playwright is not installed. Install optional browser fallback with `pip install playwright` and `python -m playwright install chromium`.")),
+    )
+
+    with pytest.raises(TranscriptExtractionError) as exc:
+        _fetch_transcript_sections(
+            url="https://www.fool.com/earnings/call-transcripts/x/",
+            quarter="2025-Q4",
+            title="T",
+            published_date="2025-10-31",
+            timeout_seconds=10,
+        )
+    assert "pip install playwright" in str(exc.value)
+    assert exc.value.scrape_method == "browser"

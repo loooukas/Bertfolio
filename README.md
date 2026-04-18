@@ -123,6 +123,13 @@ Discover links and scrape the most recent 4 transcript pages into per-speaker JS
 python scripts/openai_motley_transcript_cli.py AAPL --pretty --verbose --scrape --scrape-count 4
 ```
 
+Optional browser-render fallback for difficult pages:
+
+```bash
+pip install playwright
+python -m playwright install chromium
+```
+
 If OpenAI web-search calls are flaky, increase retries:
 
 ```bash
@@ -136,6 +143,7 @@ Output shape (per ticker):
 - `found_transcript_links` and `links` for copy-ready URL lists in terminal JSON output
 - `candidate_pool` and `search_sources` for debugging slug discovery quality
 - `selected_recent_links`, `scraped_transcripts`, and `scrape_errors` when `--scrape` is enabled
+- `scrape_method`, `line_source`, `marker_detection`, and `line_count` diagnostics on scraped transcript payloads
 
 ## Notes
 
