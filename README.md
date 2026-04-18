@@ -145,6 +145,7 @@ Output shape (per ticker):
 - `selected_recent_links`, `scraped_transcripts`, and `scrape_errors` when `--scrape` is enabled
 - `scrape_method`, `line_source`, `marker_detection`, and `line_count` diagnostics on scraped transcript payloads
 - `section_parse_method` (`regex` or `openai`) and optional `section_parse_reason` when speaker fallback is used
+- Scraping now runs a source-first OpenAI transcript structuring step using page source/text, then falls back to regex parsing only if OpenAI structuring fails.
 
 ## Notes
 
