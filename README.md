@@ -85,6 +85,7 @@ Optional keys:
 - `ALPHAVANTAGE_API_KEY` for Alpha Vantage news feed
 - `OPENAI_API_KEY` for transcript normalization
 - `OPENAI_NORMALIZER_MODEL` (default `gpt-4o-mini`)
+- `OPENAI_SEARCH_MODEL` (default `gpt-5-mini`) for OpenAI web-search test script
 
 4. Start app
 
@@ -99,6 +100,20 @@ uvicorn finbert_site.main:app --reload
 ```bash
 pytest -q
 ```
+
+## OpenAI Web-Search Transcript Slug Test
+
+This prototype script asks the OpenAI Responses API to web-search Motley Fool transcript pages and then reduces the output to the last 4 consecutive quarters with structured JSON output.
+
+```bash
+python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty
+```
+
+Output shape (per ticker):
+
+- `requested_quarters`, `found_quarters`, `missing_quarters`
+- `quarters` with `status`, `title`, and `url`
+- `candidate_pool` and `search_sources` for debugging slug discovery quality
 
 ## Notes
 
