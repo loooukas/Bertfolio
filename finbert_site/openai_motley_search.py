@@ -253,7 +253,6 @@ def _build_request_payload(
 ) -> dict[str, Any]:
     return {
         "model": model,
-        "temperature": 0,
         "tool_choice": "required",
         "input": _build_search_prompt(ticker=ticker, max_candidates=max_candidates),
         "tools": [_build_tool(tool_type)],
@@ -324,33 +323,58 @@ def _extract_sources(response_payload: dict[str, Any]) -> list[str]:
     urls: list[str] = []
     seen: set[str] = set()
 
+    def _push(raw_url: Any) -> None:
+        if not isinstance(raw_url, str) or not raw_url.strip():
+            return
+        normalized = _normalize_url(raw_url)
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        urls.append(normalized)
+
     for output_item in response_payload.get("output", []) or []:
         if not isinstance(output_item, dict):
             continue
-        if output_item.get("type") != "web_search_call":
-            continue
+        if output_item.get("type") == "web_search_call":
+            action = output_item.get("action")
+            if isinstance(action, dict):
+                sources = action.get("sources")
+                if isinstance(sources, list):
+                    for source in sources:
+                        if not isinstance(source, dict):
+                            continue
+                        _push(source.get("url"))
 
-        action = output_item.get("action")
-        if not isinstance(action, dict):
-            continue
-
-        sources = action.get("sources")
-        if not isinstance(sources, list):
-            continue
-
-        for source in sources:
-            if not isinstance(source, dict):
+        if output_item.get("type") == "message":
+            content = output_item.get("content")
+            if not isinstance(content, list):
                 continue
-            url = source.get("url")
-            if not isinstance(url, str) or not url.strip():
-                continue
-            normalized = _normalize_url(url)
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            urls.append(normalized)
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                annotations = block.get("annotations")
+                if not isinstance(annotations, list):
+                    continue
+                for annotation in annotations:
+                    if not isinstance(annotation, dict):
+                        continue
+                    _push(annotation.get("url"))
+                    if isinstance(annotation.get("url_citation"), dict):
+                        _push(annotation["url_citation"].get("url"))
 
     return urls
+
+
+def _dedupe_links(urls: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        normalized = _normalize_url(url)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
 
 
 def _pick_best_candidate_by_quarter(
@@ -529,6 +553,19 @@ def discover_last_quarter_links(
             }
         )
 
+    search_sources = _extract_sources(response_payload)
+    found_transcript_links = [
+        {
+            "quarter": row["quarter"],
+            "title": row["title"],
+            "url": row["url"],
+        }
+        for row in quarter_rows
+        if row["status"] == "found" and row["url"]
+    ]
+    found_links = [item["url"] for item in found_transcript_links]
+    all_links = _dedupe_links(found_links + [c.url for c in cleaned_candidates] + search_sources)
+
     return {
         "ticker": symbol,
         "as_of_date": date.today().isoformat(),
@@ -540,6 +577,8 @@ def discover_last_quarter_links(
         "quarters": quarter_rows,
         "raw_candidate_count": len(raw_candidates),
         "accepted_candidate_count": len(cleaned_candidates),
+        "found_transcript_links": found_transcript_links,
+        "links": all_links,
         "candidate_pool": [
             {
                 "quarter": _quarter_label(c.year, c.quarter) if c.year and c.quarter else "",
@@ -550,7 +589,7 @@ def discover_last_quarter_links(
             }
             for c in cleaned_candidates
         ],
-        "search_sources": _extract_sources(response_payload),
+        "search_sources": search_sources,
         "warnings": clean_warnings,
         "notes": str(structured.get("notes") or ""),
     }

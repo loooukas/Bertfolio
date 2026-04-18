@@ -113,6 +113,7 @@ Output shape (per ticker):
 
 - `requested_quarters`, `found_quarters`, `missing_quarters`
 - `quarters` with `status`, `title`, and `url`
+- `found_transcript_links` and `links` for copy-ready URL lists in terminal JSON output
 - `candidate_pool` and `search_sources` for debugging slug discovery quality
 
 ## Notes
