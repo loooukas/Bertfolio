@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FinBERT Earnings Signals</title>
     <link rel="stylesheet" href="/static/style.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
   </head>
   <body>
     <main class="app-shell">
@@ -49,7 +49,7 @@
 
             <article class="panel-card">
               <h3 id="heading-speaker-profile">Speaker Confidence Profile</h3>
-              <canvas id="speaker-confidence-chart"></canvas>
+              <div id="speaker-confidence-chart" class="chart-surface"></div>
               <p id="speaker-chart-empty" class="empty-note">Not enough speaker diversity for a useful profile chart.</p>
             </article>
           </section>
@@ -98,12 +98,6 @@
             <article class="panel-card">
               <h2 id="heading-market">Market Reaction</h2>
               <p id="market-balance" class="summary"></p>
-
-              <div class="chart-card">
-                <h3 id="heading-market-chart">Sentiment Timeline</h3>
-                <canvas id="market-sentiment-chart"></canvas>
-                <p id="market-chart-empty" class="empty-note">Not enough timeline depth for a useful sentiment chart.</p>
-              </div>
             </article>
 
             <article class="panel-card">
@@ -125,7 +119,7 @@
 
               <div class="chart-card">
                 <h3 id="heading-fundamentals-chart">Quarterly Trend</h3>
-                <canvas id="fundamentals-chart"></canvas>
+                <div id="fundamentals-chart" class="chart-surface"></div>
                 <p id="fundamentals-chart-empty" class="empty-note">Not enough quarterly depth for a useful fundamentals trend chart.</p>
               </div>
 
@@ -209,7 +203,7 @@
         </header>
         <p id="modal-meta" class="meta-line"></p>
         <p id="modal-body" class="modal-body"></p>
-        <a id="modal-link" href="#" target="_blank" rel="noopener noreferrer">Open source post</a>
+        <a id="modal-link" href="#" target="_blank" rel="noopener noreferrer">Open in new tab</a>
       </article>
     </dialog>
 
@@ -221,7 +215,6 @@
         uiCopy: null,
         charts: {
           speaker: null,
-          market: null,
           fundamentals: null,
         },
       };
@@ -246,7 +239,6 @@
         headingPressure: document.getElementById("heading-pressure"),
         headingSpeakerTable: document.getElementById("heading-speaker-table"),
         headingMarket: document.getElementById("heading-market"),
-        headingMarketChart: document.getElementById("heading-market-chart"),
         headingNews: document.getElementById("heading-news"),
         headingSocial: document.getElementById("heading-social"),
         headingFundamentals: document.getElementById("heading-fundamentals"),
@@ -287,11 +279,9 @@
         auditDiscarded: document.getElementById("audit-discarded"),
         auditParsing: document.getElementById("audit-parsing"),
 
-        speakerChartCanvas: document.getElementById("speaker-confidence-chart"),
+        speakerChartSurface: document.getElementById("speaker-confidence-chart"),
         speakerChartEmpty: document.getElementById("speaker-chart-empty"),
-        marketChartCanvas: document.getElementById("market-sentiment-chart"),
-        marketChartEmpty: document.getElementById("market-chart-empty"),
-        fundamentalsChartCanvas: document.getElementById("fundamentals-chart"),
+        fundamentalsChartSurface: document.getElementById("fundamentals-chart"),
         fundamentalsChartEmpty: document.getElementById("fundamentals-chart-empty"),
 
         modal: document.getElementById("social-modal"),
@@ -342,6 +332,25 @@
         return `${cleaned.slice(0, maxChars - 1).trimEnd()}…`;
       }
 
+      function chartAxisCompact(value) {
+        const num = Number(value || 0);
+        const abs = Math.abs(num);
+        if (abs >= 1_000_000_000_000) return `${(num / 1_000_000_000_000).toFixed(1)}T`;
+        if (abs >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1)}B`;
+        if (abs >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
+        if (abs >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+        return `${num.toFixed(0)}`;
+      }
+
+      function externalIcon() {
+        return `
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M14 4h6v6M20 4l-9 9" />
+            <path d="M10 6H7a3 3 0 0 0-3 3v8a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3" />
+          </svg>
+        `;
+      }
+
       function clearList(listEl) {
         listEl.innerHTML = "";
       }
@@ -357,11 +366,11 @@
       }
 
       function destroyChart(chart) {
-        if (chart) chart.destroy();
+        if (chart && typeof chart.dispose === "function") chart.dispose();
       }
 
-      function setChartVisibility(canvas, empty, enabled) {
-        canvas.style.display = enabled ? "block" : "none";
+      function setChartVisibility(surface, empty, enabled) {
+        surface.style.display = enabled ? "block" : "none";
         empty.style.display = enabled ? "none" : "block";
       }
 
@@ -391,11 +400,14 @@
       function renderRunContext(payload) {
         const overview = payload.overview;
         const transcript = payload.transcript;
+        const stance = (overview.stance_label || "mixed").replaceAll("_", " ");
+        const overall = (payload.overall_sentiment_label || "mixed").replaceAll("_", " ");
+        const normalization = payload.data_audit.normalization_mode === "openai" ? "OpenAI normalized" : "Deterministic fallback";
         elements.runContext.innerHTML = `
           <h3>${overview.ticker}</h3>
-          <p class="summary">${overview.stance_label} · ${payload.overall_sentiment_label} (${fmtNum(payload.overall_sentiment_score, 4)})</p>
-          <p class="meta-line">Coverage ${transcript.transcript_count_found}/${transcript.transcript_count_requested} · News ${payload.market_reaction.news_count} · Social ${payload.market_reaction.social_count}</p>
-          <p class="meta-line">Normalization: ${payload.data_audit.normalization_mode}</p>
+          <p class="summary">Stance: ${stance} · Overall: ${overall} (${fmtNum(payload.overall_sentiment_score, 3)})</p>
+          <p class="meta-line">Coverage T:${transcript.transcript_count_found}/${transcript.transcript_count_requested} · N:${payload.market_reaction.news_count} · S:${payload.market_reaction.social_count}</p>
+          <p class="meta-line">${normalization}</p>
         `;
       }
 
@@ -421,34 +433,47 @@
         destroyChart(state.charts.speaker);
         const profile = payload.transcript.speaker_confidence_profile || [];
         const canChart = Boolean(payload.transcript.chart_enabled && profile.length >= 2);
-        setChartVisibility(elements.speakerChartCanvas, elements.speakerChartEmpty, canChart);
+        setChartVisibility(elements.speakerChartSurface, elements.speakerChartEmpty, canChart);
 
         if (canChart) {
-          state.charts.speaker = new Chart(elements.speakerChartCanvas, {
-            type: "bar",
-            data: {
-              labels: profile.map((row) => row.speaker),
-              datasets: [
-                {
-                  label: "Confidence",
-                  data: profile.map((row) => row.confidence),
-                  backgroundColor: "rgba(80, 202, 163, 0.65)",
-                },
-                {
-                  label: "Evasiveness",
-                  data: profile.map((row) => row.evasiveness),
-                  backgroundColor: "rgba(240, 99, 123, 0.55)",
-                },
-              ],
+          state.charts.speaker = echarts.init(elements.speakerChartSurface, null, { renderer: "canvas" });
+          state.charts.speaker.setOption({
+            grid: { left: 52, right: 18, top: 44, bottom: 48 },
+            tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+            legend: {
+              top: 6,
+              textStyle: { color: "#d3ddf2" },
+              data: ["Confidence", "Evasiveness"],
             },
-            options: {
-              responsive: true,
-              plugins: { legend: { labels: { color: "#d3ddf2" } } },
-              scales: {
-                x: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.06)" } },
-                y: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.1)" }, min: 0, max: 100 },
+            xAxis: {
+              type: "category",
+              data: profile.map((row) => row.speaker),
+              axisLabel: { color: "#9aaacc", interval: 0, rotate: 18 },
+              axisLine: { lineStyle: { color: "rgba(255,255,255,0.2)" } },
+            },
+            yAxis: {
+              type: "value",
+              min: 0,
+              max: 100,
+              axisLabel: { color: "#9aaacc" },
+              splitLine: { lineStyle: { color: "rgba(255,255,255,0.08)" } },
+            },
+            series: [
+              {
+                name: "Confidence",
+                type: "bar",
+                barMaxWidth: 38,
+                itemStyle: { color: "rgba(80, 202, 163, 0.74)", borderRadius: [8, 8, 0, 0] },
+                data: profile.map((row) => row.confidence),
               },
-            },
+              {
+                name: "Evasiveness",
+                type: "bar",
+                barMaxWidth: 38,
+                itemStyle: { color: "rgba(240, 99, 123, 0.62)", borderRadius: [8, 8, 0, 0] },
+                data: profile.map((row) => row.evasiveness),
+              },
+            ],
           });
         }
       }
@@ -486,11 +511,12 @@
           return;
         }
 
-        const openLabel = state.uiCopy?.microcopy?.news_open_action || "Open source";
-
         elements.newsCards.innerHTML = items
           .map((item) => `
             <article class="feed-card">
+              <a class="card-link-icon" href="${item.url}" target="_blank" rel="noopener noreferrer" aria-label="Open in new tab">
+                ${externalIcon()}
+              </a>
               <div class="feed-meta">
                 <span>${item.source || "source n/a"}</span>
                 <span>${fmtExternalDate(item.time_published)}</span>
@@ -498,7 +524,6 @@
               </div>
               <h4><a href="${item.url}" target="_blank" rel="noopener noreferrer">${item.title}</a></h4>
               <p>${compactText(item.summary || "No preview available.", 190)}</p>
-              <a class="inline-action" href="${item.url}" target="_blank" rel="noopener noreferrer">${openLabel}</a>
             </article>
           `)
           .join("");
@@ -520,10 +545,12 @@
           return;
         }
 
-        const openLabel = state.uiCopy?.microcopy?.social_open_action || "View Full Post";
         const cards = items
           .map((item, index) => `
             <article class="feed-card social-card" data-index="${index}">
+              <a class="card-link-icon" href="${item.url}" target="_blank" rel="noopener noreferrer" aria-label="Open in new tab">
+                ${externalIcon()}
+              </a>
               <div class="feed-meta">
                 <span>${item.subreddit ? `r/${item.subreddit}` : "reddit"}</span>
                 <span>${fmtDate(item.created_utc)}</span>
@@ -531,7 +558,6 @@
               </div>
               <h4>${item.title}</h4>
               <p>${item.excerpt || "No excerpt available."}</p>
-              <button class="ghost-btn" type="button">${openLabel}</button>
             </article>
           `)
           .join("");
@@ -539,7 +565,10 @@
         elements.socialCards.innerHTML = cards;
         elements.socialCards.querySelectorAll(".social-card").forEach((card) => {
           const index = Number(card.dataset.index);
-          card.querySelector("button")?.addEventListener("click", () => openSocialModal(items[index]));
+          card.addEventListener("click", (event) => {
+            if (event.target.closest(".card-link-icon")) return;
+            openSocialModal(items[index]);
+          });
         });
       }
 
@@ -548,33 +577,6 @@
         elements.marketBalance.textContent = market.balance_summary;
         renderNewsCards(market.news_items || []);
         renderSocialCards(market.social_items || []);
-
-        destroyChart(state.charts.market);
-        const timeline = payload.charts?.sentiment_timeline || [];
-        const canChart = Boolean(market.chart_enabled && timeline.length >= 3);
-        setChartVisibility(elements.marketChartCanvas, elements.marketChartEmpty, canChart);
-
-        if (canChart) {
-          state.charts.market = new Chart(elements.marketChartCanvas, {
-            type: "line",
-            data: {
-              labels: timeline.map((point) => point.date),
-              datasets: [
-                { label: "News", data: timeline.map((point) => point.news), borderColor: "#f4c66e", backgroundColor: "#f4c66e", tension: 0.3 },
-                { label: "Social", data: timeline.map((point) => point.social), borderColor: "#78bfff", backgroundColor: "#78bfff", tension: 0.3 },
-                { label: "Blended", data: timeline.map((point) => point.blended), borderColor: "#52cda2", backgroundColor: "#52cda2", tension: 0.3 },
-              ],
-            },
-            options: {
-              responsive: true,
-              plugins: { legend: { labels: { color: "#d3ddf2" } } },
-              scales: {
-                x: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.06)" } },
-                y: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.1)" }, min: -1, max: 1 },
-              },
-            },
-          });
-        }
       }
 
       function renderFundamentals(payload) {
@@ -606,47 +608,80 @@
         destroyChart(state.charts.fundamentals);
         const trend = f.trend_series || [];
         const canChart = Boolean(f.chart_enabled && trend.length >= 3);
-        setChartVisibility(elements.fundamentalsChartCanvas, elements.fundamentalsChartEmpty, canChart);
+        setChartVisibility(elements.fundamentalsChartSurface, elements.fundamentalsChartEmpty, canChart);
 
         if (canChart) {
-          state.charts.fundamentals = new Chart(elements.fundamentalsChartCanvas, {
-            data: {
-              labels: trend.map((point) => point.quarter),
-              datasets: [
-                {
-                  type: "bar",
-                  label: "Revenue",
-                  data: trend.map((point) => point.revenue || 0),
-                  backgroundColor: "rgba(120, 191, 255, 0.55)",
-                  yAxisID: "y",
-                },
-                {
-                  type: "bar",
-                  label: "Net Income",
-                  data: trend.map((point) => point.net_income || 0),
-                  backgroundColor: "rgba(82, 205, 162, 0.52)",
-                  yAxisID: "y",
-                },
-                {
-                  type: "line",
-                  label: "Reported EPS",
-                  data: trend.map((point) => point.eps || 0),
-                  borderColor: "#f4c66e",
-                  backgroundColor: "#f4c66e",
-                  yAxisID: "y1",
-                  tension: 0.25,
-                },
-              ],
+          state.charts.fundamentals = echarts.init(elements.fundamentalsChartSurface, null, { renderer: "canvas" });
+          state.charts.fundamentals.setOption({
+            grid: { left: 64, right: 72, top: 52, bottom: 48 },
+            tooltip: { trigger: "axis" },
+            legend: {
+              top: 8,
+              textStyle: { color: "#d3ddf2" },
+              data: ["Revenue", "Net Income", "Reported EPS", "EPS Estimate"],
             },
-            options: {
-              responsive: true,
-              plugins: { legend: { labels: { color: "#d3ddf2" } } },
-              scales: {
-                x: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.06)" } },
-                y: { ticks: { color: "#9aaacc" }, grid: { color: "rgba(255,255,255,0.1)" } },
-                y1: { position: "right", ticks: { color: "#9aaacc" }, grid: { drawOnChartArea: false } },
+            xAxis: {
+              type: "category",
+              data: trend.map((point) => point.quarter),
+              axisLabel: { color: "#9aaacc" },
+              axisLine: { lineStyle: { color: "rgba(255,255,255,0.2)" } },
+            },
+            yAxis: [
+              {
+                type: "value",
+                name: "USD",
+                axisLabel: {
+                  color: "#9aaacc",
+                  formatter: (value) => chartAxisCompact(value),
+                },
+                splitLine: { lineStyle: { color: "rgba(255,255,255,0.08)" } },
               },
-            },
+              {
+                type: "value",
+                name: "EPS",
+                position: "right",
+                axisLabel: { color: "#9aaacc" },
+                splitLine: { show: false },
+              },
+            ],
+            series: [
+              {
+                name: "Revenue",
+                type: "bar",
+                barMaxWidth: 46,
+                itemStyle: { color: "rgba(120, 191, 255, 0.62)", borderRadius: [8, 8, 0, 0] },
+                data: trend.map((point) => point.revenue ?? null),
+              },
+              {
+                name: "Net Income",
+                type: "bar",
+                barMaxWidth: 46,
+                itemStyle: { color: "rgba(82, 205, 162, 0.58)", borderRadius: [8, 8, 0, 0] },
+                data: trend.map((point) => point.net_income ?? null),
+              },
+              {
+                name: "Reported EPS",
+                type: "line",
+                yAxisIndex: 1,
+                smooth: true,
+                showSymbol: true,
+                symbolSize: 8,
+                lineStyle: { width: 3, color: "#f4c66e" },
+                itemStyle: { color: "#f4c66e" },
+                data: trend.map((point) => point.eps ?? null),
+              },
+              {
+                name: "EPS Estimate",
+                type: "line",
+                yAxisIndex: 1,
+                smooth: true,
+                showSymbol: true,
+                symbolSize: 7,
+                lineStyle: { width: 2, type: "dashed", color: "#ff9f7a" },
+                itemStyle: { color: "#ff9f7a" },
+                data: trend.map((point) => point.eps_estimate ?? null),
+              },
+            ],
           });
         }
       }
@@ -701,7 +736,6 @@
         elements.headingPressure.textContent = copy.headings?.transcript_pressure || elements.headingPressure.textContent;
         elements.headingSpeakerTable.textContent = copy.headings?.speaker_analysis_table || elements.headingSpeakerTable.textContent;
         elements.headingMarket.textContent = copy.headings?.market_reaction || elements.headingMarket.textContent;
-        elements.headingMarketChart.textContent = copy.headings?.sentiment_timeline_chart || elements.headingMarketChart.textContent;
         elements.headingNews.textContent = copy.headings?.news_feed || elements.headingNews.textContent;
         elements.headingSocial.textContent = copy.headings?.social_feed || elements.headingSocial.textContent;
         elements.headingFundamentals.textContent = copy.headings?.fundamentals || elements.headingFundamentals.textContent;
@@ -714,7 +748,6 @@
         elements.headingAuditDiscarded.textContent = copy.headings?.audit_discarded || elements.headingAuditDiscarded.textContent;
         elements.headingAuditParsing.textContent = copy.headings?.audit_parsing || elements.headingAuditParsing.textContent;
 
-        elements.marketChartEmpty.textContent = copy.empty_states?.market_chart || elements.marketChartEmpty.textContent;
         elements.fundamentalsChartEmpty.textContent =
           copy.empty_states?.fundamentals_chart || elements.fundamentalsChartEmpty.textContent;
         elements.speakerChartEmpty.textContent =
@@ -758,7 +791,9 @@
 
           renderAll(payload);
           elements.status.className = "status-line ok";
-          elements.status.textContent = `${payload.ticker} ${payload.overall_sentiment_label} (${fmtNum(payload.overall_sentiment_score, 4)}) · transcripts ${payload.transcript.transcript_count_found}/${payload.transcript.transcript_count_requested}`;
+          const overall = (payload.overall_sentiment_label || "mixed").replaceAll("_", " ");
+          elements.status.textContent =
+            `${payload.ticker} · ${overall} (${fmtNum(payload.overall_sentiment_score, 3)}) · transcripts ${payload.transcript.transcript_count_found}/${payload.transcript.transcript_count_requested}`;
         } catch (error) {
           elements.status.className = "status-line error";
           elements.status.textContent = `Error: ${error.message}`;
@@ -781,6 +816,12 @@
           event.clientY >= modalRect.top &&
           event.clientY <= modalRect.bottom;
         if (!inside) elements.modal.close();
+      });
+
+      window.addEventListener("resize", () => {
+        Object.values(state.charts).forEach((chart) => {
+          if (chart && typeof chart.resize === "function") chart.resize();
+        });
       });
 
       buildSectionNav({

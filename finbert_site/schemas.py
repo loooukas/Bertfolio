@@ -211,6 +211,7 @@ class FundamentalsTrendPoint(BaseModel):
     revenue: Optional[float] = None
     net_income: Optional[float] = None
     eps: Optional[float] = None
+    eps_estimate: Optional[float] = None
 
 
 class ChartsPayload(BaseModel):

@@ -92,7 +92,7 @@ RISK_LANGUAGE_MARKERS = {
 
 UI_COPY = CopyDictionary(
     app_title="FinBERT Earnings Signals",
-    app_subtitle="Transcript-first earnings intelligence with compact market context and auditability.",
+    app_subtitle="Transcript-first earnings intelligence with focused market context and auditability.",
     section_labels={
         "overview": "Overview",
         "transcript": "Transcript",
@@ -129,7 +129,6 @@ UI_COPY = CopyDictionary(
         "transcript_pressure": "Q&A Pressure Points",
         "news_feed": "News Feed",
         "social_feed": "Social Feed",
-        "sentiment_timeline_chart": "Sentiment Timeline",
         "fundamentals_chart": "Quarterly Trend",
         "audit_warnings": "Warnings",
         "audit_missing": "Missing / Sparse",
@@ -139,11 +138,9 @@ UI_COPY = CopyDictionary(
         "audit_parsing": "Parsing Warnings",
     },
     microcopy={
-        "query_note": "Primary transcript source: Motley Fool deterministic discovery and parsing.",
-        "modal_open_action": "Open source post",
+        "query_note": "Transcripts: Motley Fool. News: Alpha Vantage. Social: Reddit (14-day window, recency-weighted).",
+        "modal_open_action": "Open in new tab",
         "modal_close_action": "Close",
-        "news_open_action": "Open source",
-        "social_open_action": "View Full Post",
     },
 )
 
@@ -706,12 +703,16 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         settings,
         limit=16,
         pool_size=80,
+        company_name=company_name,
+        lookback_days=14,
     )
     social_records, social_warnings, social_audit = fetch_social_reddit(
         symbol,
         settings,
         limit=16,
         pool_size=120,
+        company_name=company_name,
+        lookback_days=14,
     )
 
     warnings = transcript_warnings + news_warnings + social_warnings
@@ -871,9 +872,9 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
     if len(overview_takeaways) < 5:
         overview_takeaways.extend(
             [
-                f"News coverage contributed {len(news)} curated records.",
-                f"Social coverage contributed {len(social)} curated records.",
-                f"Revenue QoQ growth is {_format_pct(fundamentals.revenue_qoq_growth_pct)}.",
+                f"Captured {len(news)} high-relevance news stories in the recent window.",
+                f"Captured {len(social)} related social discussions in the recent window.",
+                f"Latest revenue QoQ growth is {_format_pct(fundamentals.revenue_qoq_growth_pct)}.",
             ]
         )
     overview_takeaways = overview_takeaways[:5]
@@ -883,9 +884,10 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         company_name=company_name,
         stance_label=_stance_from_score(overall_score),
         executive_summary=(
-            f"{company_name} shows an overall {_stance_from_score(overall_score)} communication profile. "
-            f"Transcript coverage is {len(normalized_documents)}/{settings.transcript_target_count}, "
-            f"with average confidence {confidence_score:.1f} and evasiveness {evasiveness_score:.1f}."
+            f"{company_name} currently reads as {_stance_from_score(overall_score)} based on transcript tone, "
+            f"fundamentals, and near-term market reaction. Transcript coverage is "
+            f"{len(normalized_documents)}/{settings.transcript_target_count}; average confidence is "
+            f"{confidence_score:.1f} and evasiveness is {evasiveness_score:.1f}."
         ),
         key_takeaways=overview_takeaways,
         metrics=[
@@ -900,19 +902,18 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         ],
     )
 
-    sentiment_timeline = _build_sentiment_timeline(news, social)
-    market_chart_enabled = len(sentiment_timeline) >= 3
+    sentiment_timeline: list[SentimentTimelinePoint] = []
     market_reaction = MarketReactionSection(
         balance_summary=(
-            f"News sentiment is {_stance_from_score(news_avg)} ({news_avg:+.3f}) and social sentiment is "
-            f"{_stance_from_score(social_avg)} ({social_avg:+.3f})."
+            f"Recent coverage skews {_stance_from_score(news_avg)} in news ({news_avg:+.3f}) and "
+            f"{_stance_from_score(social_avg)} in social ({social_avg:+.3f})."
         ),
         news_count=len(news),
         social_count=len(social),
         news_items=news,
         social_items=social,
-        chart_enabled=market_chart_enabled,
-        sparse_note=None if market_chart_enabled else UI_COPY.empty_states["market_chart"],
+        chart_enabled=False,
+        sparse_note="Sentiment timeline is intentionally hidden in this view.",
     )
 
     fundamentals_trend = [
@@ -921,6 +922,7 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
             revenue=item.revenue,
             net_income=item.net_income,
             eps=item.reported_eps,
+            eps_estimate=item.eps_estimate,
         )
         for item in reversed(fundamentals.quarterly)
     ]

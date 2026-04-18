@@ -18,21 +18,21 @@ def _settings() -> Settings:
 
 def test_discover_candidates_prefers_exact_ticker(monkeypatch):
     pages = {
-        "https://www.fool.com/earnings/call-transcripts/": """
+        "https://www.fool.com/author/20032/": """
             <html><body>
               <a href='/earnings/call-transcripts/2026/01/29/apple-q1-2026-earnings-call-transcript/'>Apple Q1 2026 Earnings Call Transcript</a>
               <a href='/earnings/call-transcripts/2026/01/30/microsoft-msft-q2-2026-earnings-call-transcript/'>Microsoft (MSFT) Q2 2026 Earnings Call Transcript</a>
             </body></html>
         """,
-        "https://www.fool.com/author/20032/": """
+        "https://www.fool.com/author/20032/?page=2": """
             <html><body>
               <a href='/earnings/call-transcripts/2026/01/29/apple-aapl-q1-2026-earnings-call-transcript/'>Apple (AAPL) Q1 2026 Earnings Call Transcript</a>
               <a href='/earnings/call-transcripts/2026/01/27/rivian-rivn-q4-2025-earnings-call-transcript/'>Rivian (RIVN) Q4 2025 Earnings Call Transcript</a>
             </body></html>
         """,
-        "https://www.fool.com/author/20032/?page=2": "<html><body></body></html>",
         "https://www.fool.com/author/20032/?page=3": "<html><body></body></html>",
         "https://www.fool.com/author/20032/?page=4": "<html><body></body></html>",
+        "https://www.fool.com/search/?q=AAPL%20earnings%20call%20transcript": "<html><body></body></html>",
     }
 
     monkeypatch.setattr(providers, "_request_html", lambda url, timeout_seconds: pages[url])
@@ -153,3 +153,113 @@ def test_fetch_social_reddit_dedupes_and_truncates(monkeypatch):
     assert audit.fetched_pool == 2
     assert audit.deduped_pool == 1
     assert not warnings
+
+
+def test_fetch_transcripts_scans_beyond_initial_failure(monkeypatch):
+    candidates = [
+        TranscriptCandidate(
+            title="Apple (AAPL) Q1 2026 Earnings Call Transcript",
+            url="https://www.fool.com/earnings/call-transcripts/2026/01/29/apple-aapl-q1-2026-earnings-call-transcript/",
+            published_date="2026-01-29",
+            author="Motley Fool Transcribing",
+            surface="author",
+            match_score=120.0,
+        ),
+        TranscriptCandidate(
+            title="Apple (AAPL) Q4 2025 Earnings Call Transcript",
+            url="https://www.fool.com/earnings/call-transcripts/2025/10/30/apple-aapl-q4-2025-earnings-call-transcript/",
+            published_date="2025-10-30",
+            author="Motley Fool Transcribing",
+            surface="author",
+            match_score=118.0,
+        ),
+    ]
+
+    discovery = TranscriptDiscoveryAudit(
+        pages_scanned=2,
+        candidates_total=2,
+        transcript_like_count=2,
+        match_filtered_count=2,
+        selected_count=0,
+        discarded_near_matches=[],
+        fetch_failures=[],
+        playwright_fallback_used=False,
+    )
+
+    html_ok = """
+      <html><body><article>
+      <h2>Prepared Remarks</h2>
+      <p>Tim Cook: Demand remained healthy.</p>
+      <h2>Questions and Answers</h2>
+      <p>Analyst: Margins?</p>
+      <p>Luca Maestri: We are focused on cost discipline.</p>
+      </article></body></html>
+    """
+
+    monkeypatch.setattr(
+        providers,
+        "discover_motley_fool_candidates",
+        lambda symbol, company_name, settings, max_author_pages=4: (candidates, discovery),
+    )
+
+    def _request(url, timeout_seconds):
+        if "2026/01/29" in url:
+            raise RuntimeError("404 not found")
+        return html_ok
+
+    monkeypatch.setattr(providers, "_request_html", _request)
+
+    transcripts, warnings, diagnostics, audit = providers.fetch_transcripts_motley_fool(
+        symbol="AAPL",
+        company_name="Apple Inc",
+        settings=_settings(),
+        target_count=1,
+    )
+
+    assert len(transcripts) == 1
+    assert diagnostics.found_quarters
+    assert any("404 not found" in warning for warning in warnings)
+    assert audit.selected_count >= 2
+
+
+def test_fetch_news_alpha_vantage_filters_unrelated(monkeypatch):
+    def _alpha_get(params, timeout_seconds):
+        return {
+            "feed": [
+                {
+                    "title": "Apple (AAPL) launches new device",
+                    "summary": "Apple management highlighted demand trends.",
+                    "url": "https://example.com/apple",
+                    "source": "example",
+                    "time_published": "20260416T120000",
+                    "overall_sentiment_score": "0.5",
+                    "overall_sentiment_label": "Bullish",
+                    "ticker_sentiment": [{"ticker": "AAPL", "relevance_score": "0.81"}],
+                },
+                {
+                    "title": "Fertilizer stocks rally",
+                    "summary": "No mention of Apple in this story.",
+                    "url": "https://example.com/fertilizer",
+                    "source": "example",
+                    "time_published": "20260416T130000",
+                    "overall_sentiment_score": "0.2",
+                    "overall_sentiment_label": "Neutral",
+                    "ticker_sentiment": [{"ticker": "MOS", "relevance_score": "0.92"}],
+                },
+            ]
+        }
+
+    monkeypatch.setattr(providers, "_alpha_get", _alpha_get)
+    records, warnings, audit = providers.fetch_news_alpha_vantage(
+        "AAPL",
+        _settings(),
+        limit=12,
+        pool_size=20,
+        company_name="Apple Inc",
+        lookback_days=14,
+    )
+
+    assert len(records) == 1
+    assert "AAPL" in records[0].title
+    assert not warnings
+    assert audit.displayed_count == 1

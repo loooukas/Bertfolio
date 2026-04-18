@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
+import json
 import re
 import time
 from typing import Any, Dict, Optional, Tuple
@@ -43,9 +44,13 @@ _TRANSCRIPT_TITLE_MARKERS = {
 }
 
 _MOTLEY_FOOL_SURFACES = [
-    "https://www.fool.com/earnings/call-transcripts/",
     "https://www.fool.com/author/20032/",
 ]
+
+_TRANSCRIPT_URL_PATTERN = re.compile(
+    r"^https://www\.fool\.com/earnings/call-transcripts/\d{4}/\d{2}/\d{2}/[a-z0-9-]+/?$",
+    flags=re.IGNORECASE,
+)
 
 _FINANCE_SUBREDDIT_WEIGHTS = {
     "stocks": 2.5,
@@ -58,6 +63,8 @@ _FINANCE_SUBREDDIT_WEIGHTS = {
 }
 
 _MIN_SOCIAL_RELEVANCE = 1.0
+_MIN_NEWS_RELEVANCE = 1.2
+_DEFAULT_LOOKBACK_DAYS = 14
 
 _STOP_MARKERS = {
     "read next",
@@ -187,6 +194,32 @@ def _normalize_title_key(title: str) -> str:
     return lowered
 
 
+def _company_tokens(company_name: Optional[str]) -> list[str]:
+    if not company_name:
+        return []
+    tokens = [t for t in re.split(r"[^a-z0-9]+", company_name.lower()) if len(t) >= 4]
+    stop = {"inc", "corp", "ltd", "plc", "group", "company", "holdings"}
+    return [token for token in tokens if token not in stop]
+
+
+def _contains_symbol(text: str, symbol: str) -> bool:
+    lowered = text.lower()
+    symbol_l = symbol.lower()
+    return bool(re.search(rf"\b{re.escape(symbol_l)}\b", lowered)) or (f"${symbol_l}" in lowered)
+
+
+def _recency_weight(dt: Optional[datetime], lookback_days: int) -> float:
+    if not dt:
+        return 0.35
+    now = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    age_days = max(0.0, (now - dt).total_seconds() / 86400.0)
+    if age_days >= lookback_days:
+        return 0.0
+    return round(1.0 - (age_days / max(float(lookback_days), 1.0)), 4)
+
+
 def _safe_parse_date(raw: Optional[str]) -> Optional[datetime]:
     if not raw:
         return None
@@ -300,6 +333,8 @@ def _extract_candidate_links(html: str, surface: str) -> list[TranscriptCandidat
         absolute = urljoin("https://www.fool.com", href)
         if "/earnings/call-transcripts/" not in absolute:
             continue
+        if not _TRANSCRIPT_URL_PATTERN.match(absolute):
+            continue
 
         out.append(
             TranscriptCandidate(
@@ -332,6 +367,33 @@ def _extract_text_lines(container: BeautifulSoup) -> list[str]:
         compact.append(line)
         last = line
     return compact
+
+
+def _extract_article_body_from_jsonld(soup: BeautifulSoup) -> list[str]:
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+
+        candidates: list[dict[str, Any]] = []
+        if isinstance(payload, dict):
+            candidates = [payload]
+        elif isinstance(payload, list):
+            candidates = [item for item in payload if isinstance(item, dict)]
+
+        for node in candidates:
+            article_body = node.get("articleBody")
+            if not isinstance(article_body, str) or not article_body.strip():
+                continue
+            lines = [line.strip() for line in article_body.splitlines() if line.strip()]
+            if lines:
+                return lines
+
+    return []
 
 
 def _speaker_line_match(line: str) -> Optional[tuple[str, str]]:
@@ -396,6 +458,11 @@ def _extract_transcript_body(html: str) -> tuple[str, list[str], float, list[dic
         return "", ["Transcript parser could not find a content container."], 0.0, []
 
     lines = _extract_text_lines(container)
+    if len(lines) < 8:
+        lines_from_json = _extract_article_body_from_jsonld(soup)
+        if len(lines_from_json) > len(lines):
+            lines = lines_from_json
+            warnings.append("Transcript body used JSON-LD fallback extraction.")
     if not lines:
         return "", ["Transcript parser extracted no text lines."], 0.0, []
 
@@ -469,9 +536,10 @@ def discover_motley_fool_candidates(
     failures: list[str] = []
     pages_scanned = 0
 
-    pages: list[tuple[str, str]] = [("latest", _MOTLEY_FOOL_SURFACES[0]), ("author-1", _MOTLEY_FOOL_SURFACES[1])]
+    pages: list[tuple[str, str]] = [("author-1", _MOTLEY_FOOL_SURFACES[0])]
     for page in range(2, max_author_pages + 1):
-        pages.append((f"author-{page}", f"{_MOTLEY_FOOL_SURFACES[1]}?page={page}"))
+        pages.append((f"author-{page}", f"{_MOTLEY_FOOL_SURFACES[0]}?page={page}"))
+    pages.append(("search", f"https://www.fool.com/search/?q={symbol}%20earnings%20call%20transcript"))
 
     seen_urls: set[str] = set()
     for surface_name, url in pages:
@@ -526,13 +594,16 @@ def fetch_transcripts_motley_fool(
     warnings: list[str] = []
 
     candidates, discovery_audit = discover_motley_fool_candidates(symbol, company_name, settings)
-    selected = candidates[:target_count]
-    discovery_audit.selected_count = len(selected)
+    max_attempts = min(len(candidates), max(target_count * 8, target_count))
+    selected = candidates[:max_attempts]
+    discovery_audit.selected_count = 0
 
     outcomes: list[TranscriptFetchOutcome] = []
     transcripts: list[TranscriptRecord] = []
 
     for candidate in selected:
+        if len(transcripts) >= target_count:
+            break
         quarter_label = "unknown"
         try:
             year, quarter = _infer_year_quarter(candidate.title, candidate.published_date)
@@ -581,6 +652,7 @@ def fetch_transcripts_motley_fool(
     found_quarters = [o.quarter for o in outcomes if o.status == "found"]
     missing_quarters = [o.quarter for o in outcomes if o.status == "not_found"]
     errors = [f"{o.quarter}: {o.detail}" for o in outcomes if o.status == "error" and o.detail]
+    discovery_audit.selected_count = len(outcomes)
 
     if not transcripts:
         warnings.append("No Motley Fool transcripts were parsed for the selected ticker.")
@@ -635,11 +707,60 @@ def _dedupe_news(records: list[NewsRecord]) -> list[NewsRecord]:
     return ordered
 
 
+def _news_relevance(
+    *,
+    symbol: str,
+    company_name: Optional[str],
+    item: dict[str, Any],
+    title: str,
+    summary: str,
+) -> float:
+    text = f"{title} {summary}".lower()
+    symbol_l = symbol.lower()
+    score = 0.0
+
+    ticker_sentiment = item.get("ticker_sentiment")
+    if isinstance(ticker_sentiment, list):
+        for row in ticker_sentiment:
+            if not isinstance(row, dict):
+                continue
+            row_ticker = str(row.get("ticker") or "").upper()
+            if row_ticker != symbol.upper():
+                continue
+            relevance_raw = row.get("relevance_score")
+            try:
+                relevance = float(relevance_raw)
+            except Exception:
+                relevance = 0.0
+            score += 3.0 + (relevance * 4.0)
+            break
+
+    if _contains_symbol(text, symbol):
+        score += 2.5
+
+    if company_name:
+        company_l = company_name.lower().strip()
+        if company_l and company_l in text:
+            score += 2.0
+        token_hits = sum(1 for tok in _company_tokens(company_name) if tok in text)
+        score += min(token_hits, 4) * 0.45
+
+    finance_hits = sum(1 for term in _FINANCE_TERMS if term in text)
+    if finance_hits:
+        score += min(finance_hits, 5) * 0.18
+
+    if score < 0.9:
+        return 0.0
+    return round(score, 4)
+
+
 def fetch_news_alpha_vantage(
     symbol: str,
     settings: Settings,
     limit: int = 12,
     pool_size: int = 50,
+    company_name: Optional[str] = None,
+    lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
 ) -> Tuple[list[NewsRecord], list[str], FeedFetchAudit]:
     warnings: list[str] = []
 
@@ -664,7 +785,10 @@ def fetch_news_alpha_vantage(
     if not isinstance(feed, list):
         return [], [f"No Alpha Vantage news feed available for {symbol}"], FeedFetchAudit(0, 0, 0)
 
-    records: list[NewsRecord] = []
+    now_utc = datetime.now(timezone.utc)
+    lookback_floor = now_utc - timedelta(days=max(lookback_days, 1))
+
+    scored_records: list[tuple[float, NewsRecord]] = []
     for item in feed[: max(pool_size, limit)]:
         if not isinstance(item, dict):
             continue
@@ -675,21 +799,51 @@ def fetch_news_alpha_vantage(
         if not url or not title:
             continue
 
+        published_dt = _safe_parse_date(item.get("time_published"))
+        if published_dt and published_dt.tzinfo is None:
+            published_dt = published_dt.replace(tzinfo=timezone.utc)
+        if published_dt and published_dt < lookback_floor:
+            continue
+
+        relevance = _news_relevance(
+            symbol=symbol,
+            company_name=company_name,
+            item=item,
+            title=title,
+            summary=summary,
+        )
+        if relevance <= 0:
+            continue
+
+        recency = _recency_weight(published_dt, lookback_days)
+        rank_score = round(relevance * 0.72 + recency * 1.28, 4)
+
         score = _parse_news_score(item.get("overall_sentiment_score"))
         label = str(item.get("overall_sentiment_label") or "neutral")
 
-        records.append(
-            NewsRecord(
-                title=title,
-                summary=summary,
-                url=url,
-                source=item.get("source"),
-                time_published=item.get("time_published"),
-                sentiment_score=score,
-                sentiment_label=label,
+        scored_records.append(
+            (
+                rank_score,
+                NewsRecord(
+                    title=title,
+                    summary=summary,
+                    url=url,
+                    source=item.get("source"),
+                    time_published=item.get("time_published"),
+                    sentiment_score=score,
+                    sentiment_label=label,
+                ),
             )
         )
 
+    scored_records.sort(key=lambda row: row[0], reverse=True)
+    strict = [record for score, record in scored_records if score >= _MIN_NEWS_RELEVANCE]
+    if len(strict) < max(4, limit // 2):
+        strict = [record for score, record in scored_records if score >= 0.75]
+    if len(strict) < max(3, limit // 3):
+        strict = [record for _, record in scored_records]
+
+    records = strict
     deduped = _dedupe_news(records)
     shown = deduped[:limit]
 
@@ -720,6 +874,30 @@ def _finance_relevance_score(
         score += _FINANCE_SUBREDDIT_WEIGHTS.get(subreddit.lower(), 0.0)
 
     return score
+
+
+def _is_social_related(
+    *,
+    symbol: str,
+    company_name: Optional[str],
+    title: str,
+    body: str,
+) -> bool:
+    text = f"{title} {body}".lower()
+    symbol_hit = _contains_symbol(text, symbol)
+
+    company_hit = False
+    token_hits = 0
+    if company_name:
+        company_l = company_name.lower().strip()
+        company_hit = bool(company_l and company_l in text)
+        token_hits = sum(1 for tok in _company_tokens(company_name) if tok in text)
+
+    if symbol_hit or company_hit:
+        return True
+
+    finance_hits = sum(1 for term in _FINANCE_TERMS if term in text)
+    return token_hits >= 2 and finance_hits >= 1
 
 
 def _excerpt(text: str, max_chars: int = 160) -> str:
@@ -759,9 +937,11 @@ def fetch_social_reddit(
     settings: Settings,
     limit: int = 12,
     pool_size: int = 80,
+    company_name: Optional[str] = None,
+    lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
 ) -> Tuple[list[SocialRecord], list[str], FeedFetchAudit]:
     warnings: list[str] = []
-    query = f"${symbol} OR {symbol} stock"
+    query = f"\"{symbol}\" OR \"${symbol}\" OR \"{symbol} stock\" OR \"{symbol} earnings\""
     endpoint = "https://www.reddit.com/search.json"
 
     try:
@@ -772,7 +952,7 @@ def fetch_social_reddit(
                 "sort": "new",
                 "limit": str(max(pool_size, limit * 2)),
                 "type": "link",
-                "t": "week",
+                "t": "month",
             },
             headers={"User-Agent": "finbert-earnings-signals/1.0"},
             timeout=settings.request_timeout_seconds,
@@ -787,18 +967,38 @@ def fetch_social_reddit(
             return [], [f"No Reddit social posts available for {symbol}"], FeedFetchAudit(0, 0, 0)
 
         records: list[SocialRecord] = []
+        now = datetime.now(timezone.utc)
+        lookback_floor = now - timedelta(days=max(lookback_days, 1))
         for child in children:
             post = child.get("data", {}) if isinstance(child, dict) else {}
             title = str(post.get("title") or "").strip()
             body = str(post.get("selftext") or "").strip()
             permalink = str(post.get("permalink") or "").strip()
             subreddit = str(post.get("subreddit") or "").strip() or None
+            created_utc = int(post.get("created_utc")) if post.get("created_utc") else None
 
             if not title:
                 continue
 
+            if created_utc:
+                created_dt = datetime.fromtimestamp(created_utc, tz=timezone.utc)
+                if created_dt < lookback_floor:
+                    continue
+            else:
+                created_dt = None
+
+            if not _is_social_related(
+                symbol=symbol,
+                company_name=company_name,
+                title=title,
+                body=body,
+            ):
+                continue
+
             url = f"https://www.reddit.com{permalink}" if permalink else "https://www.reddit.com"
             relevance = _finance_relevance_score(symbol, title, body, subreddit)
+            recency = _recency_weight(created_dt, lookback_days)
+            relevance = round(relevance + (recency * 2.0), 3)
 
             body_for_excerpt = body if body else title
 
@@ -810,15 +1010,17 @@ def fetch_social_reddit(
                     excerpt=_excerpt(body_for_excerpt),
                     url=url,
                     subreddit=subreddit,
-                    created_utc=int(post.get("created_utc")) if post.get("created_utc") else None,
+                    created_utc=created_utc,
                     relevance_score=relevance,
                 )
             )
 
         records.sort(key=lambda r: (r.relevance_score, r.created_utc or 0), reverse=True)
         deduped = _dedupe_social(records)
-        ranked = [record for record in deduped if record.relevance_score >= _MIN_SOCIAL_RELEVANCE]
+        ranked = [record for record in deduped if record.relevance_score >= max(_MIN_SOCIAL_RELEVANCE, 2.2)]
         if len(ranked) < max(3, min(limit, 5)):
+            ranked = [record for record in deduped if record.relevance_score >= _MIN_SOCIAL_RELEVANCE]
+        if len(ranked) < max(2, limit // 3):
             ranked = deduped
 
         shown = ranked[:limit]
@@ -904,16 +1106,23 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
 
     eps_map: Dict[str, Dict[str, Optional[float]]] = {}
     try:
-        earnings = ticker.get_earnings_dates(limit=8)
+        earnings = ticker.get_earnings_dates(limit=16)
         if isinstance(earnings, pd.DataFrame) and not earnings.empty:
-            past = earnings[earnings.index <= pd.Timestamp.utcnow()]
-            for idx, row in past.head(4).iterrows():
+            window = earnings.sort_index(ascending=False).head(12)
+            for idx, row in window.iterrows():
                 ts = pd.Timestamp(idx)
                 label = _quarter_label(int(ts.year), _quarter_from_month(int(ts.month)))
-                eps_map[label] = {
-                    "reported": float(row["Reported EPS"]) if pd.notna(row.get("Reported EPS")) else None,
-                    "estimate": float(row["EPS Estimate"]) if pd.notna(row.get("EPS Estimate")) else None,
-                }
+                reported = float(row["Reported EPS"]) if pd.notna(row.get("Reported EPS")) else None
+                estimate = float(row["EPS Estimate"]) if pd.notna(row.get("EPS Estimate")) else None
+
+                if label not in eps_map:
+                    eps_map[label] = {"reported": reported, "estimate": estimate}
+                    continue
+
+                if eps_map[label].get("reported") is None and reported is not None:
+                    eps_map[label]["reported"] = reported
+                if eps_map[label].get("estimate") is None and estimate is not None:
+                    eps_map[label]["estimate"] = estimate
     except Exception:
         eps_map = {}
 

@@ -9,7 +9,7 @@ import json
 import os
 import re
 import sys
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
@@ -43,6 +43,11 @@ class MotleyTranscriptCandidate:
 def _normalize_ticker(ticker: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9.-]", "", ticker.strip().upper())
     return cleaned
+
+
+def _default_logger(message: str) -> None:
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    print(f"[openai-motley-search {timestamp}] {message}", file=sys.stderr, flush=True)
 
 
 def _quarter_from_month(month: int) -> int:
@@ -458,7 +463,9 @@ def discover_last_quarter_links(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     max_candidates: int = 12,
     target_quarters: int = 4,
+    log_fn: Optional[Callable[[str], None]] = None,
 ) -> dict[str, Any]:
+    log = log_fn or (lambda _: None)
     symbol = _normalize_ticker(ticker)
     if not symbol:
         raise ValueError("Ticker is empty after normalization.")
@@ -471,6 +478,11 @@ def discover_last_quarter_links(
     selected_tool = ""
     tool_errors: list[str] = []
 
+    log(
+        f"{symbol}: starting discovery "
+        f"(model={model}, max_candidates={max_candidates}, target_quarters={target_quarters})"
+    )
+
     for tool_type in ("web_search", "web_search_preview"):
         payload = _build_request_payload(
             model=model,
@@ -479,6 +491,7 @@ def discover_last_quarter_links(
             tool_type=tool_type,
         )
         try:
+            log(f"{symbol}: trying OpenAI tool '{tool_type}'")
             response = requests.post(
                 f"{base_url.rstrip('/')}/responses",
                 headers={
@@ -492,8 +505,10 @@ def discover_last_quarter_links(
                 raise RuntimeError(_extract_error_message(response))
             response_payload = response.json()
             selected_tool = tool_type
+            log(f"{symbol}: OpenAI request succeeded with '{tool_type}'")
             break
         except Exception as exc:
+            log(f"{symbol}: tool '{tool_type}' failed: {exc}")
             tool_errors.append(f"{tool_type}: {exc}")
 
     if response_payload is None:
@@ -503,10 +518,15 @@ def discover_last_quarter_links(
     raw_candidates = structured.get("candidates")
     if not isinstance(raw_candidates, list):
         raw_candidates = []
+    log(f"{symbol}: model returned {len(raw_candidates)} raw candidates")
 
     cleaned_candidates, clean_warnings = _clean_candidates(
         ticker=symbol,
         raw_candidates=[item for item in raw_candidates if isinstance(item, dict)],
+    )
+    log(
+        f"{symbol}: accepted {len(cleaned_candidates)} candidate URLs after Motley filter "
+        f"(warnings={len(clean_warnings)})"
     )
     quarter_map = _pick_best_candidate_by_quarter(cleaned_candidates)
 
@@ -565,6 +585,10 @@ def discover_last_quarter_links(
     ]
     found_links = [item["url"] for item in found_transcript_links]
     all_links = _dedupe_links(found_links + [c.url for c in cleaned_candidates] + search_sources)
+    log(
+        f"{symbol}: quarter results found={len(found)} missing={len(missing)} "
+        f"links={len(all_links)} search_sources={len(search_sources)}"
+    )
 
     return {
         "ticker": symbol,
@@ -617,6 +641,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument("--api-key", default=os.getenv("OPENAI_API_KEY", ""), help="OpenAI API key override")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
+    parser.add_argument("--verbose", action="store_true", help="Print progress logs to stderr")
 
     args = parser.parse_args(argv)
     if not args.api_key:
@@ -628,9 +653,18 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
 
     reports: list[dict[str, Any]] = []
     had_error = False
+    log_fn = _default_logger if args.verbose else None
+
+    if args.verbose:
+        _default_logger(
+            f"Starting run for {len(args.tickers)} ticker(s): {', '.join(args.tickers)} "
+            f"(model={args.model}, timeout={args.timeout}s)"
+        )
 
     for ticker in args.tickers:
         try:
+            if args.verbose:
+                _default_logger(f"{ticker}: dispatching discovery")
             report = discover_last_quarter_links(
                 ticker=ticker,
                 api_key=args.api_key,
@@ -639,10 +673,18 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
                 timeout_seconds=args.timeout,
                 max_candidates=args.max_candidates,
                 target_quarters=args.quarters,
+                log_fn=log_fn,
             )
             reports.append(report)
+            if args.verbose:
+                _default_logger(
+                    f"{ticker}: done (found={len(report.get('found_quarters', []))}, "
+                    f"links={len(report.get('links', []))})"
+                )
         except Exception as exc:
             had_error = True
+            if args.verbose:
+                _default_logger(f"{ticker}: failed ({exc})")
             reports.append(
                 {
                     "ticker": _normalize_ticker(ticker),
@@ -660,6 +702,9 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         print(json.dumps(output, indent=2))
     else:
         print(json.dumps(output))
+
+    if args.verbose:
+        _default_logger(f"Run complete (had_error={had_error})")
 
     return 1 if had_error else 0
 

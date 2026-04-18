@@ -21,27 +21,29 @@ Execution-role UI language (trader/risk/manager workflows) is removed from the p
 - Deterministic Motley Fool transcript discovery and parsing pipeline
 - Optional OpenAI normalization for strict transcript JSON output
 - Deterministic degraded normalization mode when OpenAI is unavailable
-- Market reaction feed ranking and social dedupe improvements
-- Social cards now show short excerpts only, with full-post modal view
-- Sparse-data chart gating:
-  - timeline charts require at least 3 points
-  - sparse states render explicit notes instead of filler charts
+- Market reaction feed ranking improvements with 14-day lookback + recency weighting
+- News/social relevance filtering tightened to ticker/company-linked items
+- Social cards now show short excerpts only, with full-post modal view and top-right open-in-new-tab icon
+- News/social cards use 3-column desktop grids for cleaner scan density
+- ECharts-based visual system for higher-fidelity fundamentals and speaker profile charts
+- Sentiment timeline panel removed from UI by design (per latest UX decision)
 - Canonical API section payloads + legacy compatibility contract
 
 ## Transcript Pipeline (Current)
 
 Primary source is Motley Fool transcript surfaces:
 
-- `https://www.fool.com/earnings/call-transcripts/`
 - `https://www.fool.com/author/20032/` (+ pagination)
+- `https://www.fool.com/search/?q=<ticker>%20earnings%20call%20transcript` (deterministic discovery fallback)
 
 Flow:
 
 1. Discover candidate transcript URLs
-2. Deterministically filter/rank by transcript title and ticker/company match
-3. Fetch raw HTML with requests/httpx
-4. Parse transcript body via start/stop markers
-5. Normalize into strict transcript structure (OpenAI default, deterministic fallback)
+2. Keep only date-slug transcript URLs and deterministically rank by ticker/company match
+3. Attempt a larger fetch window and stop after the first N successfully parsed transcripts
+4. Fetch raw HTML with requests/httpx
+5. Parse transcript body via start/stop markers (with JSON-LD fallback extraction)
+6. Normalize into strict transcript structure (OpenAI default, deterministic fallback)
 
 No transcript fallback source is used in this phase. Missing transcript coverage is surfaced in Data Audit.
 
@@ -107,6 +109,12 @@ This prototype script asks the OpenAI Responses API to web-search Motley Fool tr
 
 ```bash
 python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty
+```
+
+Verbose progress logs:
+
+```bash
+python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty --verbose
 ```
 
 Output shape (per ticker):

@@ -19,10 +19,13 @@ Primary transcript source is now Motley Fool discovery/parsing, not Alpha Vantag
 Deterministic pipeline:
 
 1. Discover transcript candidates from Motley Fool call-transcript surfaces and the paginated Motley Fool Transcribing archive.
-2. Normalize candidate metadata (`title`, `url`, `published_date`, `author`).
-3. Deterministically filter and rank by transcript markers and ticker/company match.
-4. Fetch article HTML using `requests`/`httpx`.
-5. Parse transcript body with start/stop markers.
+2. Add a deterministic Motley Fool search-page fallback scoped to `ticker + earnings call transcript`.
+3. Keep only date-slug transcript URLs under `/earnings/call-transcripts/YYYY/MM/DD/<slug>/`.
+4. Normalize candidate metadata (`title`, `url`, `published_date`, `author`).
+5. Deterministically filter and rank by transcript markers and ticker/company match.
+6. Attempt a wider candidate window and stop after the first N successfully parsed transcript payloads.
+7. Fetch article HTML using `requests`/`httpx`.
+8. Parse transcript body with start/stop markers, then JSON-LD fallback extraction if body is sparse.
 
 Key start markers include:
 
@@ -68,17 +71,21 @@ Current implementation reports Playwright usage via audit field:
 - Added section-specific workspace panes for the 5 canonical sections
 - Added compact run context card
 - Added social modal pattern: cards are short; full post opens in modal
+- Added top-right open-in-new-tab icon action on news/social cards
+- Split market reaction display into distinct News and Social card grids (3-column desktop layout)
 - Added centralized copy dictionary (`ui_copy`) for labels/headings/microcopy
+- Removed sentiment timeline chart from primary UI per product-direction update
+- Upgraded chart rendering to Apache ECharts for fundamentals and speaker profile visuals
 
 ## Sparse-Data Behavior Changes
 
 Charts now must earn space:
 
-- sentiment timeline requires at least 3 points
-- fundamentals trend requires at least 3 points
+- speaker profile requires at least 2 speakers
+- fundamentals trend requires at least 3 quarters
 - sparse conditions render explicit empty-state notes
 
-No one-point filler timeline chart is rendered.
+No one-point timeline filler chart is rendered because timeline charting is intentionally removed from the UI.
 
 ## Data Audit Changes
 
