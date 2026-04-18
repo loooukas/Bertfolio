@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 from typing import Any, Callable, Optional
 from urllib.parse import urlparse, urlunparse
 
@@ -21,6 +22,7 @@ load_dotenv()
 DEFAULT_OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 DEFAULT_OPENAI_SEARCH_MODEL = os.getenv("OPENAI_SEARCH_MODEL", "gpt-5-mini")
 DEFAULT_TIMEOUT_SECONDS = 45
+DEFAULT_OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "3"))
 
 _TITLE_QUARTER_PATTERNS = (
     re.compile(r"\bQ([1-4])\s+(20\d{2})\b", flags=re.IGNORECASE),
@@ -134,6 +136,79 @@ def _extract_text_lines(container: BeautifulSoup) -> list[str]:
             continue
         compact.append(line)
         last = line
+    return compact
+
+
+def _extract_text_lines_relaxed(container: BeautifulSoup) -> list[str]:
+    text = container.get_text("\n", strip=True)
+    if not text:
+        return []
+    lines: list[str] = []
+    for raw in text.splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        if line:
+            lines.append(line)
+
+    compact: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        if line in seen:
+            continue
+        seen.add(line)
+        compact.append(line)
+    return compact
+
+
+def _extract_text_lines_from_script_payloads(soup: BeautifulSoup) -> list[str]:
+    def _collect_string_values(node: Any) -> list[str]:
+        values: list[str] = []
+        if isinstance(node, str):
+            values.append(node)
+        elif isinstance(node, list):
+            for item in node:
+                values.extend(_collect_string_values(item))
+        elif isinstance(node, dict):
+            for value in node.values():
+                values.extend(_collect_string_values(value))
+        return values
+
+    collected: list[str] = []
+    for script in soup.find_all("script"):
+        raw = script.string or script.get_text(" ", strip=False)
+        if not raw:
+            continue
+        if "Full Conference Call Transcript" not in raw and "Call participants" not in raw:
+            continue
+
+        decoded = raw.replace("\\n", "\n").replace("\\u2014", "—").replace("\\u2019", "'")
+
+        parsed_json: Any = None
+        try:
+            parsed_json = json.loads(raw)
+        except Exception:
+            parsed_json = None
+
+        text_blobs: list[str] = []
+        if parsed_json is not None:
+            text_blobs.extend(_collect_string_values(parsed_json))
+        text_blobs.append(decoded)
+
+        for blob in text_blobs:
+            text = BeautifulSoup(blob, "html.parser").get_text("\n", strip=True)
+            if not text:
+                continue
+            for line_raw in text.splitlines():
+                line = re.sub(r"\s+", " ", line_raw).strip()
+                if line:
+                    collected.append(line)
+
+    compact: list[str] = []
+    seen: set[str] = set()
+    for line in collected:
+        if line in seen:
+            continue
+        seen.add(line)
+        compact.append(line)
     return compact
 
 
@@ -301,8 +376,9 @@ def _fetch_transcript_sections(
     response.raise_for_status()
     html = response.text
 
+    raw_soup = BeautifulSoup(html, "html.parser")
     soup = BeautifulSoup(html, "html.parser")
-    for node in soup(["script", "style", "noscript", "svg", "button", "form"]):
+    for node in soup(["script", "style", "noscript", "svg", "button", "form", "header", "footer", "nav"]):
         node.decompose()
 
     container = (
@@ -315,6 +391,15 @@ def _fetch_transcript_sections(
         raise RuntimeError("No content container found for transcript page.")
 
     lines = _extract_text_lines(container)
+    if not lines:
+        log("scrape: strict tag extraction produced 0 lines; trying relaxed extraction")
+        lines = _extract_text_lines_relaxed(container)
+    if not lines and soup.body is not None:
+        log("scrape: relaxed container extraction produced 0 lines; trying page body")
+        lines = _extract_text_lines_relaxed(soup.body)
+    if not lines:
+        log("scrape: body extraction produced 0 lines; trying script payload extraction")
+        lines = _extract_text_lines_from_script_payloads(raw_soup)
     if not lines:
         raise RuntimeError("No text lines found in transcript page.")
 
@@ -780,6 +865,7 @@ def discover_last_quarter_links(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     max_candidates: int = 12,
     target_quarters: int = 4,
+    retry_attempts: int = DEFAULT_OPENAI_RETRY_ATTEMPTS,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> dict[str, Any]:
     log = log_fn or (lambda _: None)
@@ -800,6 +886,7 @@ def discover_last_quarter_links(
         f"(model={model}, max_candidates={max_candidates}, target_quarters={target_quarters})"
     )
 
+    retry_attempts = max(1, retry_attempts)
     for tool_type in ("web_search", "web_search_preview"):
         payload = _build_request_payload(
             model=model,
@@ -807,26 +894,37 @@ def discover_last_quarter_links(
             max_candidates=max_candidates,
             tool_type=tool_type,
         )
-        try:
-            log(f"{symbol}: trying OpenAI tool '{tool_type}'")
-            response = requests.post(
-                f"{base_url.rstrip('/')}/responses",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=timeout_seconds,
-            )
-            if response.status_code >= 400:
-                raise RuntimeError(_extract_error_message(response))
-            response_payload = response.json()
-            selected_tool = tool_type
-            log(f"{symbol}: OpenAI request succeeded with '{tool_type}'")
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, retry_attempts + 1):
+            try:
+                log(f"{symbol}: trying OpenAI tool '{tool_type}' (attempt {attempt}/{retry_attempts})")
+                response = requests.post(
+                    f"{base_url.rstrip('/')}/responses",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=timeout_seconds,
+                )
+                if response.status_code >= 400:
+                    raise RuntimeError(_extract_error_message(response))
+                response_payload = response.json()
+                selected_tool = tool_type
+                log(f"{symbol}: OpenAI request succeeded with '{tool_type}'")
+                break
+            except Exception as exc:
+                last_exc = exc
+                log(f"{symbol}: tool '{tool_type}' failed on attempt {attempt}: {exc}")
+                if attempt < retry_attempts:
+                    backoff_seconds = min(4.0, 1.2 * attempt)
+                    log(f"{symbol}: retrying '{tool_type}' after {backoff_seconds:.1f}s")
+                    time.sleep(backoff_seconds)
+
+        if response_payload is not None:
             break
-        except Exception as exc:
-            log(f"{symbol}: tool '{tool_type}' failed: {exc}")
-            tool_errors.append(f"{tool_type}: {exc}")
+        if last_exc is not None:
+            tool_errors.append(f"{tool_type}: {last_exc}")
 
     if response_payload is None:
         raise RuntimeError("OpenAI web-search request failed. " + " | ".join(tool_errors))
@@ -996,6 +1094,12 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--base-url", default=DEFAULT_OPENAI_BASE_URL, help="OpenAI API base URL")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS, help="Request timeout in seconds")
     parser.add_argument(
+        "--openai-retries",
+        type=int,
+        default=DEFAULT_OPENAI_RETRY_ATTEMPTS,
+        help="Retry attempts per OpenAI web-search tool call",
+    )
+    parser.add_argument(
         "--max-candidates",
         type=int,
         default=12,
@@ -1037,7 +1141,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
     if args.verbose:
         _default_logger(
             f"Starting run for {len(args.tickers)} ticker(s): {', '.join(args.tickers)} "
-            f"(model={args.model}, timeout={args.timeout}s)"
+            f"(model={args.model}, timeout={args.timeout}s, retries={max(args.openai_retries, 1)})"
         )
 
     for ticker in args.tickers:
@@ -1052,6 +1156,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
                 timeout_seconds=args.timeout,
                 max_candidates=args.max_candidates,
                 target_quarters=args.quarters,
+                retry_attempts=max(args.openai_retries, 1),
                 log_fn=log_fn,
             )
             if args.scrape and "error" not in report:

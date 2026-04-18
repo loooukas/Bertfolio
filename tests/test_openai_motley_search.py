@@ -4,6 +4,8 @@ from finbert_site.openai_motley_search import (
     _build_speaker_sections,
     _dedupe_links,
     _extract_participants_from_lines,
+    _extract_text_lines_from_script_payloads,
+    _extract_text_lines_relaxed,
     _extract_transcript_lines,
     _extract_sources,
     _pick_best_candidate_by_quarter,
@@ -208,3 +210,29 @@ def test_scrape_recent_transcripts_for_report_uses_selected_links(monkeypatch) -
     assert payload["scraped_count"] == 2
     assert len(payload["scraped_transcripts"]) == 2
     assert payload["scrape_errors"] == []
+
+
+def test_extract_text_lines_relaxed_supports_div_only_content() -> None:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup("<div><div>Full Conference Call Transcript</div><div>Operator: Hello</div></div>", "html.parser")
+    lines = _extract_text_lines_relaxed(soup)
+    assert "Full Conference Call Transcript" in lines
+    assert "Operator: Hello" in lines
+
+
+def test_extract_text_lines_from_script_payloads_supports_embedded_json() -> None:
+    from bs4 import BeautifulSoup
+
+    html = """
+    <html><body>
+      <script type="application/json">
+        {"content":"Call participants\\nChief Executive Officer — Timothy D. Cook\\nFull Conference Call Transcript\\nTimothy D. Cook: Welcome everyone.\\nRead Next"}
+      </script>
+    </body></html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    lines = _extract_text_lines_from_script_payloads(soup)
+    assert "Call participants" in lines
+    assert "Full Conference Call Transcript" in lines
+    assert "Timothy D. Cook: Welcome everyone." in lines

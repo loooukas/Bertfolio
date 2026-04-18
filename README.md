@@ -123,6 +123,12 @@ Discover links and scrape the most recent 4 transcript pages into per-speaker JS
 python scripts/openai_motley_transcript_cli.py AAPL --pretty --verbose --scrape --scrape-count 4
 ```
 
+If OpenAI web-search calls are flaky, increase retries:
+
+```bash
+python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty --verbose --openai-retries 5
+```
+
 Output shape (per ticker):
 
 - `requested_quarters`, `found_quarters`, `missing_quarters`
