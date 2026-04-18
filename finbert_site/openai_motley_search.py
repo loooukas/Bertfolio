@@ -17,6 +17,8 @@ from urllib.parse import urlparse, urlunparse
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 load_dotenv()
 
@@ -25,6 +27,8 @@ DEFAULT_OPENAI_SEARCH_MODEL = os.getenv("OPENAI_SEARCH_MODEL", "gpt-5-mini")
 DEFAULT_TIMEOUT_SECONDS = 45
 DEFAULT_OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "3"))
 DEFAULT_TRANSCRIPT_INPUT_MAX_CHARS = int(os.getenv("TRANSCRIPT_INPUT_MAX_CHARS", "55000"))
+DEFAULT_OPENAI_CONNECT_TIMEOUT_SECONDS = float(os.getenv("OPENAI_CONNECT_TIMEOUT_SECONDS", "10"))
+DEFAULT_OPENAI_READ_TIMEOUT_CAP_SECONDS = float(os.getenv("OPENAI_READ_TIMEOUT_CAP_SECONDS", "50"))
 
 _TITLE_QUARTER_PATTERNS = (
     re.compile(r"\bQ([1-4])\s+(20\d{2})\b", flags=re.IGNORECASE),
@@ -71,6 +75,26 @@ _REQUEST_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
     )
 }
+
+
+def _build_openai_http_session() -> requests.Session:
+    retry = Retry(
+        total=2,
+        connect=2,
+        read=2,
+        backoff_factor=0.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["POST"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=16, pool_maxsize=16)
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_OPENAI_HTTP_SESSION = _build_openai_http_session()
 
 
 @dataclass(frozen=True)
@@ -589,7 +613,7 @@ def _parse_transcript_from_html(
     )
 
 
-def _render_html_with_playwright(url: str, timeout_seconds: int) -> str:
+def _render_playwright_snapshot(url: str, timeout_seconds: int) -> tuple[str, str]:
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:  # pragma: no cover - environment-dependent
@@ -605,10 +629,32 @@ def _render_html_with_playwright(url: str, timeout_seconds: int) -> str:
             page.goto(url, wait_until="domcontentloaded", timeout=int(timeout_seconds * 1000))
             page.wait_for_timeout(1500)
             html = page.content()
+            visible_text = page.evaluate(
+                """() => {
+                    const selectors = [
+                      '#article-body-transcript',
+                      '[id*="transcript"]',
+                      'article',
+                      'main',
+                    ];
+                    for (const sel of selectors) {
+                      const el = document.querySelector(sel);
+                      if (el && el.innerText && el.innerText.trim().length > 200) {
+                        return el.innerText;
+                      }
+                    }
+                    return (document.body && document.body.innerText) ? document.body.innerText : '';
+                }"""
+            )
             browser.close()
-            return html
+            return html, str(visible_text or "")
     except Exception as exc:
         raise RuntimeError(f"Playwright render failed: {exc}") from exc
+
+
+def _render_html_with_playwright(url: str, timeout_seconds: int) -> str:
+    html, _ = _render_playwright_snapshot(url=url, timeout_seconds=timeout_seconds)
+    return html
 
 
 def _fetch_transcript_sections(
@@ -633,12 +679,17 @@ def _fetch_transcript_sections(
     html = response.text
 
     browser_html: Optional[str] = None
+    browser_visible_text: Optional[str] = None
     if openai_api_key:
         source_input = _build_source_first_llm_input(static_html=html)
         if source_input.get("input_speaker_line_count", 0) < 5:
             try:
-                browser_html = _render_html_with_playwright(url=url, timeout_seconds=timeout_seconds)
-                source_input = _build_source_first_llm_input(static_html=html, browser_html=browser_html)
+                browser_html, browser_visible_text = _render_playwright_snapshot(url=url, timeout_seconds=timeout_seconds)
+                source_input = _build_source_first_llm_input(
+                    static_html=html,
+                    browser_html=browser_html,
+                    browser_visible_text=browser_visible_text,
+                )
                 log(
                     "scrape: source-first LLM input upgraded with browser html "
                     f"(source={source_input.get('input_source')}:{source_input.get('input_source_detail')})"
@@ -673,7 +724,10 @@ def _fetch_transcript_sections(
                     "title": title,
                     "url": url,
                     "published_date": published_date,
-                    "scrape_method": "browser" if source_input.get("input_source") == "browser_html" else "static",
+                    **structured,
+                    "scrape_method": (
+                        "browser" if str(source_input.get("input_source") or "").startswith("browser") else "static"
+                    ),
                     "line_source": f"{source_input.get('input_source')}:{source_input.get('input_source_detail')}",
                     "marker_detection": {
                         "mode": "source_first_llm",
@@ -688,7 +742,6 @@ def _fetch_transcript_sections(
                     "section_parse_method": "openai_source_first",
                     "section_parse_reason": "source_page_text",
                     "llm_input_diagnostics": source_input,
-                    **structured,
                 }
             except Exception as exc:
                 log(f"scrape: source-first OpenAI structuring failed ({exc}); falling back to parser")
@@ -725,7 +778,7 @@ def _fetch_transcript_sections(
     if needs_browser_attempt:
         try:
             if browser_html is None:
-                browser_html = _render_html_with_playwright(url=url, timeout_seconds=timeout_seconds)
+                browser_html, browser_visible_text = _render_playwright_snapshot(url=url, timeout_seconds=timeout_seconds)
             browser_parsed = _parse_transcript_from_html(
                 html=browser_html,
                 scrape_method="browser",
@@ -1081,6 +1134,7 @@ def _build_request_payload(
 ) -> dict[str, Any]:
     return {
         "model": model,
+        "max_output_tokens": 1200,
         "tool_choice": "required",
         "input": _build_search_prompt(ticker=ticker, max_candidates=max_candidates),
         "tools": [_build_tool(tool_type)],
@@ -1109,6 +1163,30 @@ def _extract_error_message(response: requests.Response) -> str:
             return msg
 
     return json.dumps(payload)[:400]
+
+
+def _openai_post_responses(
+    *,
+    base_url: str,
+    api_key: str,
+    payload: dict[str, Any],
+    timeout_seconds: int,
+) -> requests.Response:
+    read_timeout = min(float(timeout_seconds), DEFAULT_OPENAI_READ_TIMEOUT_CAP_SECONDS)
+    if read_timeout <= 0:
+        read_timeout = DEFAULT_OPENAI_READ_TIMEOUT_CAP_SECONDS
+
+    response = _OPENAI_HTTP_SESSION.post(
+        f"{base_url.rstrip('/')}/responses",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Connection": "keep-alive",
+        },
+        json=payload,
+        timeout=(DEFAULT_OPENAI_CONNECT_TIMEOUT_SECONDS, read_timeout),
+    )
+    return response
 
 
 def _extract_structured_output(response_payload: dict[str, Any]) -> dict[str, Any]:
@@ -1281,9 +1359,22 @@ def _score_llm_input_text(text: str) -> float:
             markers += 1
     if "call participants" in lowered:
         markers += 1
-    score = float(_speaker_line_count(text) * 8 + markers * 20 + min(len(text), 60000) / 5000.0)
+    speaker_lines = _speaker_line_count(text)
+    score = float(speaker_lines * 10 + markers * 25 + min(len(text), 50000) / 5000.0)
     if "self.__next_f.push" in lowered:
-        score -= 25.0
+        score -= 40.0
+    if "\\u003c" in lowered:
+        score -= 20.0
+    nav_noise_tokens = (
+        "all services",
+        "best stocks to buy",
+        "stock advisor",
+        "retirement news",
+        "best credit cards",
+        "premium investing services",
+    )
+    nav_hits = sum(1 for token in nav_noise_tokens if token in lowered)
+    score -= float(nav_hits * 8)
     return score
 
 
@@ -1291,6 +1382,7 @@ def _build_source_first_llm_input(
     *,
     static_html: str,
     browser_html: Optional[str] = None,
+    browser_visible_text: Optional[str] = None,
     max_chars: int = DEFAULT_TRANSCRIPT_INPUT_MAX_CHARS,
 ) -> dict[str, Any]:
     candidates: list[dict[str, Any]] = []
@@ -1340,6 +1432,19 @@ def _build_source_first_llm_input(
     _candidate_from_html("static_html", static_html)
     if browser_html:
         _candidate_from_html("browser_html", browser_html)
+    if browser_visible_text and browser_visible_text.strip():
+        visible_text = browser_visible_text.strip()
+        candidates.append(
+            {
+                "source": "browser_visible_text",
+                "best_source": "inner_text",
+                "score": round(_score_llm_input_text(visible_text), 3),
+                "text": visible_text[:max_chars],
+                "speaker_line_count": _speaker_line_count(visible_text),
+                "char_count": min(len(visible_text), max_chars),
+                "line_count": len(visible_text.splitlines()),
+            }
+        )
 
     chosen = max(candidates, key=lambda item: item["score"])
     return {
@@ -1397,6 +1502,7 @@ def _structure_transcript_with_openai(
     log = log_fn or (lambda _: None)
     payload = {
         "model": model,
+        "max_output_tokens": 4500,
         "input": _build_transcript_structure_prompt(
             ticker=ticker,
             quarter=quarter,
@@ -1420,14 +1526,11 @@ def _structure_transcript_with_openai(
     for attempt in range(1, retry_attempts + 1):
         try:
             log(f"scrape: structuring transcript with OpenAI (attempt {attempt}/{retry_attempts})")
-            response = requests.post(
-                f"{base_url.rstrip('/')}/responses",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=timeout_seconds,
+            response = _openai_post_responses(
+                base_url=base_url,
+                api_key=api_key,
+                payload=payload,
+                timeout_seconds=timeout_seconds,
             )
             if response.status_code >= 400:
                 raise RuntimeError(_extract_error_message(response))
@@ -1634,14 +1737,11 @@ def discover_last_quarter_links(
         for attempt in range(1, retry_attempts + 1):
             try:
                 log(f"{symbol}: trying OpenAI tool '{tool_type}' (attempt {attempt}/{retry_attempts})")
-                response = requests.post(
-                    f"{base_url.rstrip('/')}/responses",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                    timeout=timeout_seconds,
+                response = _openai_post_responses(
+                    base_url=base_url,
+                    api_key=api_key,
+                    payload=payload,
+                    timeout_seconds=timeout_seconds,
                 )
                 if response.status_code >= 400:
                     raise RuntimeError(_extract_error_message(response))

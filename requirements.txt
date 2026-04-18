@@ -11,3 +11,4 @@ torch
 yfinance
 pandas
 numpy
+urllib3<2

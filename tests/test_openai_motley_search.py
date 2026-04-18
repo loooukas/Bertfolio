@@ -331,7 +331,10 @@ def test_fetch_transcript_sections_falls_back_to_browser(monkeypatch) -> None:
     """
 
     monkeypatch.setattr("finbert_site.openai_motley_search.requests.get", lambda *args, **kwargs: _Resp())
-    monkeypatch.setattr("finbert_site.openai_motley_search._render_html_with_playwright", lambda **kwargs: browser_html)
+    monkeypatch.setattr(
+        "finbert_site.openai_motley_search._render_playwright_snapshot",
+        lambda **kwargs: (browser_html, "Full Conference Call Transcript\nOperator: Welcome.\nSatya Nadella: Thanks everyone."),
+    )
 
     payload = _fetch_transcript_sections(
         url="https://www.fool.com/earnings/call-transcripts/x/",
@@ -356,7 +359,7 @@ def test_fetch_transcript_sections_browser_unavailable_returns_install_hint(monk
 
     monkeypatch.setattr("finbert_site.openai_motley_search.requests.get", lambda *args, **kwargs: _Resp())
     monkeypatch.setattr(
-        "finbert_site.openai_motley_search._render_html_with_playwright",
+        "finbert_site.openai_motley_search._render_playwright_snapshot",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("Playwright is not installed. Install optional browser fallback with `pip install playwright` and `python -m playwright install chromium`.")),
     )
 
@@ -408,7 +411,7 @@ def test_fetch_transcript_sections_low_quality_uses_openai_section_fallback(monk
     monkeypatch.setattr("finbert_site.openai_motley_search.requests.get", lambda *args, **kwargs: _Resp())
     monkeypatch.setattr("finbert_site.openai_motley_search._parse_transcript_from_html", lambda **kwargs: low_quality_payload)
     monkeypatch.setattr(
-        "finbert_site.openai_motley_search._render_html_with_playwright",
+        "finbert_site.openai_motley_search._render_playwright_snapshot",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("Playwright missing")),
     )
     monkeypatch.setattr(
@@ -451,6 +454,6 @@ def test_fetch_transcript_sections_low_quality_uses_openai_section_fallback(monk
         openai_api_key="test-key",
         openai_model="gpt-5-mini",
     )
-    assert payload["section_parse_method"] == "openai"
+    assert payload["section_parse_method"] == "openai_source_first"
     assert payload["section_count"] == 2
     assert payload["speaker_sections"][0]["speaker"] == "Operator"

@@ -130,6 +130,12 @@ Optional browser-render fallback for difficult pages:
 .venv/bin/python -m playwright install chromium
 ```
 
+If you see `NotOpenSSLWarning` (`LibreSSL` on macOS Python), install compatible urllib3 in the venv:
+
+```bash
+.venv/bin/python -m pip install "urllib3<2"
+```
+
 If OpenAI web-search calls are flaky, increase retries:
 
 ```bash
@@ -146,6 +152,7 @@ Output shape (per ticker):
 - `scrape_method`, `line_source`, `marker_detection`, and `line_count` diagnostics on scraped transcript payloads
 - `section_parse_method` (`regex` or `openai`) and optional `section_parse_reason` when speaker fallback is used
 - Scraping now runs a source-first OpenAI transcript structuring step using page source/text, then falls back to regex parsing only if OpenAI structuring fails.
+- OpenAI HTTP calls use a retrying session and capped read timeout to reduce hangs from intermittent `RemoteDisconnected` transport errors.
 
 ## Notes
 
