@@ -117,12 +117,19 @@ Verbose progress logs:
 python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty --verbose
 ```
 
+Discover links and scrape the most recent 4 transcript pages into per-speaker JSON sections:
+
+```bash
+python scripts/openai_motley_transcript_cli.py AAPL --pretty --verbose --scrape --scrape-count 4
+```
+
 Output shape (per ticker):
 
 - `requested_quarters`, `found_quarters`, `missing_quarters`
 - `quarters` with `status`, `title`, and `url`
 - `found_transcript_links` and `links` for copy-ready URL lists in terminal JSON output
 - `candidate_pool` and `search_sources` for debugging slug discovery quality
+- `selected_recent_links`, `scraped_transcripts`, and `scrape_errors` when `--scrape` is enabled
 
 ## Notes
 

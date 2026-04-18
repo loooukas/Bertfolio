@@ -12,6 +12,7 @@ import sys
 from typing import Any, Callable, Optional
 from urllib.parse import urlparse, urlunparse
 
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import requests
 
@@ -27,6 +28,41 @@ _TITLE_QUARTER_PATTERNS = (
 )
 _URL_QUARTER_PATTERN = re.compile(r"-q([1-4])-(20\d{2})-earnings-call-transcript", flags=re.IGNORECASE)
 _URL_DATE_PATTERN = re.compile(r"/earnings/call-transcripts/(\d{4})/(\d{2})/(\d{2})/")
+_SPEAKER_LINE_PATTERN = re.compile(r"^([A-Za-z][A-Za-z .,'&()\-/]{1,90}):\s*(.+)$")
+
+_TRANSCRIPT_END_MARKERS = {
+    "read next",
+    "stocks mentioned",
+    "premium investing services",
+    "motley fool stock advisor's latest pick",
+    "this article is a transcript",
+    "the motley fool has positions",
+    "the motley fool has a disclosure policy",
+    "terms of use",
+    "about the motley fool",
+}
+
+_TRANSCRIPT_START_MARKERS = {
+    "full conference call transcript",
+    "prepared remarks",
+    "questions and answers",
+    "q&a",
+}
+
+_PARTICIPANT_STOP_MARKERS = {
+    "takeaways",
+    "risks",
+    "summary",
+    "industry glossary",
+    "full conference call transcript",
+}
+
+_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+    )
+}
 
 
 @dataclass(frozen=True)
@@ -48,6 +84,287 @@ def _normalize_ticker(ticker: str) -> str:
 def _default_logger(message: str) -> None:
     timestamp = datetime.now().strftime("%H:%M:%S")
     print(f"[openai-motley-search {timestamp}] {message}", file=sys.stderr, flush=True)
+
+
+def _speaker_line_match(line: str) -> Optional[tuple[str, str]]:
+    match = _SPEAKER_LINE_PATTERN.match(line.strip())
+    if not match:
+        return None
+    speaker = re.sub(r"\s+", " ", match.group(1)).strip()
+    spoken = match.group(2).strip()
+    if len(spoken) < 2:
+        return None
+    return speaker, spoken
+
+
+def _guess_speaker_role(speaker: str) -> Optional[str]:
+    lowered = speaker.lower()
+    if "operator" in lowered:
+        return "operator"
+    if "analyst" in lowered:
+        return "analyst"
+    if any(token in lowered for token in ("ceo", "cfo", "chief", "president", "investor relations")):
+        return "management"
+    return None
+
+
+def _detect_section_type(line: str, current: str) -> str:
+    lowered = line.lower().strip()
+    if "questions and answers" in lowered or lowered in {"q&a", "question-and-answer"}:
+        return "qa"
+    if "prepared remarks" in lowered:
+        return "prepared_remarks"
+    return current
+
+
+def _extract_text_lines(container: BeautifulSoup) -> list[str]:
+    lines: list[str] = []
+    for node in container.find_all(["h1", "h2", "h3", "h4", "p", "li"]):
+        text = node.get_text(" ", strip=True)
+        if not text:
+            continue
+        text = re.sub(r"\s+", " ", text).strip()
+        if text:
+            lines.append(text)
+
+    compact: list[str] = []
+    last = ""
+    for line in lines:
+        if line == last:
+            continue
+        compact.append(line)
+        last = line
+    return compact
+
+
+def _split_name_role(left: str, right: str) -> tuple[str, str]:
+    role_tokens = {"officer", "director", "president", "chief", "ceo", "cfo", "investor relations"}
+    left_l = left.lower()
+    right_l = right.lower()
+
+    left_looks_role = any(token in left_l for token in role_tokens)
+    right_looks_role = any(token in right_l for token in role_tokens)
+
+    if left_looks_role and not right_looks_role:
+        return right, left
+    return left, right
+
+
+def _extract_participants_from_lines(lines: list[str]) -> list[dict[str, str]]:
+    start_idx = None
+    for i, line in enumerate(lines):
+        if line.lower().strip() == "call participants":
+            start_idx = i + 1
+            break
+    if start_idx is None:
+        return []
+
+    out: list[dict[str, str]] = []
+    for line in lines[start_idx : start_idx + 60]:
+        lowered = line.lower().strip()
+        if lowered in _PARTICIPANT_STOP_MARKERS:
+            break
+        if len(line) < 3:
+            continue
+
+        cleaned = line.strip("• ").strip()
+        if not cleaned:
+            continue
+
+        left = ""
+        right = ""
+        if "—" in cleaned:
+            left, right = [part.strip() for part in cleaned.split("—", 1)]
+        elif " - " in cleaned:
+            left, right = [part.strip() for part in cleaned.split(" - ", 1)]
+        elif "," in cleaned:
+            left, right = [part.strip() for part in cleaned.split(",", 1)]
+
+        if left and right:
+            name, role = _split_name_role(left, right)
+        else:
+            name, role = cleaned, ""
+
+        if not name:
+            continue
+        out.append({"name": name, "role": role})
+
+    unique: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in out:
+        key = f"{item.get('name', '').lower()}::{item.get('role', '').lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique[:30]
+
+
+def _extract_transcript_lines(lines: list[str]) -> list[str]:
+    start_idx = None
+    for i, line in enumerate(lines):
+        lowered = line.lower()
+        if any(marker in lowered for marker in _TRANSCRIPT_START_MARKERS):
+            start_idx = i + (1 if "full conference call transcript" in lowered else 0)
+            break
+        if _speaker_line_match(line):
+            start_idx = i
+            break
+
+    if start_idx is None:
+        return []
+
+    stop_idx = len(lines)
+    for i in range(start_idx + 1, len(lines)):
+        lowered = lines[i].lower()
+        if any(marker in lowered for marker in _TRANSCRIPT_END_MARKERS):
+            stop_idx = i
+            break
+
+    return lines[start_idx:stop_idx]
+
+
+def _build_speaker_sections(transcript_lines: list[str]) -> list[dict[str, Any]]:
+    sections: list[dict[str, Any]] = []
+    section_type = "other"
+    order_idx = 0
+
+    current_speaker: Optional[str] = None
+    current_role: Optional[str] = None
+    current_type = section_type
+    current_buffer: list[str] = []
+
+    def flush_current() -> None:
+        nonlocal order_idx, current_speaker, current_role, current_type, current_buffer
+        if not current_speaker or not current_buffer:
+            return
+        text = " ".join(current_buffer).strip()
+        if not text:
+            return
+        sections.append(
+            {
+                "speaker": current_speaker,
+                "speaker_role": current_role,
+                "section_type": current_type,
+                "order_index": order_idx,
+                "text": text,
+            }
+        )
+        order_idx += 1
+        current_speaker = None
+        current_role = None
+        current_buffer = []
+
+    for line in transcript_lines:
+        section_type = _detect_section_type(line, section_type)
+        match = _speaker_line_match(line)
+        if match:
+            flush_current()
+            current_speaker = match[0]
+            current_role = _guess_speaker_role(current_speaker)
+            current_type = section_type
+            current_buffer = [match[1]]
+            continue
+
+        if current_speaker:
+            current_buffer.append(line)
+
+    flush_current()
+
+    if not sections and transcript_lines:
+        sections.append(
+            {
+                "speaker": "unknown",
+                "speaker_role": None,
+                "section_type": "other",
+                "order_index": 0,
+                "text": " ".join(transcript_lines[:300]),
+            }
+        )
+
+    return sections
+
+
+def _fetch_transcript_sections(
+    *,
+    url: str,
+    quarter: str,
+    title: str,
+    published_date: str,
+    timeout_seconds: int,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> dict[str, Any]:
+    log = log_fn or (lambda _: None)
+    log(f"scrape: fetching {url}")
+
+    response = requests.get(url, headers=_REQUEST_HEADERS, timeout=timeout_seconds)
+    response.raise_for_status()
+    html = response.text
+
+    soup = BeautifulSoup(html, "html.parser")
+    for node in soup(["script", "style", "noscript", "svg", "button", "form"]):
+        node.decompose()
+
+    container = (
+        soup.select_one("article")
+        or soup.select_one("main")
+        or soup.select_one("div[class*='article']")
+        or soup.body
+    )
+    if container is None:
+        raise RuntimeError("No content container found for transcript page.")
+
+    lines = _extract_text_lines(container)
+    if not lines:
+        raise RuntimeError("No text lines found in transcript page.")
+
+    participants = _extract_participants_from_lines(lines)
+    transcript_lines = _extract_transcript_lines(lines)
+    if not transcript_lines:
+        raise RuntimeError("Transcript section markers were not found on page.")
+
+    speaker_sections = _build_speaker_sections(transcript_lines)
+    speaker_names = [section["speaker"] for section in speaker_sections if section.get("speaker")]
+    speaker_unique = sorted({name for name in speaker_names if name})
+
+    return {
+        "quarter": quarter,
+        "title": title,
+        "url": url,
+        "published_date": published_date,
+        "participants": participants,
+        "speaker_sections": speaker_sections,
+        "speaker_count": len(speaker_unique),
+        "speakers": speaker_unique,
+        "section_count": len(speaker_sections),
+        "transcript_line_count": len(transcript_lines),
+        "transcript_char_count": len("\n".join(transcript_lines)),
+    }
+
+
+def _select_most_recent_candidates(report: dict[str, Any], count: int) -> list[dict[str, str]]:
+    pool = report.get("candidate_pool")
+    if not isinstance(pool, list):
+        return []
+
+    selected: list[dict[str, str]] = []
+    for row in pool:
+        if not isinstance(row, dict):
+            continue
+        url = str(row.get("url") or "").strip()
+        if not url:
+            continue
+        selected.append(
+            {
+                "quarter": str(row.get("quarter") or ""),
+                "title": str(row.get("title") or ""),
+                "url": url,
+                "published_date": str(row.get("published_date") or ""),
+            }
+        )
+        if len(selected) >= max(count, 1):
+            break
+    return selected
 
 
 def _quarter_from_month(month: int) -> int:
@@ -619,6 +936,57 @@ def discover_last_quarter_links(
     }
 
 
+def scrape_recent_transcripts_for_report(
+    *,
+    report: dict[str, Any],
+    scrape_count: int,
+    timeout_seconds: int,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> dict[str, Any]:
+    log = log_fn or (lambda _: None)
+    ticker = str(report.get("ticker") or "")
+    selected = _select_most_recent_candidates(report, scrape_count)
+    log(f"{ticker}: selected {len(selected)} recent transcript links for scraping")
+
+    scraped: list[dict[str, Any]] = []
+    scrape_errors: list[dict[str, str]] = []
+    for item in selected:
+        url = item["url"]
+        quarter = item["quarter"]
+        title = item["title"]
+        published_date = item["published_date"]
+        try:
+            payload = _fetch_transcript_sections(
+                url=url,
+                quarter=quarter,
+                title=title,
+                published_date=published_date,
+                timeout_seconds=timeout_seconds,
+                log_fn=log_fn,
+            )
+            scraped.append(payload)
+            log(
+                f"{ticker}: scraped {quarter or 'unknown-quarter'} "
+                f"(sections={payload['section_count']}, speakers={payload['speaker_count']})"
+            )
+        except Exception as exc:
+            scrape_errors.append(
+                {
+                    "quarter": quarter,
+                    "url": url,
+                    "error": str(exc),
+                }
+            )
+            log(f"{ticker}: scrape failed for {quarter or 'unknown-quarter'} ({exc})")
+
+    return {
+        "selected_recent_links": selected,
+        "scraped_transcripts": scraped,
+        "scraped_count": len(scraped),
+        "scrape_errors": scrape_errors,
+    }
+
+
 def run_cli(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="OpenAI web-search test script for Motley Fool transcript link discovery."
@@ -642,6 +1010,17 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--api-key", default=os.getenv("OPENAI_API_KEY", ""), help="OpenAI API key override")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
     parser.add_argument("--verbose", action="store_true", help="Print progress logs to stderr")
+    parser.add_argument(
+        "--scrape",
+        action="store_true",
+        help="After link discovery, fetch and parse most recent transcript pages into speaker sections",
+    )
+    parser.add_argument(
+        "--scrape-count",
+        type=int,
+        default=4,
+        help="How many most-recent transcript links to scrape per ticker when --scrape is set",
+    )
 
     args = parser.parse_args(argv)
     if not args.api_key:
@@ -675,6 +1054,16 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
                 target_quarters=args.quarters,
                 log_fn=log_fn,
             )
+            if args.scrape and "error" not in report:
+                if args.verbose:
+                    _default_logger(f"{ticker}: scraping most recent {max(args.scrape_count, 1)} transcript links")
+                scrape_payload = scrape_recent_transcripts_for_report(
+                    report=report,
+                    scrape_count=max(args.scrape_count, 1),
+                    timeout_seconds=args.timeout,
+                    log_fn=log_fn,
+                )
+                report = {**report, **scrape_payload}
             reports.append(report)
             if args.verbose:
                 _default_logger(
