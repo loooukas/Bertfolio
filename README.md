@@ -139,12 +139,32 @@ echo "$JSON"
 echo "$LOG"
 ```
 
+Also generate a simple HTML viewer from the same run:
+
+```bash
+mkdir -p output
+TS=$(date +"%Y%m%d_%H%M%S")
+JSON="output/openai_motley_${TS}.json"
+LOG="output/openai_motley_${TS}.log"
+HTML="output/openai_motley_${TS}.html"
+.venv/bin/python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty --verbose --scrape --scrape-count 4 --cache-mode refresh --html-report "$HTML" > "$JSON" 2> "$LOG"
+echo "$JSON"
+echo "$LOG"
+echo "$HTML"
+```
+
 Cache controls for scraped transcript JSON:
 
 - `--cache-mode refresh` (default): always fetch + re-run OpenAI structuring, then overwrite cache
 - `--cache-mode use`: use cached transcript JSON when present, fetch only on cache miss
 - `--cache-mode off`: disable cache read/write
 - `--cache-dir output/openai_motley_cache`: override cache location
+
+OpenAI I/O inspection options:
+
+- `--debug-openai-io`: print request/response previews for transcript structuring to stderr (best with `--verbose`)
+- `--debug-openai-io-max-chars 4000`: increase preview length in terminal logs
+- `--debug-openai-dir output/openai_debug`: write full page input, request payloads, and raw/structured OpenAI responses to files
 
 Optional browser-render fallback for difficult pages:
 

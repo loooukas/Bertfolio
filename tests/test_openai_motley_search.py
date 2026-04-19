@@ -3,6 +3,7 @@ import pytest
 from finbert_site.openai_motley_search import (
     MotleyTranscriptCandidate,
     TranscriptExtractionError,
+    _build_html_report,
     _build_request_payload,
     _build_speaker_sections,
     _dedupe_links,
@@ -12,6 +13,7 @@ from finbert_site.openai_motley_search import (
     _extract_transcript_lines,
     _extract_sources,
     _fetch_transcript_sections,
+    _is_low_quality_structured_sections,
     _parse_transcript_from_html,
     _pick_best_candidate_by_quarter,
     _quarter_window,
@@ -641,3 +643,72 @@ def test_fetch_transcript_sections_low_quality_parser_becomes_error(monkeypatch)
 
     assert "Unable to produce high-quality speaker sections from page text." in str(exc.value)
     assert exc.value.diagnostics.get("low_quality_reason") in {"script_wrapped_text", "single_unknown_section"}
+
+
+def test_is_low_quality_structured_sections_rejects_implausible_speakers() -> None:
+    sections = [
+        {
+            "speaker": "Greetings",
+            "speaker_role": "operator",
+            "section_type": "prepared_remarks",
+            "order_index": 0,
+            "text": "Welcome to the call.",
+        },
+        {
+            "speaker": "Good Afternoon",
+            "speaker_role": None,
+            "section_type": "prepared_remarks",
+            "order_index": 1,
+            "text": "Thank you for joining.",
+        },
+        {
+            "speaker": "Satya Nadella",
+            "speaker_role": "management",
+            "section_type": "prepared_remarks",
+            "order_index": 2,
+            "text": "We had a strong quarter.",
+        },
+    ]
+    low, reason = _is_low_quality_structured_sections(sections)
+    assert low is True
+    assert reason == "implausible_speaker_labels"
+
+
+def test_build_html_report_contains_ticker_and_section_text() -> None:
+    output = {
+        "generated_at": "2026-04-19T12:00:00Z",
+        "model": "gpt-5-mini",
+        "results": [
+            {
+                "ticker": "MSFT",
+                "found_quarters": ["2025-Q4"],
+                "missing_quarters": [],
+                "scraped_count": 1,
+                "scraped_transcripts": [
+                    {
+                        "quarter": "2025-Q4",
+                        "title": "Microsoft (MSFT) Q4 2025 Earnings Call Transcript",
+                        "url": "https://www.fool.com/earnings/call-transcripts/2025/08/05/microsoft-msft-q4-2025-earnings-call-transcript/",
+                        "published_date": "2025-08-05",
+                        "section_parse_method": "openai_page_text",
+                        "scrape_method": "browser",
+                        "participants": [{"name": "Satya Nadella", "role": "Chief Executive Officer"}],
+                        "speaker_sections": [
+                            {
+                                "speaker": "Operator",
+                                "speaker_role": "operator",
+                                "section_type": "qa",
+                                "order_index": 0,
+                                "text": "Welcome everyone.",
+                            }
+                        ],
+                    }
+                ],
+                "scrape_errors": [],
+            }
+        ],
+    }
+    html = _build_html_report(output)
+    assert "MSFT" in html
+    assert "Welcome everyone." in html
+    assert "OpenAI Motley Transcript Report" in html

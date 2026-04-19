@@ -42,6 +42,7 @@ _TITLE_QUARTER_PATTERNS = (
 _URL_QUARTER_PATTERN = re.compile(r"-q([1-4])-(20\d{2})-earnings-call-transcript", flags=re.IGNORECASE)
 _URL_DATE_PATTERN = re.compile(r"/earnings/call-transcripts/(\d{4})/(\d{2})/(\d{2})/")
 _SPEAKER_LINE_PATTERN = re.compile(r"^([A-Za-z][A-Za-z .,'&()\-/]{1,90}):\s*(.+)$")
+_PLAUSIBLE_PERSON_NAME_PATTERN = re.compile(r"^[A-Z][A-Za-z.'\-]+(?: [A-Z][A-Za-z.'\-]+){0,5}$")
 
 _TRANSCRIPT_END_MARKERS = {
     "read next",
@@ -65,6 +66,24 @@ _TRANSCRIPT_START_MARKERS = {
 }
 
 _SECTION_TYPE_VALUES = {"prepared_remarks", "qa", "other"}
+_GENERIC_SPEAKER_LABELS = {
+    "operator",
+    "analyst",
+    "management",
+    "unknown",
+    "unidentified speaker",
+    "unidentified analyst",
+    "participant",
+}
+_BAD_SPEAKER_LABELS = {
+    "greetings",
+    "hello",
+    "hi",
+    "thanks",
+    "thank you",
+    "good afternoon",
+    "good morning",
+}
 
 _PARTICIPANT_STOP_MARKERS = {
     "takeaways",
@@ -148,6 +167,55 @@ def _resolve_scrape_cache_path(cache_dir: str, ticker: str, quarter: str, url: s
     key = _build_scrape_cache_key(symbol, quarter, url).split("::")[-1]
     filename = f"{symbol}_{quarter_safe}_{date_safe}_{slug}_{key}.json"
     return root / symbol / filename
+
+
+def _build_debug_artifact_root(debug_dir: str, ticker: str, quarter: str, url: str, published_date: str) -> Path:
+    root = Path(debug_dir)
+    symbol = _normalize_ticker(ticker) or "UNKNOWN"
+    quarter_safe = _safe_filename_component(quarter or "unknown-quarter", fallback="unknown-quarter")
+    date_safe = _safe_filename_component(published_date or "unknown-date", fallback="unknown-date")
+    slug = _safe_filename_component(urlparse(url).path.rstrip("/").split("/")[-1], fallback="transcript")
+    key = _build_scrape_cache_key(symbol, quarter, url).split("::")[-1]
+    return root / symbol / f"{symbol}_{quarter_safe}_{date_safe}_{slug}_{key}"
+
+
+def _write_debug_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _write_debug_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _looks_like_plausible_speaker_label(label: str) -> bool:
+    cleaned = re.sub(r"\s+", " ", str(label or "").strip())
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if lowered in _GENERIC_SPEAKER_LABELS:
+        return True
+    if lowered in _BAD_SPEAKER_LABELS:
+        return False
+    if any(ch.isdigit() for ch in cleaned):
+        return False
+    if len(cleaned) > 80:
+        return False
+    if ":" in cleaned:
+        return False
+    if _PLAUSIBLE_PERSON_NAME_PATTERN.fullmatch(cleaned):
+        return True
+    return False
+
+
+def _sanitize_section_role(value: str) -> Optional[str]:
+    role = str(value or "").strip().lower()
+    if not role:
+        return None
+    if role in {"operator", "analyst", "management"}:
+        return role
+    return None
 
 
 def _default_logger(message: str) -> None:
@@ -699,6 +767,9 @@ def _fetch_transcript_sections(
     openai_model: str = DEFAULT_OPENAI_SEARCH_MODEL,
     openai_base_url: str = DEFAULT_OPENAI_BASE_URL,
     openai_retry_attempts: int = DEFAULT_OPENAI_RETRY_ATTEMPTS,
+    debug_openai_io: bool = False,
+    debug_openai_io_max_chars: int = 2000,
+    debug_openai_dir: str = "",
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> dict[str, Any]:
     log = log_fn or (lambda _: None)
@@ -726,6 +797,23 @@ def _fetch_transcript_sections(
     transcript_text = str(source_input.get("text") or "").strip()
     source_label = f"{source_input.get('input_source')}:{source_input.get('input_source_detail')}"
     scrape_method = "browser" if str(source_input.get("input_source") or "").startswith("browser") else "static"
+    debug_artifact_root: Optional[Path] = None
+    if debug_openai_dir:
+        debug_artifact_root = _build_debug_artifact_root(
+            debug_dir=debug_openai_dir,
+            ticker=ticker,
+            quarter=quarter,
+            url=url,
+            published_date=published_date,
+        )
+        try:
+            _write_debug_text(debug_artifact_root / "page_source_selected_input.txt", transcript_text)
+            _write_debug_json(debug_artifact_root / "page_source_input_diagnostics.json", source_input)
+            if browser_error:
+                _write_debug_text(debug_artifact_root / "browser_error.txt", browser_error)
+            log(f"scrape: wrote debug page-input artifacts to {debug_artifact_root}")
+        except Exception as exc:
+            log(f"scrape: failed writing debug page-input artifacts ({exc})")
 
     if not transcript_text:
         message = "No transcript-like page text was extracted for OpenAI structuring."
@@ -765,6 +853,9 @@ def _fetch_transcript_sections(
                 published_date=published_date,
                 transcript_text=transcript_text,
                 log_fn=log_fn,
+                debug_io=debug_openai_io,
+                debug_io_max_chars=debug_openai_io_max_chars,
+                debug_artifact_root=debug_artifact_root,
             )
             return {
                 "quarter": quarter,
@@ -1309,7 +1400,7 @@ def _normalize_speaker_sections(raw_sections: Any) -> list[dict[str, Any]]:
         if not text:
             continue
         speaker_role_raw = item.get("speaker_role")
-        speaker_role = str(speaker_role_raw).strip() if isinstance(speaker_role_raw, str) else None
+        speaker_role = _sanitize_section_role(speaker_role_raw) if isinstance(speaker_role_raw, str) else None
         section_type = str(item.get("section_type") or "other").strip().lower()
         if section_type not in _SECTION_TYPE_VALUES:
             section_type = "other"
@@ -1551,11 +1642,20 @@ def _build_source_first_llm_input(
 def _is_low_quality_structured_sections(sections: list[dict[str, Any]]) -> tuple[bool, str]:
     if not sections:
         return True, "no_sections"
+    if len(sections) < 2:
+        return True, "too_few_sections"
     unknown_count = sum(1 for section in sections if str(section.get("speaker") or "").strip().lower() in {"", "unknown"})
+    implausible_count = 0
+    for section in sections:
+        speaker = str(section.get("speaker") or "").strip()
+        if not _looks_like_plausible_speaker_label(speaker):
+            implausible_count += 1
     if unknown_count == len(sections):
         return True, "all_unknown_speakers"
     if unknown_count / max(len(sections), 1) > 0.9:
         return True, "mostly_unknown_speakers"
+    if implausible_count / max(len(sections), 1) > 0.25:
+        return True, "implausible_speaker_labels"
     return False, ""
 
 
@@ -1635,6 +1735,9 @@ def _structure_transcript_with_openai(
     published_date: str,
     transcript_text: str,
     log_fn: Optional[Callable[[str], None]] = None,
+    debug_io: bool = False,
+    debug_io_max_chars: int = 2000,
+    debug_artifact_root: Optional[Path] = None,
 ) -> dict[str, Any]:
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for transcript structuring.")
@@ -1677,9 +1780,25 @@ def _structure_transcript_with_openai(
                 }
             },
         }
+        if debug_io:
+            preview = segment_text[: max(200, debug_io_max_chars)]
+            log(
+                f"scrape: OpenAI input preview (segment {segment_index + 1}/{len(segments)}): "
+                f"{preview}"
+            )
+        if debug_artifact_root is not None:
+            _write_debug_text(
+                debug_artifact_root / f"segment_{segment_index + 1:02d}_input.txt",
+                segment_text,
+            )
+            _write_debug_json(
+                debug_artifact_root / f"segment_{segment_index + 1:02d}_request_payload.json",
+                payload,
+            )
 
         last_exc: Optional[Exception] = None
         segment_structured: Optional[dict[str, Any]] = None
+        segment_response_json: Optional[dict[str, Any]] = None
         for attempt in range(1, retry_attempts + 1):
             try:
                 log(
@@ -1694,7 +1813,24 @@ def _structure_transcript_with_openai(
                 )
                 if response.status_code >= 400:
                     raise RuntimeError(_extract_error_message(response))
-                segment_structured = _extract_structured_output(response.json())
+                segment_response_json = response.json()
+                if debug_io:
+                    raw_preview = json.dumps(segment_response_json, ensure_ascii=False)[: max(200, debug_io_max_chars)]
+                    log(
+                        f"scrape: OpenAI raw response preview (segment {segment_index + 1}/{len(segments)}): "
+                        f"{raw_preview}"
+                    )
+                if debug_artifact_root is not None:
+                    _write_debug_json(
+                        debug_artifact_root / f"segment_{segment_index + 1:02d}_response_raw.json",
+                        segment_response_json,
+                    )
+                segment_structured = _extract_structured_output(segment_response_json)
+                if debug_artifact_root is not None:
+                    _write_debug_json(
+                        debug_artifact_root / f"segment_{segment_index + 1:02d}_response_structured.json",
+                        segment_structured,
+                    )
                 break
             except Exception as exc:
                 last_exc = exc
@@ -2086,6 +2222,9 @@ def scrape_recent_transcripts_for_report(
     retry_attempts: int = DEFAULT_OPENAI_RETRY_ATTEMPTS,
     cache_mode: str = DEFAULT_SCRAPE_CACHE_MODE,
     cache_dir: str = DEFAULT_SCRAPE_CACHE_DIR,
+    debug_openai_io: bool = False,
+    debug_openai_io_max_chars: int = 2000,
+    debug_openai_dir: str = "",
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> dict[str, Any]:
     log = log_fn or (lambda _: None)
@@ -2143,6 +2282,9 @@ def scrape_recent_transcripts_for_report(
                 openai_model=model,
                 openai_base_url=base_url,
                 openai_retry_attempts=retry_attempts,
+                debug_openai_io=debug_openai_io,
+                debug_openai_io_max_chars=debug_openai_io_max_chars,
+                debug_openai_dir=debug_openai_dir,
                 log_fn=log_fn,
             )
             payload = {
@@ -2181,6 +2323,124 @@ def scrape_recent_transcripts_for_report(
         "scraped_count": len(scraped),
         "scrape_errors": scrape_errors,
     }
+
+
+def _build_html_report(output: dict[str, Any]) -> str:
+    def esc(value: Any) -> str:
+        return html_lib.escape(str(value if value is not None else ""))
+
+    generated_at = esc(output.get("generated_at", ""))
+    model = esc(output.get("model", ""))
+    results = output.get("results")
+    if not isinstance(results, list):
+        results = []
+
+    chunks: list[str] = []
+    chunks.append(
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>OpenAI Motley Transcript Report</title>"
+        "<style>"
+        "body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;"
+        "margin:20px;background:#f6f7f9;color:#111827}"
+        ".meta{margin-bottom:16px;padding:12px;border:1px solid #d1d5db;background:#fff;border-radius:8px}"
+        ".ticker{margin-bottom:18px;padding:14px;border:1px solid #d1d5db;background:#fff;border-radius:10px}"
+        ".ticker h2{margin:0 0 10px 0;font-size:20px}"
+        ".summary{font-size:13px;color:#374151;margin-bottom:10px}"
+        ".error{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;padding:10px;border-radius:6px}"
+        ".transcript{margin:12px 0;padding:10px;border:1px solid #e5e7eb;border-radius:8px;background:#fafafa}"
+        ".transcript h3{margin:0 0 8px 0;font-size:16px}"
+        ".participants{font-size:13px;margin:6px 0 10px 0;color:#1f2937}"
+        ".section{border-top:1px solid #e5e7eb;padding-top:8px;margin-top:8px}"
+        ".section:first-child{border-top:none;padding-top:0;margin-top:0}"
+        ".section .head{font-size:12px;color:#374151;margin-bottom:4px}"
+        ".section .text{white-space:pre-wrap;font-size:13px;line-height:1.45}"
+        ".mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}"
+        "</style></head><body>"
+    )
+    chunks.append(f"<div class='meta'><div><strong>Generated:</strong> {generated_at}</div><div><strong>Model:</strong> {model}</div></div>")
+
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        ticker = esc(result.get("ticker", "UNKNOWN"))
+        chunks.append(f"<section class='ticker'><h2>{ticker}</h2>")
+        if result.get("error"):
+            chunks.append(f"<div class='error'>{esc(result.get('error'))}</div></section>")
+            continue
+        found = len(result.get("found_quarters") or [])
+        missing = len(result.get("missing_quarters") or [])
+        scraped_count = int(result.get("scraped_count") or 0)
+        chunks.append(
+            f"<div class='summary'>found_quarters={found} | missing_quarters={missing} | scraped_count={scraped_count}</div>"
+        )
+        scraped = result.get("scraped_transcripts")
+        if not isinstance(scraped, list) or not scraped:
+            chunks.append("<div class='summary'>No scraped transcripts in this result.</div>")
+        else:
+            for transcript in scraped:
+                if not isinstance(transcript, dict):
+                    continue
+                t_title = esc(transcript.get("title", ""))
+                t_quarter = esc(transcript.get("quarter", ""))
+                t_date = esc(transcript.get("published_date", ""))
+                t_url = esc(transcript.get("url", ""))
+                parse_method = esc(transcript.get("section_parse_method", ""))
+                scrape_method = esc(transcript.get("scrape_method", ""))
+                chunks.append(
+                    "<article class='transcript'>"
+                    f"<h3>{t_quarter} - {t_title}</h3>"
+                    f"<div class='summary'>date={t_date} | parse={parse_method} | scrape={scrape_method}</div>"
+                    f"<div class='mono'>{t_url}</div>"
+                )
+                participants = transcript.get("participants")
+                if isinstance(participants, list) and participants:
+                    pbits: list[str] = []
+                    for p in participants:
+                        if not isinstance(p, dict):
+                            continue
+                        pname = esc(p.get("name", ""))
+                        prole = esc(p.get("role", ""))
+                        if prole:
+                            pbits.append(f"{pname} ({prole})")
+                        else:
+                            pbits.append(pname)
+                    if pbits:
+                        chunks.append(f"<div class='participants'><strong>Participants:</strong> {'; '.join(pbits)}</div>")
+                sections = transcript.get("speaker_sections")
+                if isinstance(sections, list):
+                    for section in sections:
+                        if not isinstance(section, dict):
+                            continue
+                        speaker = esc(section.get("speaker", "unknown"))
+                        role = esc(section.get("speaker_role", ""))
+                        section_type = esc(section.get("section_type", "other"))
+                        order_index = esc(section.get("order_index", ""))
+                        text = esc(section.get("text", ""))
+                        chunks.append(
+                            "<div class='section'>"
+                            f"<div class='head'><strong>{speaker}</strong> "
+                            f"{'(' + role + ')' if role else ''} | type={section_type} | order={order_index}</div>"
+                            f"<div class='text'>{text}</div>"
+                            "</div>"
+                        )
+                chunks.append("</article>")
+        errors = result.get("scrape_errors")
+        if isinstance(errors, list) and errors:
+            chunks.append("<div class='summary'><strong>Scrape Errors</strong></div>")
+            for err in errors:
+                if not isinstance(err, dict):
+                    continue
+                chunks.append(
+                    "<div class='error'>"
+                    f"{esc(err.get('quarter', ''))}: {esc(err.get('error', ''))}<br>"
+                    f"<span class='mono'>{esc(err.get('url', ''))}</span>"
+                    "</div>"
+                )
+        chunks.append("</section>")
+
+    chunks.append("</body></html>")
+    return "".join(chunks)
 
 
 def run_cli(argv: Optional[list[str]] = None) -> int:
@@ -2238,6 +2498,27 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         default=DEFAULT_SCRAPE_CACHE_DIR,
         help="Directory for transcript scrape cache files.",
     )
+    parser.add_argument(
+        "--debug-openai-io",
+        action="store_true",
+        help="Print OpenAI transcript-structuring input/output previews in verbose logs.",
+    )
+    parser.add_argument(
+        "--debug-openai-io-max-chars",
+        type=int,
+        default=2000,
+        help="Max characters for terminal previews when --debug-openai-io is enabled.",
+    )
+    parser.add_argument(
+        "--debug-openai-dir",
+        default="",
+        help="Optional directory to write full OpenAI transcript structuring artifacts (input/response JSON).",
+    )
+    parser.add_argument(
+        "--html-report",
+        default="",
+        help="Optional output path for a simple HTML view of the final JSON results.",
+    )
 
     args = parser.parse_args(argv)
     if not args.api_key:
@@ -2286,6 +2567,9 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
                     retry_attempts=max(args.openai_retries, 1),
                     cache_mode=args.cache_mode,
                     cache_dir=args.cache_dir,
+                    debug_openai_io=args.debug_openai_io,
+                    debug_openai_io_max_chars=max(args.debug_openai_io_max_chars, 200),
+                    debug_openai_dir=args.debug_openai_dir,
                     log_fn=log_fn,
                 )
                 report = {**report, **scrape_payload}
@@ -2316,6 +2600,13 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         print(json.dumps(output, indent=2))
     else:
         print(json.dumps(output))
+
+    if args.html_report:
+        html_path = Path(args.html_report)
+        html_path.parent.mkdir(parents=True, exist_ok=True)
+        html_path.write_text(_build_html_report(output), encoding="utf-8")
+        if args.verbose:
+            _default_logger(f"HTML report written: {html_path}")
 
     if args.verbose:
         _default_logger(f"Run complete (had_error={had_error})")
