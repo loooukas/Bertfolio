@@ -65,6 +65,34 @@ _TRANSCRIPT_START_MARKERS = {
     "q&a",
 }
 
+_QA_TRANSITION_MARKERS = (
+    "questions and answers",
+    "q&a",
+    "we'll now move over to q and a",
+    "we'll now move to q and a",
+    "let's open the call to questions",
+    "let's open the line for questions",
+    "open the call to questions",
+    "open the line for questions",
+    "may we have the first question",
+    "we ask that you limit yourself",
+    "first question",
+    "next question",
+    "our next question",
+    "question comes from",
+)
+_ANALYST_QUESTION_HINTS = (
+    "i have two",
+    "i have one",
+    "i have a question",
+    "my question",
+    "thanks for taking",
+    "thank you for taking",
+    "can you comment",
+    "could you comment",
+    "help us understand",
+)
+
 _SECTION_TYPE_VALUES = {"prepared_remarks", "qa", "other"}
 _GENERIC_SPEAKER_LABELS = {
     "operator",
@@ -640,6 +668,187 @@ def _build_speaker_sections(transcript_lines: list[str]) -> list[dict[str, Any]]
     return sections
 
 
+def _looks_like_operator_question_transition(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _QA_TRANSITION_MARKERS)
+
+
+def _looks_like_analyst_question(text: str) -> bool:
+    lowered = text.lower()
+    if "?" in text:
+        return True
+    return any(marker in lowered for marker in _ANALYST_QUESTION_HINTS)
+
+
+def _extract_management_participant_names(participants: list[dict[str, str]]) -> set[str]:
+    management_role_tokens = (
+        "chief",
+        "ceo",
+        "cfo",
+        "president",
+        "investor relations",
+        "director",
+        "vice president",
+        "vp",
+    )
+    management_names: set[str] = set()
+    for item in participants:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        role = str(item.get("role") or "").strip().lower()
+        if not name or not role:
+            continue
+        if any(token in role for token in management_role_tokens):
+            management_names.add(name.lower())
+    return management_names
+
+
+def _infer_qa_start_index(sections: list[dict[str, Any]]) -> Optional[int]:
+    for idx, section in enumerate(sections):
+        speaker = str(section.get("speaker") or "").strip().lower()
+        role = _sanitize_section_role(section.get("speaker_role"))
+        text = str(section.get("text") or "").strip()
+        lowered = text.lower()
+
+        if "questions and answers" in lowered or re.search(r"\bq\s*&\s*a\b", lowered):
+            return idx
+        if (speaker == "operator" or role == "operator") and _looks_like_operator_question_transition(text):
+            return idx
+
+    for idx, section in enumerate(sections):
+        speaker = str(section.get("speaker") or "").strip().lower()
+        if not speaker or speaker in {"unknown", "operator"}:
+            continue
+        text = str(section.get("text") or "").strip()
+        if idx >= 2 and _looks_like_analyst_question(text):
+            return max(0, idx - 1)
+
+    return None
+
+
+def _enrich_speaker_sections(
+    sections: list[dict[str, Any]],
+    *,
+    participants: Optional[list[dict[str, str]]] = None,
+) -> list[dict[str, Any]]:
+    if not sections:
+        return sections
+
+    enriched = [dict(section) for section in sections]
+    participants = participants or []
+    management_names = _extract_management_participant_names(participants)
+    qa_start = _infer_qa_start_index(enriched)
+
+    # Speakers before the Q&A transition are almost always management on earnings calls.
+    for idx, section in enumerate(enriched):
+        if qa_start is not None and idx >= qa_start:
+            break
+        speaker = str(section.get("speaker") or "").strip()
+        if not speaker:
+            continue
+        speaker_lower = speaker.lower()
+        if speaker_lower in {"unknown", "operator"}:
+            continue
+        management_names.add(speaker_lower)
+
+    if not management_names:
+        for section in enriched:
+            speaker = str(section.get("speaker") or "").strip()
+            if not speaker:
+                continue
+            speaker_lower = speaker.lower()
+            if speaker_lower in {"unknown", "operator"}:
+                continue
+            management_names.add(speaker_lower)
+            if len(management_names) >= 2:
+                break
+
+    for idx, section in enumerate(enriched):
+        speaker = str(section.get("speaker") or "").strip()
+        speaker_lower = speaker.lower()
+        text = str(section.get("text") or "").strip()
+
+        role = _sanitize_section_role(section.get("speaker_role"))
+        if role is None:
+            inferred_role: Optional[str] = None
+            if "operator" in speaker_lower:
+                inferred_role = "operator"
+            elif speaker_lower in management_names:
+                inferred_role = "management"
+            elif qa_start is not None and idx >= qa_start:
+                if _looks_like_analyst_question(text):
+                    inferred_role = "analyst"
+                elif idx > 0:
+                    prev_speaker = str(enriched[idx - 1].get("speaker") or "").strip().lower()
+                    if prev_speaker == "operator":
+                        inferred_role = "analyst"
+            elif speaker_lower and speaker_lower not in {"unknown"}:
+                inferred_role = "management"
+            role = _sanitize_section_role(inferred_role)
+        section["speaker_role"] = role
+
+        section_type = str(section.get("section_type") or "other").strip().lower()
+        if section_type not in _SECTION_TYPE_VALUES:
+            section_type = "other"
+        if section_type == "other":
+            if qa_start is None:
+                section_type = "prepared_remarks"
+            else:
+                section_type = "qa" if idx >= qa_start else "prepared_remarks"
+        section["section_type"] = section_type
+
+    return enriched
+
+
+def _presentable_participant_role(role: Optional[str]) -> str:
+    if role == "operator":
+        return "Operator"
+    if role == "analyst":
+        return "Analyst"
+    if role == "management":
+        return "Management"
+    return ""
+
+
+def _merge_participants_with_speaker_sections(
+    participants: list[dict[str, str]],
+    sections: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    by_name: dict[str, int] = {}
+
+    def upsert(name: str, role: str) -> None:
+        clean_name = str(name or "").strip()
+        clean_role = str(role or "").strip()
+        if not clean_name:
+            return
+        key = clean_name.lower()
+        if key in by_name:
+            idx = by_name[key]
+            if not merged[idx].get("role") and clean_role:
+                merged[idx]["role"] = clean_role
+            return
+        by_name[key] = len(merged)
+        merged.append({"name": clean_name, "role": clean_role})
+
+    for item in participants:
+        if not isinstance(item, dict):
+            continue
+        upsert(str(item.get("name") or ""), str(item.get("role") or ""))
+
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        speaker = str(section.get("speaker") or "").strip()
+        if not speaker or speaker.lower() == "unknown":
+            continue
+        role = _presentable_participant_role(_sanitize_section_role(section.get("speaker_role")))
+        upsert(speaker, role)
+
+    return merged
+
+
 def _extract_line_sources(
     *,
     raw_soup: BeautifulSoup,
@@ -704,6 +913,8 @@ def _parse_transcript_from_html(
             if transcript_lines:
                 participants = _extract_participants_from_lines(lines)
                 speaker_sections = _build_speaker_sections(transcript_lines)
+                speaker_sections = _enrich_speaker_sections(speaker_sections, participants=participants)
+                participants = _merge_participants_with_speaker_sections(participants, speaker_sections)
                 speaker_names = [section["speaker"] for section in speaker_sections if section.get("speaker")]
                 speaker_unique = sorted({name for name in speaker_names if name})
                 return {
@@ -1316,6 +1527,8 @@ def _build_transcript_structure_prompt(
     return (
         "Convert the provided earnings-call transcript content into structured JSON with speaker-by-speaker sections.\n"
         "Do not summarize. Preserve what each speaker said as faithfully as possible.\n"
+        "Treat each `Speaker: ...` switch in the input as a hard boundary for speaker_sections.\n"
+        "Do not merge multiple speakers into one section.\n"
         "Each time the transcript switches speakers, create a new speaker_sections item.\n"
         "If text includes escaped JSON/Next.js script wrappers, recover the human-readable transcript first.\n"
         "Use section_type values: prepared_remarks, qa, or other.\n"
@@ -1773,10 +1986,14 @@ def _build_source_first_llm_input(
     }
 
 
-def _is_low_quality_structured_sections(sections: list[dict[str, Any]]) -> tuple[bool, str]:
+def _is_low_quality_structured_sections(
+    sections: list[dict[str, Any]],
+    *,
+    min_sections: int = 2,
+) -> tuple[bool, str]:
     if not sections:
         return True, "no_sections"
-    if len(sections) < 2:
+    if len(sections) < max(1, min_sections):
         return True, "too_few_sections"
     unknown_count = sum(1 for section in sections if str(section.get("speaker") or "").strip().lower() in {"", "unknown"})
     implausible_count = 0
@@ -1799,6 +2016,8 @@ def _parse_speaker_sections_from_text(transcript_text: str) -> dict[str, Any]:
     working_lines = transcript_lines or lines
     participants = _extract_participants_from_lines(lines)
     sections = _build_speaker_sections(working_lines)
+    sections = _enrich_speaker_sections(sections, participants=participants)
+    participants = _merge_participants_with_speaker_sections(participants, sections)
     speakers = sorted({str(section.get("speaker") or "").strip() for section in sections if section.get("speaker")})
     return {
         "participants": participants,
@@ -1984,7 +2203,7 @@ def _structure_transcript_with_openai(
         if not segment_sections:
             raise RuntimeError(f"OpenAI transcript structuring returned no speaker sections for segment {segment_index + 1}.")
 
-        low_quality, low_reason = _is_low_quality_structured_sections(segment_sections)
+        low_quality, low_reason = _is_low_quality_structured_sections(segment_sections, min_sections=1)
         if low_quality:
             raise RuntimeError(
                 f"OpenAI transcript structuring quality check failed on segment {segment_index + 1}: {low_reason}"
@@ -1994,12 +2213,14 @@ def _structure_transcript_with_openai(
         all_sections.extend(segment_sections)
         notes.append(str(segment_structured.get("notes") or "").strip())
 
+    normalized_participants = _normalize_participants(all_participants)
     merged_sections = _normalize_speaker_sections(all_sections)
-    low_quality, low_reason = _is_low_quality_structured_sections(merged_sections)
+    merged_sections = _enrich_speaker_sections(merged_sections, participants=normalized_participants)
+    low_quality, low_reason = _is_low_quality_structured_sections(merged_sections, min_sections=2)
     if low_quality:
         raise RuntimeError(f"OpenAI transcript structuring quality check failed: {low_reason}")
 
-    normalized_participants = _normalize_participants(all_participants)
+    normalized_participants = _merge_participants_with_speaker_sections(normalized_participants, merged_sections)
     speakers = sorted({str(section.get("speaker") or "").strip() for section in merged_sections if section.get("speaker")})
     return {
         "participants": normalized_participants,

@@ -16,6 +16,7 @@ from finbert_site.openai_motley_search import (
     _extract_sources,
     _fetch_transcript_sections,
     _is_low_quality_structured_sections,
+    _parse_speaker_sections_from_text,
     _parse_transcript_from_html,
     _pick_best_candidate_by_quarter,
     _quarter_window,
@@ -185,6 +186,44 @@ def test_build_speaker_sections_preserves_sequence() -> None:
     assert sections[1]["speaker"] == "Operator"
     assert sections[1]["section_type"] == "qa"
     assert sections[2]["speaker"] == "Analyst"
+
+
+def test_parse_speaker_sections_from_text_infers_qa_and_participants() -> None:
+    transcript_text = """
+Timothy D. Cook: We delivered a strong quarter and exceeded guidance.
+Kevan Parekh: Revenue grew double digits year over year.
+Suhasini Chandramouli: Thank you, Kevan. Operator, may we have the first question please?
+Operator: Certainly. We will now take our first question.
+Amit Daryanani: Thanks for taking my question. Can you comment on margins?
+Timothy D. Cook: We are pleased with margin performance this quarter.
+""".strip()
+    parsed = _parse_speaker_sections_from_text(transcript_text)
+    sections = parsed["speaker_sections"]
+    assert len(sections) >= 5
+    assert sections[0]["section_type"] == "prepared_remarks"
+    assert sections[3]["speaker"] == "Operator"
+    assert sections[3]["section_type"] == "qa"
+    participant_names = {item["name"] for item in parsed["participants"]}
+    assert "Timothy D. Cook" in participant_names
+    assert "Amit Daryanani" in participant_names
+    assert "Operator" in participant_names
+
+
+def test_low_quality_structured_sections_can_allow_single_section_per_segment() -> None:
+    sections = [
+        {
+            "speaker": "Timothy D. Cook",
+            "speaker_role": "management",
+            "section_type": "prepared_remarks",
+            "order_index": 0,
+            "text": "Opening remarks",
+        }
+    ]
+    default_low, default_reason = _is_low_quality_structured_sections(sections)
+    assert default_low is True
+    assert default_reason == "too_few_sections"
+    segment_low, _ = _is_low_quality_structured_sections(sections, min_sections=1)
+    assert segment_low is False
 
 
 def test_select_most_recent_candidates_from_candidate_pool() -> None:

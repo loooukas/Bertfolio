@@ -109,7 +109,7 @@ This prototype script now uses a strict 3-step flow per ticker:
 
 1. OpenAI `web_search` discovers Motley Fool transcript URLs.
 2. The script fetches page text from each selected URL (browser-render text when available, static text otherwise).
-3. The page text is sent to OpenAI for speaker-by-speaker JSON structuring.
+3. The script builds speaker-by-speaker sections from page text with deterministic parsing first, then optionally applies OpenAI structuring (with deterministic fallback if OpenAI fails).
 
 ```bash
 python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty
@@ -155,7 +155,7 @@ echo "$HTML"
 
 Cache controls for scraped transcript JSON:
 
-- `--cache-mode refresh` (default): always fetch + re-run OpenAI structuring, then overwrite cache
+- `--cache-mode refresh` (default): always fetch + re-run parsing/structuring pipeline, then overwrite cache
 - `--cache-mode use`: use cached transcript JSON when present, fetch only on cache miss
 - `--cache-mode off`: disable cache read/write
 - `--cache-dir output/openai_motley_cache`: override cache location
@@ -193,7 +193,7 @@ Output shape (per ticker):
 - `candidate_pool` and `search_sources` for debugging slug discovery quality
 - `selected_recent_links`, `scraped_transcripts`, and `scrape_errors` when `--scrape` is enabled
 - `scrape_method`, `line_source`, `marker_detection`, and `line_count` diagnostics on scraped transcript payloads
-- `section_parse_method` (`regex` or `openai`) and optional `section_parse_reason` when speaker fallback is used
+- `section_parse_method` (`regex_from_page_text` or `openai_page_text`) and optional `section_parse_reason`
 - Scraping runs OpenAI transcript structuring from extracted page text. If OpenAI fails, it attempts a regex fallback from the same extracted page text.
 - OpenAI HTTP calls use a retrying session and capped read timeout to reduce hangs from intermittent `RemoteDisconnected` transport errors.
 - `llm_input_diagnostics` and `llm_input_preview` show the actual page-derived content passed to OpenAI for transcript structuring.
@@ -201,6 +201,7 @@ Output shape (per ticker):
 - Discovery is source-first: candidates are built from `web_search` source URLs so missing schema output no longer hard-fails discovery.
 - Candidate cleanup now drops likely off-ticker transcript URLs (for example, unrelated symbols that appear in search-source spillover) and prefers quarter-resolved links for scraping.
 - Transcript start markers are now heading-aware, so inline phrases like "in your prepared remarks" no longer incorrectly reset parsing into mid-call Q&A.
+- When transcript headings are missing, section typing is inferred from call flow (prepared remarks vs Q&A), and participants are backfilled from parsed speaker sections so the output remains usable.
 
 ## Notes
 
