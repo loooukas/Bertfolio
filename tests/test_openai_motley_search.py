@@ -285,6 +285,24 @@ Timothy D. Cook: We are pleased with margin performance this quarter.
     assert "Operator" in participant_names
 
 
+def test_parse_speaker_sections_from_text_marks_qa_on_moderator_transition() -> None:
+    transcript_text = """
+Timothy D. Cook: We delivered a strong quarter and exceeded guidance.
+Kevan Parekh: Revenue grew double digits year over year.
+Suhasini Chandramouli: Thank you, Kevin. We ask that you limit yourself to two questions. Operator, may we have the first question, please?
+Operator: Certainly.
+Amit Daryanani: We will go ahead and take our first question from Amit Daryanani of Evercore. Yes. I have two. Maybe to start with, there is a lot of focus on memory impact.
+Timothy D. Cook: Yeah. Amit, hi. Let me answer both at once.
+""".strip()
+    parsed = _parse_speaker_sections_from_text(transcript_text)
+    sections = parsed["speaker_sections"]
+    # The moderator handoff line should start Q&A rather than staying in prepared remarks.
+    assert sections[2]["section_type"] == "qa"
+    assert sections[3]["section_type"] == "qa"
+    assert sections[4]["section_type"] == "qa"
+    assert sections[4]["speaker_role"] == "analyst"
+
+
 def test_low_quality_structured_sections_can_allow_single_section_per_segment() -> None:
     sections = [
         {

@@ -1010,7 +1010,9 @@ def _infer_qa_start_index(sections: list[dict[str, Any]]) -> Optional[int]:
 
         if "questions and answers" in lowered or re.search(r"\bq\s*&\s*a\b", lowered):
             return idx
-        if (speaker == "operator" or role == "operator") and _looks_like_operator_question_transition(text):
+        # Transition phrases like "may we have the first question" can be spoken by
+        # investor relations, operators, or other moderators; treat them as Q&A start.
+        if _looks_like_operator_question_transition(text):
             return idx
 
     for idx, section in enumerate(sections):
