@@ -14,9 +14,10 @@ The app is organized into exactly 5 primary sections:
 
 ## UI Implementation (Current)
 
-The frontend now ships as a redesigned institutional dark-theme workspace with:
+The frontend now follows the provided FinBERT reference design (dark institutional dashboard) with:
 
-- Top navigation (`Charts Test`, `API Docs`, `Settings`) and ticker quick-select chips
+- Top navigation (`Analysis`, `Charts Test`, `Docs`, settings icon, API online indicator)
+- Report header that shows company, ticker chip, analysis version, overall signal, and score
 - Full-screen real progress overlay with stage descriptions and running/complete/error states
 - Horizontal report tabs for the 5 canonical sections
 - Transcript-first deep-dive patterns:
@@ -40,6 +41,7 @@ The frontend now ships as a redesigned institutional dark-theme workspace with:
 Execution-role UI language (trader/risk/manager workflows) is removed from the primary interface. Legacy API fields remain for one migration window.
 
 The UI now keeps a full-screen progress experience until every section finishes, then reveals the full report in one pass.
+Job polling is intentionally slowed to a 1.8s interval for lower churn while preserving responsive progress updates.
 
 ## Quick Start
 
@@ -56,8 +58,7 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 ## What This Refactor Implements
 
-- Transcript-first workspace IA with left-rail section navigation
-- Centralized UI copy dictionary for hard-coded labels and microcopy
+- Transcript-first workspace with reference-faithful top-header + horizontal tab IA
 - Deterministic Motley Fool transcript discovery and parsing pipeline
 - Async run-job orchestration with real backend progress polling
 - Optional OpenAI normalization for strict transcript JSON output
@@ -66,7 +67,6 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 - News/social relevance filtering tightened to ticker/company-linked items
 - Social cards now show short excerpts only, with full-post modal view and top-right open-in-new-tab icon
 - News/social cards use 3-column desktop grids for cleaner scan density
-- ECharts-based visual system for higher-fidelity fundamentals and speaker profile charts
 - Chart.js rendering with lazy-init per visible section and full-width responsive surfaces
 - Sentiment timeline panel removed from UI by design (per latest UX decision)
 - Canonical API section payloads + legacy compatibility contract

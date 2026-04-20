@@ -11,18 +11,21 @@
     <main class="app-shell">
       <header class="topbar">
         <div class="brand-wrap">
-          <div class="brand-glyph" aria-hidden="true"></div>
+          <div class="brand-glyph" aria-hidden="true">∿</div>
           <div>
-            <p class="brand-kicker" id="hero-kicker">FINBERT EARNINGS SIGNALS</p>
-            <h1 class="brand-title" id="hero-title">FinBERT Earnings Signals</h1>
+            <p class="brand-name" id="hero-title">FinBERT</p>
+            <p class="brand-sub" id="hero-kicker">Earnings Signals</p>
           </div>
         </div>
         <nav class="topnav" aria-label="Primary">
+          <a href="/" class="is-active">Analysis</a>
           <a href="/charts-test">Charts Test</a>
-          <a href="/docs">API Docs</a>
-          <a href="#settings" aria-disabled="true">Settings</a>
         </nav>
-        <button class="avatar-btn" type="button" aria-label="User menu">LP</button>
+        <div class="top-actions" aria-label="Secondary actions">
+          <a href="/docs" class="docs-link">Docs</a>
+          <button class="icon-btn" type="button" aria-label="Settings">⚙</button>
+          <span class="api-status"><span class="dot"></span>API Online</span>
+        </div>
       </header>
 
       <section class="query-card" aria-labelledby="ticker-label">
@@ -92,7 +95,7 @@
 
       <section id="workspace" class="workspace hidden" aria-live="polite">
         <article class="surface run-summary" id="run-context"></article>
-        <article class="surface stage-summary" id="pipeline-status"></article>
+        <article class="surface stage-summary hidden" id="pipeline-status"></article>
 
         <nav class="report-tabs" id="report-tabs" aria-label="Report sections"></nav>
 
@@ -101,28 +104,32 @@
             <article class="surface company-header" id="company-header"></article>
             <article class="surface signal-card" id="signal-summary"></article>
             <article class="surface">
-              <h3>Key Metrics</h3>
+              <h3>Key Takeaways</h3>
               <div id="overview-metrics" class="kpi-row"></div>
             </article>
             <article class="surface">
-              <h3>Key Takeaways</h3>
+              <h3>Quick Actions</h3>
               <ul id="overview-takeaways" class="compact-list"></ul>
             </article>
           </section>
 
           <section id="section-transcript" class="tab-panel" aria-labelledby="tab-transcript">
-            <article class="surface">
-              <div class="section-header-row">
-                <div>
-                  <h2>Transcript Analysis</h2>
-                  <p id="transcript-availability" class="muted"></p>
+            <div class="transcript-top-grid">
+              <article class="surface">
+                <div class="section-header-row">
+                  <div>
+                    <h2>Transcript Coverage</h2>
+                    <p id="transcript-availability" class="muted"></p>
+                  </div>
                 </div>
-              </div>
-              <p id="transcript-summary" class="summary-copy"></p>
-              <p id="transcript-prepared-qa" class="muted"></p>
-              <h3>Quarter Availability</h3>
-              <div id="transcript-quarter-actions" class="quarter-action-grid"></div>
-            </article>
+                <p id="transcript-summary" class="summary-copy"></p>
+                <p id="transcript-prepared-qa" class="muted"></p>
+              </article>
+              <article class="surface quarter-status-surface">
+                <h3>Quarters Analyzed</h3>
+                <div id="transcript-quarter-actions" class="quarter-action-grid"></div>
+              </article>
+            </div>
 
             <article class="surface">
               <h3>Key Quotes</h3>
@@ -202,8 +209,8 @@
 
           <section id="section-market_reaction" class="tab-panel" aria-labelledby="tab-market_reaction">
             <article class="surface">
-              <h2>Market Reaction</h2>
-              <p id="market-balance" class="summary-copy"></p>
+              <h2>Market Sentiment Summary</h2>
+              <div id="market-balance" class="summary-copy"></div>
             </article>
 
             <article class="surface">
@@ -212,14 +219,13 @@
               <p id="market-distribution-empty" class="empty-note">Not enough market records for distribution chart.</p>
             </article>
 
-            <article class="surface">
-              <h3>News Items</h3>
+            <article class="surface market-feed-surface">
+              <div class="market-feed-tabs">
+                <button type="button" id="market-tab-news" class="market-feed-btn is-active">News</button>
+                <button type="button" id="market-tab-social" class="market-feed-btn">Social</button>
+              </div>
               <div id="news-cards" class="feed-stack"></div>
-            </article>
-
-            <article class="surface">
-              <h3>Social Sentiment</h3>
-              <div id="social-cards" class="feed-grid"></div>
+              <div id="social-cards" class="feed-grid hidden"></div>
             </article>
           </section>
 
@@ -239,22 +245,24 @@
               <ul id="fundamentals-highlights" class="compact-list"></ul>
             </article>
 
-            <article class="surface">
-              <h3>Revenue Trend</h3>
-              <div id="fundamentals-revenue-chart" class="chart-surface"></div>
-              <p id="fundamentals-revenue-empty" class="empty-note">Not enough quarterly depth for revenue trend.</p>
-            </article>
+            <div class="fundamentals-chart-grid">
+              <article class="surface">
+                <h3>Revenue &amp; Net Income Trend</h3>
+                <div id="fundamentals-revenue-chart" class="chart-surface"></div>
+                <p id="fundamentals-revenue-empty" class="empty-note">Not enough quarterly depth for revenue trend.</p>
+              </article>
 
-            <article class="surface">
+              <article class="surface">
+                <h3>EPS vs Estimates</h3>
+                <div id="fundamentals-eps-chart" class="chart-surface"></div>
+                <p id="fundamentals-eps-empty" class="empty-note">Reported EPS and estimate comparison unavailable.</p>
+              </article>
+            </div>
+
+            <article class="surface hidden">
               <h3>Net Income Trend</h3>
               <div id="fundamentals-net-chart" class="chart-surface"></div>
               <p id="fundamentals-net-empty" class="empty-note">Not enough quarterly depth for net income trend.</p>
-            </article>
-
-            <article class="surface">
-              <h3>EPS vs Estimates</h3>
-              <div id="fundamentals-eps-chart" class="chart-surface"></div>
-              <p id="fundamentals-eps-empty" class="empty-note">Reported EPS and estimate comparison unavailable.</p>
             </article>
 
             <article class="surface">
@@ -407,6 +415,13 @@
         fundamentals: "Fundamentals",
         data_audit: "Data Audit",
       };
+      const TAB_ICONS = {
+        overview: "◷",
+        transcript: "📄",
+        market_reaction: "↗",
+        fundamentals: "▦",
+        data_audit: "🛡",
+      };
 
       const state = {
         payload: null,
@@ -470,6 +485,8 @@
         marketBalance: document.getElementById("market-balance"),
         marketDistributionChart: document.getElementById("market-distribution-chart"),
         marketDistributionEmpty: document.getElementById("market-distribution-empty"),
+        marketTabNews: document.getElementById("market-tab-news"),
+        marketTabSocial: document.getElementById("market-tab-social"),
         newsCards: document.getElementById("news-cards"),
         socialCards: document.getElementById("social-cards"),
 
@@ -587,7 +604,7 @@
       function buildTabs() {
         elements.reportTabs.innerHTML = SECTION_ORDER.map((section, idx) => {
           const active = idx === 0 ? "active" : "";
-          return `<button id="tab-${section}" class="tab-btn ${active}" type="button" data-section="${section}">${TAB_LABELS[section] || humanizeToken(section)}</button>`;
+          return `<button id="tab-${section}" class="tab-btn ${active}" type="button" data-section="${section}"><span class="tab-icon">${TAB_ICONS[section] || "•"}</span><span>${TAB_LABELS[section] || humanizeToken(section)}</span></button>`;
         }).join("");
 
         elements.reportTabs.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -698,66 +715,78 @@
       }
 
       function renderRunContext(payload) {
-        const ticker = payload.ticker || payload.overview?.ticker || "n/a";
-        const overallLabel = humanizeToken(payload.overall_sentiment_label || "mixed");
-        const score = fmtNum(payload.overall_sentiment_score, 3);
+        const overview = payload.overview || {};
+        const ticker = payload.ticker || overview.ticker || "n/a";
+        const companyName = overview.company_name || ticker;
+        const analysisVersion = payload.analysis_version || "n/a";
+        const overallLabel = humanizeToken(payload.overall_sentiment_label || overview.stance_label || "mixed");
+        const score = Number(payload.overall_sentiment_score || 0);
+        const scoreInt = Math.round(score * 100);
         const transcriptsFound = payload.transcript?.transcript_count_found || 0;
-        const transcriptsRequested = payload.transcript?.transcript_count_requested || 0;
-        const newsCount = payload.market_reaction?.news_count || 0;
-        const socialCount = payload.market_reaction?.social_count || 0;
-        const normalization = humanizeToken(payload.data_audit?.normalization_mode || "unknown");
-        const sentimentTone = sentimentClass(payload.overall_sentiment_label || "mixed");
 
         elements.runContext.innerHTML = `
-          <div class="summary-head">
-            <h2>${ticker}</h2>
-            <span class="sentiment-pill ${sentimentTone}">${overallLabel}</span>
-          </div>
-          <p class="summary-copy">Composite sentiment score <strong class="mono">${score}</strong></p>
-          <div class="summary-grid mono">
-            <span>Transcripts ${transcriptsFound}/${transcriptsRequested}</span>
-            <span>News ${newsCount}</span>
-            <span>Social ${socialCount}</span>
-            <span>${normalization}</span>
+          <div class="report-header">
+            <div class="report-company">
+              <h2>${companyName}<span class="report-ticker-chip mono">${ticker}</span></h2>
+              <p class="report-company-meta">Analysis v${analysisVersion} • ${transcriptsFound} transcripts analyzed</p>
+            </div>
+            <div class="report-signal">
+              <div class="report-signal-box">
+                <p>Overall Signal</p>
+                <h3>${overallLabel}</h3>
+              </div>
+              <div class="report-score">
+                <p>Score</p>
+                <strong class="mono">${scoreInt >= 0 ? "+" : ""}${scoreInt}</strong>
+              </div>
+            </div>
           </div>
         `;
       }
 
       function renderCompanyHeader(payload) {
-        const overview = payload.overview || {};
-        const companyName = overview.company_name || payload.ticker;
-        const ticker = overview.ticker || payload.ticker;
-        const latestTranscript = (payload.transcript?.transcripts || [])[0] || null;
-        const callDate = latestTranscript?.published_date || "n/a";
-        const sector = payload.fundamentals?.sector || "Sector n/a";
+        const summary = payload.overview?.executive_summary || "Summary unavailable.";
         elements.companyHeader.innerHTML = `
-          <div class="company-inline">
-            <span class="ticker-badge mono">${ticker}</span>
-            <div>
-              <h2>${companyName}</h2>
-              <p class="muted">${sector} · Call Date ${callDate}</p>
-            </div>
-          </div>
+          <h3>Executive Summary</h3>
+          <p class="summary-copy">${summary}</p>
         `;
       }
 
       function renderSignalSummary(payload) {
-        const aggregate = payload.aggregate_scores || {};
-        const overview = payload.overview || {};
-        const score = Number(payload.overall_sentiment_score || 0);
-        const sentimentTone = sentimentClass(payload.overall_sentiment_label || "mixed");
-        const confidence = aggregate.confidence_score ?? 0;
+        const metrics = payload.overview?.metrics || [];
+        const lookup = {};
+        metrics.forEach((metric) => {
+          lookup[String(metric.key || "")] = metric;
+        });
+        const confidence = Number((lookup.management_confidence || lookup.confidence || {}).value ?? payload.aggregate_scores?.confidence_score ?? 0);
+        const evasiveness = Number((lookup.evasiveness || {}).value ?? payload.aggregate_scores?.evasiveness_score ?? 0);
+        const outlook = Number((lookup.outlook_strength || {}).value ?? payload.aggregate_scores?.outlook_strength ?? 0);
+        const coverageRaw = payload.transcript?.transcript_count_requested ? (payload.transcript.transcript_count_found / payload.transcript.transcript_count_requested) * 100 : 0;
+        const coverage = Number(coverageRaw || 0);
+        const metricRows = [
+          { label: "Management Confidence", value: confidence, color: "var(--fb-bull)" },
+          { label: "Evasiveness", value: evasiveness, color: evasiveness >= 55 ? "var(--fb-bear)" : "var(--fb-neutral)" },
+          { label: "Outlook Strength", value: outlook, color: outlook >= 55 ? "var(--fb-bull)" : "var(--fb-neutral)" },
+          { label: "Transcript Coverage", value: coverage, color: coverage >= 70 ? "var(--fb-bull)" : "var(--fb-neutral)" },
+        ];
 
         elements.signalSummary.innerHTML = `
-          <div class="signal-wrap">
-            <div>
-              <p class="muted">Signal Summary</p>
-              <h3>${humanizeToken(payload.overall_sentiment_label || overview.stance_label || "mixed")}</h3>
-              <p class="muted">Confidence <strong class="mono">${fmtNum(confidence, 1)}%</strong></p>
-            </div>
-            <div class="signal-score ${sentimentTone}">
-              <span class="mono">${score >= 0 ? "+" : ""}${fmtNum(score, 3)}</span>
-            </div>
+          <div class="metric-row">
+            ${metricRows
+              .map((metric) => {
+                const valueClamped = Math.max(0, Math.min(100, Number(metric.value || 0)));
+                return `
+                  <article class="metric-pill">
+                    <p class="label">${metric.label}</p>
+                    <div class="value-wrap">
+                      <span class="value" style="color:${metric.color}">${fmtNum(valueClamped, 0)}</span>
+                      <span class="denom">/100</span>
+                    </div>
+                    <div class="bar"><span style="width:${valueClamped}%"></span></div>
+                  </article>
+                `;
+              })
+              .join("")}
           </div>
         `;
       }
@@ -769,37 +798,37 @@
       }
 
       function renderOverview(payload) {
-        const metrics = payload.overview?.metrics || [];
-        const selected = [
-          keyMetricByKey(metrics, "management_confidence", "Confidence Score"),
-          keyMetricByKey(metrics, "evasiveness", "Evasiveness Index"),
-          keyMetricByKey(metrics, "outlook_strength", "Outlook Strength"),
+        const takeaways = payload.overview?.key_takeaways || [];
+        if (!takeaways.length) {
+          elements.overviewMetrics.innerHTML = `<p class="empty-note">No takeaways available yet.</p>`;
+        } else {
+          elements.overviewMetrics.innerHTML = takeaways
+            .slice(0, 6)
+            .map(
+              (takeaway, index) => `
+                <div class="takeaway-row">
+                  <span class="index">${index + 1}</span>
+                  <span>${takeaway}</span>
+                </div>
+              `
+            )
+            .join("");
+        }
+
+        const quickActions = [
+          { label: "View Transcript Details", desc: "Speaker-level analysis", section: "transcript" },
+          { label: "Check Market Reaction", desc: "News and social sentiment", section: "market_reaction" },
+          { label: "Review Data Quality", desc: "Source reliability and diagnostics", section: "data_audit" },
         ];
-
-        elements.overviewMetrics.innerHTML = selected
-          .map((metric) => {
-            const label = metric.label || humanizeToken(metric.key);
-            const value = String(metric.value || "n/a");
-            let tone = "sentiment-neutral";
-            if (metric.key === "management_confidence" || metric.key === "outlook_strength") {
-              const numeric = Number(value);
-              tone = numeric >= 60 ? "sentiment-bullish" : numeric <= 40 ? "sentiment-bearish" : "sentiment-neutral";
-            }
-            if (metric.key === "evasiveness") {
-              const numeric = Number(value);
-              tone = numeric <= 35 ? "sentiment-bullish" : numeric >= 60 ? "sentiment-bearish" : "sentiment-neutral";
-            }
-            return `
-              <article class="metric-card">
-                <p>${label}</p>
-                <strong class="mono">${value}</strong>
-                <span class="sentiment-pill ${tone}">${tone.includes("bullish") ? "Favorable" : tone.includes("bearish") ? "Caution" : "Neutral"}</span>
-              </article>
-            `;
-          })
-          .join("");
-
-        renderList(elements.overviewTakeaways, payload.overview?.key_takeaways || [], "No takeaways available yet.");
+        elements.overviewTakeaways.innerHTML = "";
+        quickActions.forEach((action) => {
+          const li = document.createElement("li");
+          li.innerHTML = `<button type="button" class="quick-action-btn" data-target-section="${action.section}">${action.label}<small>${action.desc}</small></button>`;
+          elements.overviewTakeaways.appendChild(li);
+        });
+        elements.overviewTakeaways.querySelectorAll(".quick-action-btn").forEach((button) => {
+          button.addEventListener("click", () => switchSection(button.dataset.targetSection || "overview"));
+        });
       }
 
       function sentimentLabelFromScore(score) {
@@ -971,7 +1000,7 @@
           .slice(0, 4)
           .map((row) => {
             const tone = row.status === "found" ? "is-ready" : row.status === "error" ? "is-error" : "is-missing";
-            const label = row.status === "found" ? "Ready" : row.status === "error" ? "Error" : "Missing";
+            const label = row.status === "found" ? "✓" : row.status === "error" ? "✕" : "○";
             const disabled = row.status !== "found" ? "disabled" : "";
             const doc = transcriptDocForQuarter(row.quarter, docs, statusRows);
             if (doc) state.transcriptQuarterDocs[row.quarter] = doc;
@@ -1113,15 +1142,21 @@
         elements.newsCards.innerHTML = items
           .map(
             (item) => `
-              <details class="news-item">
-                <summary>
-                  <span class="source mono">${item.source || "source n/a"}</span>
-                  <span>${item.title || "Untitled"}</span>
-                  <span class="sentiment-pill ${sentimentClass(item.sentiment_label)}">${humanizeToken(item.sentiment_label)} ${fmtNum(item.sentiment_score, 3)}</span>
-                </summary>
-                <p class="muted">${fmtExternalDate(item.time_published)} · <a href="${item.url}" target="_blank" rel="noopener noreferrer">Open source</a></p>
+              <article class="news-item">
+                <div class="news-head">
+                  <div class="news-badges">
+                    <span class="source mono">${item.source || "source n/a"}</span>
+                    <span class="sentiment-pill ${sentimentClass(item.sentiment_label)}">${humanizeToken(item.sentiment_label)}</span>
+                  </div>
+                  <a class="news-link" href="${item.url}" target="_blank" rel="noopener noreferrer">↗</a>
+                </div>
+                <h4>${item.title || "Untitled"}</h4>
                 <p>${item.summary || "No summary provided."}</p>
-              </details>
+                <div class="social-meta mono">
+                  <span>${fmtExternalDate(item.time_published)}</span>
+                  <span>Score ${fmtNum(item.sentiment_score, 3)}</span>
+                </div>
+              </article>
             `
           )
           .join("");
@@ -1167,6 +1202,14 @@
             openSocialModal(items[idx]);
           });
         });
+      }
+
+      function setMarketFeedTab(tabKey) {
+        const showNews = tabKey === "news";
+        elements.newsCards.classList.toggle("hidden", !showNews);
+        elements.socialCards.classList.toggle("hidden", showNews);
+        elements.marketTabNews.classList.toggle("is-active", showNews);
+        elements.marketTabSocial.classList.toggle("is-active", !showNews);
       }
 
       function distributionCounts(items) {
@@ -1231,9 +1274,50 @@
 
       function renderMarketReaction(payload) {
         const market = payload.market_reaction || {};
-        elements.marketBalance.textContent = market.balance_summary || "No market reaction summary available.";
+        const newsItems = market.news_items || [];
+        const socialItems = market.social_items || [];
+        const counts = distributionCounts([...newsItems, ...socialItems]);
+        const total = Math.max(1, counts.positive + counts.neutral + counts.negative);
+        const bullishPct = Math.round((counts.positive / total) * 100);
+        const positiveWidth = (counts.positive / total) * 100;
+        const neutralWidth = (counts.neutral / total) * 100;
+        const negativeWidth = (counts.negative / total) * 100;
+
+        elements.marketBalance.innerHTML = `
+          <p>${market.balance_summary || "No market reaction summary available."}</p>
+          <div class="market-summary-grid">
+            <article class="market-stat">
+              <div class="value mono">${market.news_count || 0}</div>
+              <div class="label">News Articles</div>
+            </article>
+            <article class="market-stat">
+              <div class="value mono">${market.social_count || 0}</div>
+              <div class="label">Social Posts</div>
+            </article>
+            <article class="market-stat">
+              <div class="value mono" style="color:var(--fb-bull)">${counts.positive}</div>
+              <div class="label">Bullish</div>
+            </article>
+            <article class="market-stat">
+              <div class="value mono" style="color:var(--fb-bear)">${counts.negative}</div>
+              <div class="label">Bearish</div>
+            </article>
+          </div>
+          <div class="market-dist-row">
+            <div class="summary-head">
+              <span>Sentiment Distribution</span>
+              <span>${bullishPct}% Bullish</span>
+            </div>
+            <div class="market-dist-track">
+              <span class="bull" style="width:${positiveWidth}%"></span>
+              <span class="neutral" style="width:${neutralWidth}%"></span>
+              <span class="bear" style="width:${negativeWidth}%"></span>
+            </div>
+          </div>
+        `;
         renderNewsCards(market.news_items || []);
         renderSocialCards(market.social_items || []);
+        setMarketFeedTab("news");
         renderMarketDistributionChart(payload);
       }
 
@@ -1274,8 +1358,8 @@
         const epsSeries = trend.map((row) => row.eps);
         const estimateSeries = trend.map((row) => row.eps_estimate);
 
-        const revEnabled = labels.length >= 3 && revenueSeries.some((value) => value != null);
-        const netEnabled = labels.length >= 3 && netSeries.some((value) => value != null);
+        const revEnabled = labels.length >= 3 && (revenueSeries.some((value) => value != null) || netSeries.some((value) => value != null));
+        const netEnabled = false;
         const epsEnabled = labels.length >= 3 && epsSeries.some((value) => value != null) && estimateSeries.some((value) => value != null);
 
         setChartVisibility(elements.fundamentalsRevenueChart, elements.fundamentalsRevenueEmpty, revEnabled);
@@ -1291,7 +1375,10 @@
             type: "bar",
             data: {
               labels,
-              datasets: [{ label: "Revenue", data: revenueSeries, backgroundColor: "rgba(102,159,255,0.63)", borderRadius: 8 }],
+              datasets: [
+                { label: "Revenue", data: revenueSeries, backgroundColor: "rgba(102,159,255,0.63)", borderRadius: 8 },
+                { label: "Net Income", data: netSeries, backgroundColor: "rgba(112,210,148,0.63)", borderRadius: 8 },
+              ],
             },
             options: {
               responsive: true,
@@ -1351,14 +1438,13 @@
         const f = payload.fundamentals_workspace || {};
         elements.fundamentalsContext.textContent = f.operating_context || "No fundamentals context available.";
 
-        const topMetrics = (f.metrics || []).slice(0, 6);
+        const topMetrics = (f.metrics || []).slice(0, 8);
         elements.fundamentalsMetrics.innerHTML = topMetrics
           .map((metric) => {
             return `
               <article class="metric-card">
                 <p>${metric.label}</p>
                 <strong class="mono">${metric.value}</strong>
-                <span class="muted">${humanizeToken(metric.key)}</span>
               </article>
             `;
           })
@@ -1574,7 +1660,7 @@
           if (payload.status === "failed") {
             throw new Error(payload.error || "Analysis run failed.");
           }
-          await sleep(900);
+          await sleep(1800);
         }
       }
 
@@ -1635,6 +1721,9 @@
         });
       });
 
+      elements.marketTabNews.addEventListener("click", () => setMarketFeedTab("news"));
+      elements.marketTabSocial.addEventListener("click", () => setMarketFeedTab("social"));
+
       elements.filterRole.addEventListener("change", renderSpeakerTable);
       elements.filterSpeaker.addEventListener("change", renderSpeakerTable);
       elements.filterSection.addEventListener("change", renderSpeakerTable);
@@ -1671,6 +1760,7 @@
       buildTabs();
       renderStageSummary();
       renderLoadingProgress();
+      setMarketFeedTab("news");
     </script>
   </body>
 </html>
