@@ -977,6 +977,21 @@ def _looks_like_operator_question_transition(text: str) -> bool:
     return any(marker in lowered for marker in _QA_TRANSITION_MARKERS)
 
 
+def _has_trailing_transition_in_long_remarks(text: str) -> bool:
+    lowered = text.lower()
+    positions = [lowered.rfind(marker) for marker in _QA_TRANSITION_MARKERS if marker in lowered]
+    if not positions:
+        return False
+
+    # Typical opening remarks can end with "with that, let's open the call to questions."
+    # That phrase should not flip the entire long remarks block to Q&A.
+    word_count = len(re.findall(r"\b\w+\b", text))
+    sentence_count = len(re.findall(r"[.!?]", text))
+    trailing_pos = max(positions)
+    appears_trailing = trailing_pos >= int(len(lowered) * 0.6)
+    return word_count >= 80 and sentence_count >= 4 and appears_trailing
+
+
 def _looks_like_analyst_question(text: str) -> bool:
     lowered = text.lower()
     if "?" in text:
@@ -1019,7 +1034,11 @@ def _infer_qa_start_index(sections: list[dict[str, Any]]) -> Optional[int]:
             return idx
         # Transition phrases like "may we have the first question" can be spoken by
         # investor relations, operators, or other moderators; treat them as Q&A start.
+        # But do not classify a long prepared-remarks section as Q&A just because the
+        # final sentence says "let's open the call to questions."
         if _looks_like_operator_question_transition(text):
+            if _has_trailing_transition_in_long_remarks(text):
+                continue
             return idx
 
     for idx, section in enumerate(sections):
@@ -1528,10 +1547,6 @@ def _select_most_recent_candidates(report: dict[str, Any], count: int) -> list[d
             )
             if len(selected) >= target_count:
                 return selected
-
-    # Only fallback to candidate_pool if no quarter-resolved links were found.
-    if selected:
-        return selected
 
     pool = report.get("candidate_pool")
     if not isinstance(pool, list):
@@ -3734,6 +3749,10 @@ def _build_html_report(output: dict[str, Any]) -> str:
     def esc(value: Any) -> str:
         return html_lib.escape(str(value if value is not None else ""))
 
+    def anchorize(value: str) -> str:
+        cleaned = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+        return cleaned or "item"
+
     generated_at = esc(output.get("generated_at", ""))
     model = esc(output.get("model", ""))
     results = output.get("results")
@@ -3761,15 +3780,63 @@ def _build_html_report(output: dict[str, Any]) -> str:
         ".section .head{font-size:12px;color:#374151;margin-bottom:4px}"
         ".section .text{white-space:pre-wrap;font-size:13px;line-height:1.45}"
         ".mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}"
+        ".toc{margin:0 0 16px 0;padding:12px;border:1px solid #d1d5db;background:#fff;border-radius:8px}"
+        ".toc-title{font-size:13px;color:#111827;font-weight:600;margin-bottom:8px}"
+        ".toc-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}"
+        ".toc-item a{text-decoration:none;color:#1d4ed8;font-size:13px}"
+        ".toc-item a:hover{text-decoration:underline}"
+        ".toc-transcript{padding-left:14px}"
+        ".toc-transcript a{color:#2563eb;font-size:12px}"
         "</style></head><body>"
     )
     chunks.append(f"<div class='meta'><div><strong>Generated:</strong> {generated_at}</div><div><strong>Model:</strong> {model}</div></div>")
 
-    for result in results:
+    toc_entries: dict[int, dict[str, Any]] = {}
+    for result_index, result in enumerate(results):
         if not isinstance(result, dict):
             continue
+        ticker_raw = str(result.get("ticker") or f"ticker-{result_index + 1}")
+        ticker_anchor = f"ticker-{result_index + 1}-{anchorize(ticker_raw)}"
+        transcript_anchor_map: dict[int, str] = {}
+        transcript_items: list[tuple[str, str]] = []
+        scraped = result.get("scraped_transcripts")
+        if isinstance(scraped, list):
+            for transcript_index, transcript in enumerate(scraped):
+                if not isinstance(transcript, dict):
+                    continue
+                quarter_raw = str(transcript.get("quarter") or f"item-{transcript_index + 1}")
+                transcript_anchor = (
+                    f"{ticker_anchor}-tx-{transcript_index + 1}-{anchorize(quarter_raw)}"
+                )
+                transcript_anchor_map[transcript_index] = transcript_anchor
+                transcript_items.append((transcript_anchor, f"{ticker_raw} {quarter_raw}".strip()))
+        toc_entries[result_index] = {
+            "ticker_anchor": ticker_anchor,
+            "ticker_label": ticker_raw,
+            "transcript_anchor_map": transcript_anchor_map,
+            "transcript_items": transcript_items,
+        }
+
+    if toc_entries:
+        chunks.append("<nav class='toc'><div class='toc-title'>Jump To</div><ul class='toc-list'>")
+        for result_index in sorted(toc_entries):
+            entry = toc_entries[result_index]
+            chunks.append(
+                f"<li class='toc-item'><a href='#{esc(entry['ticker_anchor'])}'>{esc(entry['ticker_label'])}</a></li>"
+            )
+            for anchor, label in entry["transcript_items"]:
+                chunks.append(
+                    f"<li class='toc-item toc-transcript'><a href='#{esc(anchor)}'>{esc(label)}</a></li>"
+                )
+        chunks.append("</ul></nav>")
+
+    for result_index, result in enumerate(results):
+        if not isinstance(result, dict):
+            continue
+        entry = toc_entries.get(result_index) or {}
         ticker = esc(result.get("ticker", "UNKNOWN"))
-        chunks.append(f"<section class='ticker'><h2>{ticker}</h2>")
+        ticker_anchor = esc(entry.get("ticker_anchor", f"ticker-{result_index + 1}"))
+        chunks.append(f"<section class='ticker' id='{ticker_anchor}'><h2>{ticker}</h2>")
         if result.get("error"):
             chunks.append(f"<div class='error'>{esc(result.get('error'))}</div></section>")
             continue
@@ -3783,7 +3850,8 @@ def _build_html_report(output: dict[str, Any]) -> str:
         if not isinstance(scraped, list) or not scraped:
             chunks.append("<div class='summary'>No scraped transcripts in this result.</div>")
         else:
-            for transcript in scraped:
+            transcript_anchor_map = entry.get("transcript_anchor_map") if isinstance(entry, dict) else {}
+            for transcript_index, transcript in enumerate(scraped):
                 if not isinstance(transcript, dict):
                     continue
                 t_title = esc(transcript.get("title", ""))
@@ -3792,12 +3860,24 @@ def _build_html_report(output: dict[str, Any]) -> str:
                 t_url = esc(transcript.get("url", ""))
                 parse_method = esc(transcript.get("section_parse_method", ""))
                 scrape_method = esc(transcript.get("scrape_method", ""))
-                chunks.append(
-                    "<article class='transcript'>"
-                    f"<h3>{t_quarter} - {t_title}</h3>"
-                    f"<div class='summary'>date={t_date} | parse={parse_method} | scrape={scrape_method}</div>"
-                    f"<div class='mono'>{t_url}</div>"
-                )
+                transcript_anchor = ""
+                if isinstance(transcript_anchor_map, dict):
+                    transcript_anchor = esc(transcript_anchor_map.get(transcript_index, ""))
+                if transcript_anchor:
+                    chunks.append(
+                        "<article class='transcript' "
+                        f"id='{transcript_anchor}'>"
+                        f"<h3>{t_quarter} - {t_title}</h3>"
+                        f"<div class='summary'>date={t_date} | parse={parse_method} | scrape={scrape_method}</div>"
+                        f"<div class='mono'>{t_url}</div>"
+                    )
+                else:
+                    chunks.append(
+                        "<article class='transcript'>"
+                        f"<h3>{t_quarter} - {t_title}</h3>"
+                        f"<div class='summary'>date={t_date} | parse={parse_method} | scrape={scrape_method}</div>"
+                        f"<div class='mono'>{t_url}</div>"
+                    )
                 participants = transcript.get("participants")
                 if isinstance(participants, list) and participants:
                     pbits: list[str] = []

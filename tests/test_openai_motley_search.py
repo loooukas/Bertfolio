@@ -349,6 +349,33 @@ Timothy D. Cook: Yeah. Amit, hi. Let me answer both at once.
     assert sections[4]["speaker_role"] == "analyst"
 
 
+def test_parse_speaker_sections_does_not_flip_long_remarks_on_trailing_open_to_questions() -> None:
+    long_remarks = (
+        "We delivered a strong quarter with broad-based growth across hardware, software, and services. "
+        "Customer satisfaction remained high in all major regions and our installed base reached a new record. "
+        "We continue to invest in silicon, privacy, and AI features that improve daily workflows for users. "
+        "Gross margin was above our guidance range and operating cash flow was at an all-time high. "
+        "We saw strong performance in iPhone, meaningful momentum in Mac, and continued expansion in services. "
+        "Our teams executed very well on both product innovation and supply chain resilience this quarter. "
+        "With that, let's open the call to questions."
+    )
+    transcript_text = f"""
+Timothy D. Cook: {long_remarks}
+Kevan Parekh: Thank you, Tim. We expect operating expenses to grow in line with investments.
+Suhasini Chandramouli: Thank you. Operator, may we have the first question, please?
+Operator: Certainly.
+Amit Daryanani: I have two questions to start with.
+Timothy D. Cook: Thanks, Amit. Let me take those in turn.
+""".strip()
+    parsed = _parse_speaker_sections_from_text(transcript_text)
+    sections = parsed["speaker_sections"]
+    assert sections[0]["section_type"] == "prepared_remarks"
+    assert sections[1]["section_type"] == "prepared_remarks"
+    assert sections[2]["section_type"] == "qa"
+    assert sections[3]["section_type"] == "qa"
+    assert sections[4]["section_type"] == "qa"
+
+
 def test_low_quality_structured_sections_can_allow_single_section_per_segment() -> None:
     sections = [
         {
@@ -397,6 +424,39 @@ def test_select_most_recent_candidates_from_candidate_pool() -> None:
     }
     selected = _select_most_recent_candidates(report, 2)
     assert [item["quarter"] for item in selected] == ["2026-Q1", "2025-Q4"]
+
+
+def test_select_most_recent_candidates_tops_up_from_pool_when_found_links_are_short() -> None:
+    report = {
+        "found_transcript_links": [
+            {
+                "quarter": "2026-Q1",
+                "title": "T1",
+                "url": "https://www.fool.com/earnings/call-transcripts/2026/01/29/a/",
+                "published_date": "2026-01-29",
+            },
+            {
+                "quarter": "2025-Q4",
+                "title": "T2",
+                "url": "https://www.fool.com/earnings/call-transcripts/2025/10/31/b/",
+                "published_date": "2025-10-31",
+            },
+            {
+                "quarter": "2025-Q3",
+                "title": "T3",
+                "url": "https://www.fool.com/earnings/call-transcripts/2025/08/01/c/",
+                "published_date": "2025-08-01",
+            },
+        ],
+        "candidate_pool": [
+            {"quarter": "2026-Q1", "title": "T1", "url": "https://www.fool.com/earnings/call-transcripts/2026/01/29/a/"},
+            {"quarter": "2025-Q4", "title": "T2", "url": "https://www.fool.com/earnings/call-transcripts/2025/10/31/b/"},
+            {"quarter": "2025-Q3", "title": "T3", "url": "https://www.fool.com/earnings/call-transcripts/2025/08/01/c/"},
+            {"quarter": "2025-Q2", "title": "T4", "url": "https://www.fool.com/earnings/call-transcripts/2025/05/01/d/"},
+        ],
+    }
+    selected = _select_most_recent_candidates(report, 4)
+    assert [item["quarter"] for item in selected] == ["2026-Q1", "2025-Q4", "2025-Q3", "2025-Q2"]
 
 
 def test_scrape_recent_transcripts_for_report_uses_selected_links(monkeypatch) -> None:
@@ -1202,3 +1262,6 @@ def test_build_html_report_contains_ticker_and_section_text() -> None:
     assert "MSFT" in html
     assert "Welcome everyone." in html
     assert "OpenAI Motley Transcript Report" in html
+    assert "Jump To" in html
+    assert "#ticker-1-msft" in html
+    assert "#ticker-1-msft-tx-1-2025-q4" in html
