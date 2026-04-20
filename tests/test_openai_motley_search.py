@@ -86,6 +86,19 @@ def test_build_request_payload_omits_temperature() -> None:
     assert "temperature" not in payload
 
 
+def test_build_request_payload_includes_missing_quarter_focus() -> None:
+    payload = _build_request_payload(
+        model="gpt-5-mini",
+        ticker="AAPL",
+        max_candidates=6,
+        tool_type="web_search",
+        missing_quarters=["2025-Q2"],
+    )
+    prompt = str(payload.get("input") or "")
+    assert "2025-Q2" in prompt
+    assert "Focus only on unresolved quarter labels" in prompt
+
+
 def test_extract_sources_collects_web_search_and_annotations() -> None:
     payload = {
         "output": [
@@ -202,6 +215,39 @@ def test_fetch_text_with_retries_does_not_retry_404(monkeypatch) -> None:
     assert "http_error" in str(exc.value)
     assert calls["count"] == 1
     assert calls["sleep"] == 0
+
+
+def test_fetch_text_with_retries_uses_response_cache(monkeypatch) -> None:
+    class _Resp200:
+        status_code = 200
+        text = "ok"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    calls = {"count": 0}
+
+    def _fake_get(*args, **kwargs):
+        calls["count"] += 1
+        return _Resp200()
+
+    monkeypatch.setattr("finbert_site.openai_motley_search.requests.get", _fake_get)
+    cache: dict[str, str] = {}
+    first = _fetch_text_with_retries(
+        url="https://www.fool.com/sitemap/2026/01",
+        timeout_seconds=5,
+        retries=1,
+        response_cache=cache,
+    )
+    second = _fetch_text_with_retries(
+        url="https://www.fool.com/sitemap/2026/01",
+        timeout_seconds=5,
+        retries=1,
+        response_cache=cache,
+    )
+    assert first == "ok"
+    assert second == "ok"
+    assert calls["count"] == 1
 
 
 def test_extract_participants_from_lines_role_first_format() -> None:
@@ -631,6 +677,7 @@ def test_discover_last_quarter_links_hybrid_pipeline_uses_sitemap_author_openai(
         api_key="test-key",
         target_quarters=3,
         discovery_mode="hybrid",
+        author_max_pages=40,
         discovery_cache_mode="off",
     )
 
@@ -645,6 +692,52 @@ def test_discover_last_quarter_links_hybrid_pipeline_uses_sitemap_author_openai(
     quarter_map = {row["quarter"]: row for row in report["quarters"]}
     assert quarter_map["2025-Q4"]["resolution_source"] == "author_page:1"
     assert quarter_map["2025-Q3"]["resolution_source"] == "openai_web_search"
+
+
+def test_discover_last_quarter_links_hybrid_skips_author_when_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "finbert_site.openai_motley_search._discover_candidates_from_sitemaps",
+        lambda **kwargs: (
+            [
+                {
+                    "title": "Apple (AAPL) Q1 2026 Earnings Call Transcript",
+                    "url": "https://www.fool.com/earnings/call-transcripts/2026/01/29/apple-aapl-q1-2026-earnings-call-transcript/",
+                    "published_date": "2026-01-29",
+                    "source": "sitemap_month:2026-01",
+                }
+            ],
+            {"aapl", "apple"},
+            {"phase": "sitemap", "status": "ok", "duration_ms": 3, "candidates_added": 1},
+        ),
+    )
+    monkeypatch.setattr(
+        "finbert_site.openai_motley_search._discover_candidates_from_author_pages",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("author fallback should be skipped")),
+    )
+    monkeypatch.setattr(
+        "finbert_site.openai_motley_search._discover_candidates_with_openai",
+        lambda **kwargs: (
+            [],
+            {
+                "selected_tool": "web_search",
+                "search_sources": [],
+                "notes": "noop",
+                "trace": {"phase": "openai_fallback", "status": "empty", "duration_ms": 1, "raw_candidates_count": 0},
+            },
+        ),
+    )
+    report = discover_last_quarter_links(
+        ticker="AAPL",
+        api_key="test-key",
+        target_quarters=2,
+        discovery_mode="hybrid",
+        author_max_pages=0,
+        discovery_cache_mode="off",
+    )
+    phases = [phase.get("phase") for phase in report["discovery_trace"]["phases"]]
+    assert phases == ["sitemap", "author", "openai_fallback"]
+    author_phase = report["discovery_trace"]["phases"][1]
+    assert author_phase.get("status") == "skipped"
 
 
 def test_discover_last_quarter_links_sitemap_only_skips_openai(monkeypatch) -> None:

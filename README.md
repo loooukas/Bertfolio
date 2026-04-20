@@ -187,11 +187,11 @@ Cache controls for scraped transcript JSON:
 
 Deterministic discovery controls:
 
-- `--discovery-mode hybrid` (default): `Sitemap -> Author -> OpenAI fallback`
+- `--discovery-mode hybrid` (default): `Sitemap -> Author (optional) -> OpenAI fallback`
 - `--discovery-mode sitemap_only`: deterministic sitemap + author-disabled crawl only
 - `--discovery-mode openai_only`: legacy OpenAI web-search-only discovery
 - `--sitemap-lookback-months 18`: number of recent monthly sitemaps to scan
-- `--author-max-pages 40`: author archive page cap for fallback crawl
+- `--author-max-pages 0` (default): author archive page cap for fallback crawl (`0` disables author fallback)
 - `--discovery-cache-mode refresh|use|off`: discovery-cache behavior (separate from scrape cache)
 - `--discovery-cache-dir output/openai_motley_discovery_cache`: discovery cache location
 
@@ -240,10 +240,12 @@ Output shape (per ticker):
 - If only low-quality parser output is available, output includes `quality_flags` (for example `parser_low_confidence`, reason, and optional OpenAI/browser errors).
 - If you interrupt a long run (`Ctrl+C`), CLI now returns partial JSON results cleanly without a Python traceback.
 - Discovery is deterministic-first: sitemap and author crawling run before OpenAI fallback, and OpenAI candidate extraction is source-first so missing schema output no longer hard-fails discovery.
+- In hybrid mode, OpenAI fallback only runs when deterministic discovery still has unresolved quarters, and the OpenAI query is focused on those unresolved quarter labels.
 - Candidate cleanup now drops likely off-ticker transcript URLs (for example, unrelated symbols that appear in search-source spillover) and prefers quarter-resolved links for scraping.
 - Transcript start markers are now heading-aware, so inline phrases like "in your prepared remarks" no longer incorrectly reset parsing into mid-call Q&A.
 - When transcript headings are missing, section typing is inferred from call flow (prepared remarks vs Q&A), and participants are backfilled from parsed speaker sections so the output remains usable.
 - Q&A transitions now detect moderator handoff phrases (for example, "Operator, may we have the first question") even when spoken by investor-relations speakers, reducing delayed `prepared_remarks` -> `qa` switching.
+- Multi-ticker runs now share deterministic discovery fetches (sitemap/author URLs) inside a single run to reduce repeated network work.
 - Verbose logging now emits phase separators (`DISCOVERY:SITEMAP`, `DISCOVERY:AUTHOR`, `DISCOVERY:OPENAI_FALLBACK`, `SCRAPE`, `RUN COMPLETE`) plus phase timings and failure categories.
 
 ## Notes

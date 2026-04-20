@@ -39,7 +39,7 @@ DEFAULT_DISCOVERY_MODE = os.getenv("MOTLEY_DISCOVERY_MODE", "hybrid")
 DEFAULT_DISCOVERY_CACHE_DIR = os.getenv("MOTLEY_DISCOVERY_CACHE_DIR", "output/openai_motley_discovery_cache")
 DEFAULT_DISCOVERY_CACHE_MODE = os.getenv("MOTLEY_DISCOVERY_CACHE_MODE", "refresh")
 DEFAULT_SITEMAP_LOOKBACK_MONTHS = int(os.getenv("MOTLEY_SITEMAP_LOOKBACK_MONTHS", "18"))
-DEFAULT_AUTHOR_MAX_PAGES = int(os.getenv("MOTLEY_AUTHOR_MAX_PAGES", "40"))
+DEFAULT_AUTHOR_MAX_PAGES = int(os.getenv("MOTLEY_AUTHOR_MAX_PAGES", "0"))
 DEFAULT_DISCOVERY_HTTP_RETRIES = int(os.getenv("MOTLEY_DISCOVERY_HTTP_RETRIES", "2"))
 DEFAULT_MOTLEY_SITEMAP_INDEX_URL = os.getenv("MOTLEY_SITEMAP_INDEX_URL", "https://www.fool.com/sitemap/")
 DEFAULT_MOTLEY_AUTHOR_ARCHIVE_URL = os.getenv("MOTLEY_AUTHOR_ARCHIVE_URL", "https://www.fool.com/author/20032/")
@@ -402,17 +402,24 @@ def _fetch_text_with_retries(
     url: str,
     timeout_seconds: int,
     retries: int,
+    response_cache: Optional[dict[str, str]] = None,
     log_fn: Optional[Callable[[str], None]] = None,
     log_prefix: str = "",
 ) -> str:
     log = log_fn or (lambda _: None)
     attempts = max(1, retries)
+    cache_key = _normalize_url(url) or url
+    if response_cache is not None and cache_key in response_cache:
+        return response_cache[cache_key]
     last_exc: Optional[Exception] = None
     for attempt in range(1, attempts + 1):
         try:
             response = requests.get(url, headers=_REQUEST_HEADERS, timeout=timeout_seconds)
             response.raise_for_status()
-            return response.text
+            text = response.text
+            if response_cache is not None:
+                response_cache[cache_key] = text
+            return text
         except Exception as exc:
             last_exc = exc
             category = _classify_failure_reason(exc)
@@ -1819,14 +1826,25 @@ def _build_transcript_structure_schema() -> dict[str, Any]:
     }
 
 
-def _build_search_prompt(ticker: str, max_candidates: int) -> str:
-    return (
+def _build_search_prompt(ticker: str, max_candidates: int, missing_quarters: Optional[list[str]] = None) -> str:
+    missing_labels = [str(label).strip() for label in (missing_quarters or []) if str(label).strip()]
+    base = (
         "Use web search to find Motley Fool earnings call transcript pages for the stock ticker "
         f"{ticker}.\n"
         "Focus on URLs under /earnings/call-transcripts/ on www.fool.com.\n"
-        f"Find at least {max_candidates} likely transcript pages if available, newest first.\n"
+    )
+    if missing_labels:
+        base += (
+            "Prior deterministic discovery already found some quarters.\n"
+            f"Focus only on unresolved quarter labels: {', '.join(missing_labels)}.\n"
+            "If an exact unresolved quarter page is unavailable, return the closest adjacent Motley transcript "
+            "for this ticker and keep results newest first.\n"
+        )
+    base += (
+        f"Find up to {max_candidates} likely transcript pages if available, newest first.\n"
         "The tool sources are the main output we will parse."
     )
+    return base
 
 
 def _build_transcript_structure_prompt(
@@ -1899,12 +1917,17 @@ def _build_request_payload(
     ticker: str,
     max_candidates: int,
     tool_type: str,
+    missing_quarters: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     return {
         "model": model,
         "max_output_tokens": 800,
         "tool_choice": "required",
-        "input": _build_search_prompt(ticker=ticker, max_candidates=max_candidates),
+        "input": _build_search_prompt(
+            ticker=ticker,
+            max_candidates=max_candidates,
+            missing_quarters=missing_quarters,
+        ),
         "tools": [_build_tool(tool_type)],
         "include": ["web_search_call.action.sources"],
     }
@@ -2848,6 +2871,7 @@ def _discover_candidates_from_sitemaps(
     target_quarters: int,
     alias_tokens: set[str],
     http_retries: int,
+    fetch_cache: Optional[dict[str, str]],
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> tuple[list[dict[str, str]], set[str], dict[str, Any]]:
     log = log_fn or (lambda _: None)
@@ -2878,6 +2902,7 @@ def _discover_candidates_from_sitemaps(
             url=DEFAULT_MOTLEY_SITEMAP_INDEX_URL,
             timeout_seconds=timeout_seconds,
             retries=http_retries,
+            response_cache=fetch_cache,
             log_fn=log_fn,
             log_prefix=f"{ticker}: DISCOVERY:SITEMAP ",
         )
@@ -2902,6 +2927,7 @@ def _discover_candidates_from_sitemaps(
                 url=sitemap_url,
                 timeout_seconds=timeout_seconds,
                 retries=http_retries,
+                response_cache=fetch_cache,
                 log_fn=log_fn,
                 log_prefix=f"{ticker}: DISCOVERY:SITEMAP ",
             )
@@ -2963,6 +2989,7 @@ def _discover_candidates_from_author_pages(
     target_quarters: int,
     alias_tokens: set[str],
     http_retries: int,
+    fetch_cache: Optional[dict[str, str]],
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> tuple[list[dict[str, str]], set[str], dict[str, Any]]:
     log = log_fn or (lambda _: None)
@@ -2999,6 +3026,7 @@ def _discover_candidates_from_author_pages(
                 url=page_url,
                 timeout_seconds=timeout_seconds,
                 retries=http_retries,
+                response_cache=fetch_cache,
                 log_fn=log_fn,
                 log_prefix=f"{ticker}: DISCOVERY:AUTHOR ",
             )
@@ -3083,6 +3111,7 @@ def _discover_candidates_with_openai(
     base_url: str,
     timeout_seconds: int,
     max_candidates: int,
+    missing_quarters: Optional[list[str]],
     retry_attempts: int,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> tuple[list[dict[str, str]], dict[str, Any]]:
@@ -3111,6 +3140,7 @@ def _discover_candidates_with_openai(
             ticker=ticker,
             max_candidates=max_candidates,
             tool_type=tool_type,
+            missing_quarters=missing_quarters,
         )
         last_exc: Optional[Exception] = None
         for attempt in range(1, retry_attempts + 1):
@@ -3244,6 +3274,7 @@ def discover_last_quarter_links(
     author_max_pages: int = DEFAULT_AUTHOR_MAX_PAGES,
     discovery_cache_mode: str = DEFAULT_DISCOVERY_CACHE_MODE,
     discovery_cache_dir: str = DEFAULT_DISCOVERY_CACHE_DIR,
+    discovery_fetch_cache: Optional[dict[str, str]] = None,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> dict[str, Any]:
     log = log_fn or (lambda _: None)
@@ -3261,7 +3292,7 @@ def discover_last_quarter_links(
     if cache_mode not in {"refresh", "use", "off"}:
         cache_mode = "refresh"
     sitemap_lookback_months = max(1, sitemap_lookback_months)
-    author_max_pages = max(1, author_max_pages)
+    author_max_pages = max(0, author_max_pages)
     retry_attempts = max(1, retry_attempts)
     http_retries = max(1, DEFAULT_DISCOVERY_HTTP_RETRIES)
     cache_path = _resolve_discovery_cache_path(
@@ -3337,6 +3368,7 @@ def discover_last_quarter_links(
             target_quarters=target_quarters,
             alias_tokens=alias_tokens,
             http_retries=http_retries,
+            fetch_cache=discovery_fetch_cache,
             log_fn=log_fn,
         )
         discovery_trace["phases"].append(sitemap_phase)
@@ -3356,39 +3388,73 @@ def discover_last_quarter_links(
     # Phase 2: author fallback
     if mode == "hybrid" and current_missing:
         _log_phase(log_fn, "DISCOVERY:AUTHOR", ticker=symbol)
-        author_candidates, alias_tokens, author_phase = _discover_candidates_from_author_pages(
-            ticker=symbol,
-            timeout_seconds=timeout_seconds,
-            max_pages=author_max_pages,
-            target_quarters=target_quarters,
-            alias_tokens=alias_tokens,
-            http_retries=http_retries,
-            log_fn=log_fn,
-        )
-        discovery_trace["phases"].append(author_phase)
-        if author_candidates:
-            methods_used.append("author")
-            raw_candidates.extend(author_candidates)
-        log(
-            f"{symbol}: DISCOVERY:AUTHOR status={author_phase.get('status')} "
-            f"duration_ms={author_phase.get('duration_ms')} pages_scanned={author_phase.get('pages_scanned')} "
-            f"urls_scanned={author_phase.get('urls_scanned')} candidates_added={author_phase.get('candidates_added')}"
-        )
-        status_payload = _refresh_status()
-        current_missing = list(status_payload["window_status"]["missing"])
-        clean_warnings.extend(status_payload["warnings"])
+        if author_max_pages <= 0:
+            author_phase = {
+                "phase": "author",
+                "status": "skipped",
+                "duration_ms": 0,
+                "pages_attempted": 0,
+                "pages_scanned": 0,
+                "pages_with_links": 0,
+                "urls_scanned": 0,
+                "transcript_urls": 0,
+                "explicit_ticker_matches": 0,
+                "alias_matches": 0,
+                "candidates_added": 0,
+                "author_base_url": DEFAULT_MOTLEY_AUTHOR_ARCHIVE_URL,
+                "failures": [],
+                "early_stop": False,
+            }
+            discovery_trace["phases"].append(author_phase)
+            log(
+                f"{symbol}: DISCOVERY:AUTHOR status=skipped duration_ms=0 pages_scanned=0 "
+                "urls_scanned=0 candidates_added=0"
+            )
+        else:
+            author_candidates, alias_tokens, author_phase = _discover_candidates_from_author_pages(
+                ticker=symbol,
+                timeout_seconds=timeout_seconds,
+                max_pages=author_max_pages,
+                target_quarters=target_quarters,
+                alias_tokens=alias_tokens,
+                http_retries=http_retries,
+                fetch_cache=discovery_fetch_cache,
+                log_fn=log_fn,
+            )
+            discovery_trace["phases"].append(author_phase)
+            if author_candidates:
+                methods_used.append("author")
+                raw_candidates.extend(author_candidates)
+            log(
+                f"{symbol}: DISCOVERY:AUTHOR status={author_phase.get('status')} "
+                f"duration_ms={author_phase.get('duration_ms')} pages_scanned={author_phase.get('pages_scanned')} "
+                f"urls_scanned={author_phase.get('urls_scanned')} candidates_added={author_phase.get('candidates_added')}"
+            )
+            status_payload = _refresh_status()
+            current_missing = list(status_payload["window_status"]["missing"])
+            clean_warnings.extend(status_payload["warnings"])
 
     # Phase 3: OpenAI fallback for unresolved quarters
     if mode in {"hybrid", "openai_only"} and (mode == "openai_only" or current_missing):
         _log_phase(log_fn, "DISCOVERY:OPENAI_FALLBACK", ticker=symbol)
         try:
+            unresolved_for_openai = list(current_missing) if mode == "hybrid" else list(
+                status_payload["window_status"]["missing"]
+            )
+            openai_candidate_budget = min(max_candidates, max(4, len(unresolved_for_openai) * 4))
+            log(
+                f"{symbol}: DISCOVERY:OPENAI_FALLBACK unresolved_quarters="
+                f"{','.join(unresolved_for_openai) if unresolved_for_openai else 'all'} "
+                f"candidate_budget={openai_candidate_budget}"
+            )
             openai_candidates, openai_meta = _discover_candidates_with_openai(
                 ticker=symbol,
                 api_key=api_key,
                 model=model,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
-                max_candidates=max_candidates,
+                max_candidates=openai_candidate_budget,
+                missing_quarters=unresolved_for_openai,
                 retry_attempts=retry_attempts,
                 log_fn=log_fn,
             )
@@ -3813,7 +3879,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         choices=["hybrid", "sitemap_only", "openai_only"],
         default=DEFAULT_DISCOVERY_MODE if DEFAULT_DISCOVERY_MODE in {"hybrid", "sitemap_only", "openai_only"} else "hybrid",
         help=(
-            "Discovery mode: 'hybrid' (sitemap -> author -> OpenAI fallback), "
+            "Discovery mode: 'hybrid' (sitemap -> author (optional) -> OpenAI fallback), "
             "'sitemap_only' (deterministic sitemap crawl only), "
             "'openai_only' (OpenAI web-search only)."
         ),
@@ -3828,7 +3894,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         "--author-max-pages",
         type=int,
         default=DEFAULT_AUTHOR_MAX_PAGES,
-        help="Maximum Motley author archive pages to scan when author fallback is used.",
+        help="Maximum Motley author archive pages to scan in hybrid mode (0 disables author fallback).",
     )
     parser.add_argument(
         "--discovery-cache-mode",
@@ -3924,6 +3990,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
     reports: list[dict[str, Any]] = []
     had_error = False
     interrupted = False
+    shared_discovery_fetch_cache: dict[str, str] = {}
 
     auto_json_path: Optional[Path] = None
     auto_log_path: Optional[Path] = None
@@ -3974,9 +4041,10 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
                 retry_attempts=max(args.openai_retries, 1),
                 discovery_mode=args.discovery_mode,
                 sitemap_lookback_months=max(args.sitemap_lookback_months, 1),
-                author_max_pages=max(args.author_max_pages, 1),
+                author_max_pages=max(args.author_max_pages, 0),
                 discovery_cache_mode=args.discovery_cache_mode,
                 discovery_cache_dir=args.discovery_cache_dir,
+                discovery_fetch_cache=shared_discovery_fetch_cache,
                 log_fn=log_fn,
             )
             if args.scrape and "error" not in report:
