@@ -31,6 +31,7 @@ DEFAULT_OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "3"))
 DEFAULT_TRANSCRIPT_INPUT_MAX_CHARS = int(os.getenv("TRANSCRIPT_INPUT_MAX_CHARS", "120000"))
 DEFAULT_OPENAI_CONNECT_TIMEOUT_SECONDS = float(os.getenv("OPENAI_CONNECT_TIMEOUT_SECONDS", "10"))
 DEFAULT_OPENAI_READ_TIMEOUT_CAP_SECONDS = float(os.getenv("OPENAI_READ_TIMEOUT_CAP_SECONDS", "50"))
+DEFAULT_OPENAI_TRANSPORT_RETRIES = int(os.getenv("OPENAI_TRANSPORT_RETRIES", "0"))
 DEFAULT_TRANSCRIPT_SEGMENT_CHARS = int(os.getenv("TRANSCRIPT_SEGMENT_CHARS", "12000"))
 DEFAULT_SCRAPE_CACHE_DIR = os.getenv("MOTLEY_SCRAPE_CACHE_DIR", "output/openai_motley_cache")
 DEFAULT_SCRAPE_CACHE_MODE = os.getenv("MOTLEY_SCRAPE_CACHE_MODE", "refresh")
@@ -157,10 +158,11 @@ _REQUEST_HEADERS = {
 
 
 def _build_openai_http_session() -> requests.Session:
+    transport_retries = max(0, DEFAULT_OPENAI_TRANSPORT_RETRIES)
     retry = Retry(
-        total=2,
-        connect=2,
-        read=2,
+        total=transport_retries,
+        connect=transport_retries,
+        read=transport_retries,
         backoff_factor=0.5,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset(["POST"]),
@@ -1662,7 +1664,23 @@ def _extract_structured_output(response_payload: dict[str, Any]) -> dict[str, An
     raise RuntimeError("OpenAI response did not include parseable structured JSON output.")
 
 
+def _is_retryable_openai_request_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    non_retry_connectivity_markers = (
+        "failed to establish a new connection",
+        "nodename nor servname provided",
+        "name or service not known",
+        "temporary failure in name resolution",
+        "no route to host",
+    )
+    if any(marker in message for marker in non_retry_connectivity_markers):
+        return False
+    return True
+
+
 def _is_retryable_openai_structuring_error(exc: Exception) -> bool:
+    if not _is_retryable_openai_request_error(exc):
+        return False
     if isinstance(exc, json.JSONDecodeError):
         return False
 
@@ -2170,6 +2188,7 @@ def _structure_transcript_with_openai(
         last_exc: Optional[Exception] = None
         segment_structured: Optional[dict[str, Any]] = None
         segment_response_json: Optional[dict[str, Any]] = None
+        read_timeout_failures = 0
         for attempt in range(1, retry_attempts + 1):
             try:
                 log(
@@ -2205,6 +2224,9 @@ def _structure_transcript_with_openai(
                 break
             except Exception as exc:
                 last_exc = exc
+                lowered_exc = str(exc).lower()
+                if "read timed out" in lowered_exc:
+                    read_timeout_failures += 1
                 log(
                     "scrape: OpenAI structuring failed "
                     f"(segment {segment_index + 1}/{len(segments)}, attempt {attempt}): {exc}"
@@ -2212,6 +2234,12 @@ def _structure_transcript_with_openai(
                 if not _is_retryable_openai_structuring_error(exc):
                     log(
                         "scrape: OpenAI structuring error is non-retryable; "
+                        f"aborting retries for segment {segment_index + 1}"
+                    )
+                    break
+                if read_timeout_failures >= 2:
+                    log(
+                        "scrape: repeated OpenAI read timeouts; "
                         f"aborting retries for segment {segment_index + 1}"
                     )
                     break
@@ -2487,6 +2515,12 @@ def discover_last_quarter_links(
             except Exception as exc:
                 last_exc = exc
                 log(f"{symbol}: tool '{tool_type}' failed on attempt {attempt}: {exc}")
+                if not _is_retryable_openai_request_error(exc):
+                    log(
+                        f"{symbol}: tool '{tool_type}' error is non-retryable; "
+                        f"aborting retries for this tool"
+                    )
+                    break
                 if attempt < retry_attempts:
                     backoff_seconds = min(4.0, 1.2 * attempt)
                     log(f"{symbol}: retrying '{tool_type}' after {backoff_seconds:.1f}s")

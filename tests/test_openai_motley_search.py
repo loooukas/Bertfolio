@@ -20,6 +20,7 @@ from finbert_site.openai_motley_search import (
     _parse_transcript_from_html,
     _pick_best_candidate_by_quarter,
     _quarter_window,
+    _is_retryable_openai_request_error,
     _is_retryable_openai_structuring_error,
     _select_most_recent_candidates,
     discover_last_quarter_links,
@@ -237,6 +238,15 @@ def test_retryable_openai_structuring_error_marks_json_decode_as_non_retryable()
 def test_retryable_openai_structuring_error_marks_connection_reset_as_retryable() -> None:
     exc = RuntimeError("HTTPSConnectionPool(host='api.openai.com', port=443): Read timed out.")
     assert _is_retryable_openai_structuring_error(exc) is True
+
+
+def test_retryable_openai_request_error_marks_dns_resolution_as_non_retryable() -> None:
+    exc = RuntimeError(
+        "HTTPSConnectionPool(host='api.openai.com', port=443): Max retries exceeded with url: /v1/responses "
+        "(Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x1>: "
+        "Failed to establish a new connection: [Errno 8] nodename nor servname provided, or not known'))"
+    )
+    assert _is_retryable_openai_request_error(exc) is False
 
 
 def test_select_most_recent_candidates_from_candidate_pool() -> None:
