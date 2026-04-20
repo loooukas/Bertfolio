@@ -12,6 +12,31 @@ The app is organized into exactly 5 primary sections:
 4. Fundamentals
 5. Data Audit
 
+## UI Implementation (Current)
+
+The frontend now ships as a redesigned institutional dark-theme workspace with:
+
+- Top navigation (`Charts Test`, `API Docs`, `Settings`) and ticker quick-select chips
+- Full-screen real progress overlay with stage descriptions and running/complete/error states
+- Horizontal report tabs for the 5 canonical sections
+- Transcript-first deep-dive patterns:
+  - quarter availability actions + structured transcript modal
+  - key-quote cards with sentiment tone
+  - Q&A pressure table, speaker rollups, and filterable/sortable speaker table
+- Market reaction drilldowns:
+  - expandable news items
+  - social card grid with detail modal
+  - sentiment distribution chart (news vs social)
+- Fundamentals workspace:
+  - key metrics + highlights
+  - dedicated revenue, net-income, and EPS-vs-estimate chart panels
+- Data audit workspace:
+  - confidence grading
+  - source count quality table
+  - task-duration breakdown
+  - transcript discovery funnel
+  - fundamentals cross-validation mismatch table
+
 Execution-role UI language (trader/risk/manager workflows) is removed from the primary interface. Legacy API fields remain for one migration window.
 
 The UI now keeps a full-screen progress experience until every section finishes, then reveals the full report in one pass.

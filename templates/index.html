@@ -9,28 +9,69 @@
   </head>
   <body>
     <main class="app-shell">
-      <header class="hero">
-        <div class="hero-copy">
-          <p id="hero-kicker" class="kicker">FINBERT EARNINGS SIGNALS</p>
-          <h1 id="hero-title">FinBERT Earnings Signals</h1>
-          <p id="hero-subtitle">
-            Transcript-first earnings intelligence with compact market context and auditability.
+      <header class="topbar">
+        <div class="brand-wrap">
+          <div class="brand-glyph" aria-hidden="true"></div>
+          <div>
+            <p class="brand-kicker" id="hero-kicker">FINBERT EARNINGS SIGNALS</p>
+            <h1 class="brand-title" id="hero-title">FinBERT Earnings Signals</h1>
+          </div>
+        </div>
+        <nav class="topnav" aria-label="Primary">
+          <a href="/charts-test">Charts Test</a>
+          <a href="/docs">API Docs</a>
+          <a href="#settings" aria-disabled="true">Settings</a>
+        </nav>
+        <button class="avatar-btn" type="button" aria-label="User menu">LP</button>
+      </header>
+
+      <section class="query-card" aria-labelledby="ticker-label">
+        <div class="query-copy">
+          <h2 id="hero-subtitle">Transcript-first earnings intelligence with audit-ready diagnostics.</h2>
+          <p id="query-note">
+            Enter a ticker, run the full pipeline, and review transcript, market, fundamentals, and quality controls in one report.
           </p>
         </div>
-
-        <section class="query-panel">
-          <label for="ticker" id="ticker-label">Ticker</label>
+        <div class="query-input-wrap">
+          <label for="ticker" id="ticker-label">Ticker Symbol</label>
           <div class="query-row">
-            <input id="ticker" type="text" value="AAPL" maxlength="12" />
-            <button id="analyze-btn">Run Analysis</button>
+            <input id="ticker" type="text" value="AAPL" maxlength="12" placeholder="Enter ticker symbol (e.g., AAPL)" autocomplete="off" />
+            <button id="analyze-btn" type="button">Run Analysis</button>
           </div>
-          <p id="query-note" class="query-note">
-            Full report loads once all sections complete. News: Alpha Vantage + Yahoo Finance. Social: Reddit + Stocktwits.
-          </p>
-        </section>
+          <div class="quick-tickers" aria-label="Popular tickers">
+            <button type="button" class="ticker-chip" data-ticker="AAPL">AAPL</button>
+            <button type="button" class="ticker-chip" data-ticker="MSFT">MSFT</button>
+            <button type="button" class="ticker-chip" data-ticker="NVDA">NVDA</button>
+            <button type="button" class="ticker-chip" data-ticker="GOOGL">GOOGL</button>
+            <button type="button" class="ticker-chip" data-ticker="AMZN">AMZN</button>
+            <button type="button" class="ticker-chip" data-ticker="TSLA">TSLA</button>
+          </div>
+        </div>
+        <p id="status" class="status-line" role="status" aria-live="polite"></p>
+      </section>
 
-        <p id="status" class="status-line"></p>
-      </header>
+      <section id="empty-state" class="empty-state" aria-live="polite">
+        <div class="empty-icon" aria-hidden="true">◎</div>
+        <h2>Enter a ticker to begin analysis</h2>
+        <p>
+          The platform fuses transcript scoring, market context, fundamentals, and data auditability.
+          Full report appears only after all pipeline stages complete.
+        </p>
+        <div class="empty-features" role="list">
+          <article role="listitem">
+            <h3>Transcript Intelligence</h3>
+            <p>Speaker-level confidence, evasiveness, and forward-looking signal extraction.</p>
+          </article>
+          <article role="listitem">
+            <h3>Market Reaction</h3>
+            <p>News + social sentiment with source-level provenance and evidence drill-down.</p>
+          </article>
+          <article role="listitem">
+            <h3>Data Audit</h3>
+            <p>Pipeline diagnostics, source coverage, and mismatch flags for reliability checks.</p>
+          </article>
+        </div>
+      </section>
 
       <section id="loading-overlay" class="loading-overlay hidden" aria-live="polite" aria-busy="true">
         <div class="loading-stage">
@@ -39,11 +80,9 @@
             <span class="ring ring-b"></span>
             <span class="ring ring-c"></span>
           </div>
-          <p class="loading-kicker">Booting Analysis</p>
-          <h2 id="loading-title">Starting full analysis…</h2>
-          <p id="loading-subtitle" class="loading-subtitle">
-            Pulling high-volume news and social signals first.
-          </p>
+          <p class="loading-kicker">Pipeline Execution</p>
+          <h2 id="loading-title">Bootstrapping analysis...</h2>
+          <p id="loading-subtitle">Waiting for backend job start.</p>
           <div class="loading-progress-track" aria-hidden="true">
             <div id="loading-progress-bar" class="loading-progress-bar"></div>
           </div>
@@ -51,96 +90,108 @@
         </div>
       </section>
 
-      <section id="workspace" class="workspace hidden">
-        <aside class="left-rail">
-          <article class="rail-card" id="run-context"></article>
-          <article class="rail-card" id="pipeline-status"></article>
-          <nav class="rail-nav" id="section-nav"></nav>
-        </aside>
+      <section id="workspace" class="workspace hidden" aria-live="polite">
+        <article class="surface run-summary" id="run-context"></article>
+        <article class="surface stage-summary" id="pipeline-status"></article>
 
-        <section class="main-panel">
-          <section id="section-overview" class="section-pane active">
-            <article class="panel-card">
-              <h2 id="heading-overview">Overview</h2>
-              <p id="overview-summary" class="summary"></p>
-              <ul id="overview-takeaways" class="takeaways"></ul>
-              <div id="overview-metrics" class="metric-grid"></div>
+        <nav class="report-tabs" id="report-tabs" aria-label="Report sections"></nav>
+
+        <section class="report-content">
+          <section id="section-overview" class="tab-panel active" aria-labelledby="tab-overview">
+            <article class="surface company-header" id="company-header"></article>
+            <article class="surface signal-card" id="signal-summary"></article>
+            <article class="surface">
+              <h3>Key Metrics</h3>
+              <div id="overview-metrics" class="kpi-row"></div>
             </article>
-
-            <article class="panel-card">
-              <h3 id="heading-speaker-profile">Speaker Confidence Profile</h3>
-              <div id="speaker-confidence-chart" class="chart-surface"></div>
-              <p id="speaker-chart-empty" class="empty-note">Not enough speaker diversity for a useful profile chart.</p>
+            <article class="surface">
+              <h3>Key Takeaways</h3>
+              <ul id="overview-takeaways" class="compact-list"></ul>
             </article>
           </section>
 
-          <section id="section-transcript" class="section-pane">
-            <article class="panel-card">
-              <h2 id="heading-transcript">Transcript</h2>
-              <p id="transcript-availability" class="summary"></p>
-              <p id="transcript-summary" class="body-copy"></p>
-              <p id="transcript-prepared-qa" class="body-copy"></p>
-              <div>
-                <h4>Recent Quarters</h4>
-                <div id="transcript-quarter-actions" class="quarter-action-grid"></div>
+          <section id="section-transcript" class="tab-panel" aria-labelledby="tab-transcript">
+            <article class="surface">
+              <div class="section-header-row">
+                <div>
+                  <h2>Transcript Analysis</h2>
+                  <p id="transcript-availability" class="muted"></p>
+                </div>
               </div>
+              <p id="transcript-summary" class="summary-copy"></p>
+              <p id="transcript-prepared-qa" class="muted"></p>
+              <h3>Quarter Availability</h3>
+              <div id="transcript-quarter-actions" class="quarter-action-grid"></div>
+            </article>
 
-              <div class="split-grid">
-                <div>
-                  <h4 id="heading-quotes">Key Quotes</h4>
-                  <ul id="transcript-quotes" class="compact-list"></ul>
-                </div>
-                <div>
-                  <h4 id="heading-pressure">Q&A Pressure Points</h4>
-                  <ul id="transcript-pressure" class="compact-list"></ul>
-                </div>
+            <article class="surface">
+              <h3>Key Quotes</h3>
+              <div id="transcript-quotes" class="quote-list"></div>
+            </article>
+
+            <article class="surface">
+              <h3>Q&amp;A Pressure Points</h3>
+              <div class="table-shell">
+                <table id="qa-pressure-table">
+                  <thead>
+                    <tr>
+                      <th>Analyst / Speaker</th>
+                      <th>Question / Topic</th>
+                      <th>Evasiveness</th>
+                      <th>Response Quality</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
               </div>
             </article>
 
-            <article class="panel-card">
-              <h3 id="heading-speaker-table">Speaker Block Analysis</h3>
-              <div class="filter-grid">
-                <label>
-                  Speaker
-                  <select id="filter-speaker"></select>
-                </label>
-                <label>
-                  Section
-                  <select id="filter-section"></select>
-                </label>
-                <label>
-                  Topic
-                  <select id="filter-topic"></select>
-                </label>
-                <label>
-                  Sentiment
-                  <select id="filter-sentiment"></select>
-                </label>
-                <label>
-                  Min Confidence
-                  <input id="filter-confidence-min" type="number" value="0" min="0" max="100" step="1" />
-                </label>
-                <label>
-                  Max Evasiveness
-                  <input id="filter-evasiveness-max" type="number" value="100" min="0" max="100" step="1" />
-                </label>
-                <label>
-                  Min Specificity
-                  <input id="filter-specificity-min" type="number" value="0" min="0" max="100" step="1" />
-                </label>
-                <button id="filter-reset" type="button" class="ghost-btn">Reset Filters</button>
+            <article class="surface">
+              <h3>Speaker Rollup</h3>
+              <div id="speaker-rollup-cards" class="speaker-rollup"></div>
+            </article>
+
+            <article class="surface">
+              <div class="table-title-row">
+                <h3>Speaker Analysis Table</h3>
+                <div class="filter-wrap">
+                  <label>
+                    Role
+                    <select id="filter-role"></select>
+                  </label>
+                  <label>
+                    Speaker
+                    <select id="filter-speaker"></select>
+                  </label>
+                  <label>
+                    Section
+                    <select id="filter-section"></select>
+                  </label>
+                  <label>
+                    Topic
+                    <select id="filter-topic"></select>
+                  </label>
+                  <label>
+                    Sentiment
+                    <select id="filter-sentiment"></select>
+                  </label>
+                  <label>
+                    Min Confidence
+                    <input id="filter-confidence-min" type="number" value="0" min="0" max="100" step="1" />
+                  </label>
+                  <button id="filter-reset" type="button" class="ghost-btn">Reset</button>
+                </div>
               </div>
-              <div class="table-wrap">
+              <div class="table-shell">
                 <table id="speaker-analysis-table">
                   <thead>
                     <tr>
-                      <th>Speaker</th>
-                      <th>Section</th>
-                      <th>Sentiment</th>
-                      <th>Confidence</th>
-                      <th>Evasiveness</th>
-                      <th>Specificity</th>
-                      <th>Topic</th>
+                      <th><button type="button" data-sort="speaker">Speaker</button></th>
+                      <th><button type="button" data-sort="role">Role</button></th>
+                      <th><button type="button" data-sort="statements">Statements</button></th>
+                      <th><button type="button" data-sort="sentiment">Avg Sentiment</button></th>
+                      <th><button type="button" data-sort="hedging">Hedging %</button></th>
+                      <th>Key Phrase</th>
                     </tr>
                   </thead>
                   <tbody></tbody>
@@ -149,36 +200,66 @@
             </article>
           </section>
 
-          <section id="section-market_reaction" class="section-pane">
-            <article class="panel-card">
-              <h2 id="heading-market">Market Reaction</h2>
-              <p id="market-balance" class="summary"></p>
+          <section id="section-market_reaction" class="tab-panel" aria-labelledby="tab-market_reaction">
+            <article class="surface">
+              <h2>Market Reaction</h2>
+              <p id="market-balance" class="summary-copy"></p>
             </article>
 
-            <article class="panel-card">
-              <h3 id="heading-news">News Feed</h3>
-              <div id="news-cards" class="feed-grid"></div>
+            <article class="surface">
+              <h3>Sentiment Distribution</h3>
+              <div id="market-distribution-chart" class="chart-surface"></div>
+              <p id="market-distribution-empty" class="empty-note">Not enough market records for distribution chart.</p>
             </article>
 
-            <article class="panel-card">
-              <h3 id="heading-social">Social Feed</h3>
+            <article class="surface">
+              <h3>News Items</h3>
+              <div id="news-cards" class="feed-stack"></div>
+            </article>
+
+            <article class="surface">
+              <h3>Social Sentiment</h3>
               <div id="social-cards" class="feed-grid"></div>
             </article>
           </section>
 
-          <section id="section-fundamentals" class="section-pane">
-            <article class="panel-card">
-              <h2 id="heading-fundamentals">Fundamentals</h2>
-              <p id="fundamentals-context" class="summary"></p>
-              <div id="fundamentals-metrics" class="metric-grid"></div>
+          <section id="section-fundamentals" class="tab-panel" aria-labelledby="tab-fundamentals">
+            <article class="surface">
+              <h2>Fundamentals</h2>
+              <p id="fundamentals-context" class="summary-copy"></p>
+            </article>
 
-              <div class="chart-card">
-                <h3 id="heading-fundamentals-chart">Quarterly Trend</h3>
-                <div id="fundamentals-chart" class="chart-surface"></div>
-                <p id="fundamentals-chart-empty" class="empty-note">Not enough quarterly depth for a useful fundamentals trend chart.</p>
-              </div>
+            <article class="surface">
+              <h3>Key Metrics</h3>
+              <div id="fundamentals-metrics" class="metric-grid-six"></div>
+            </article>
 
-              <div class="table-wrap">
+            <article class="surface">
+              <h3>Quarterly Highlights</h3>
+              <ul id="fundamentals-highlights" class="compact-list"></ul>
+            </article>
+
+            <article class="surface">
+              <h3>Revenue Trend</h3>
+              <div id="fundamentals-revenue-chart" class="chart-surface"></div>
+              <p id="fundamentals-revenue-empty" class="empty-note">Not enough quarterly depth for revenue trend.</p>
+            </article>
+
+            <article class="surface">
+              <h3>Net Income Trend</h3>
+              <div id="fundamentals-net-chart" class="chart-surface"></div>
+              <p id="fundamentals-net-empty" class="empty-note">Not enough quarterly depth for net income trend.</p>
+            </article>
+
+            <article class="surface">
+              <h3>EPS vs Estimates</h3>
+              <div id="fundamentals-eps-chart" class="chart-surface"></div>
+              <p id="fundamentals-eps-empty" class="empty-note">Reported EPS and estimate comparison unavailable.</p>
+            </article>
+
+            <article class="surface">
+              <h3>Quarterly Table</h3>
+              <div class="table-shell">
                 <table id="fundamentals-table">
                   <thead>
                     <tr>
@@ -195,54 +276,90 @@
             </article>
           </section>
 
-          <section id="section-data_audit" class="section-pane">
-            <article class="panel-card">
-              <h2 id="heading-audit">Data Audit</h2>
-              <p id="audit-confidence" class="summary"></p>
+          <section id="section-data_audit" class="tab-panel" aria-labelledby="tab-data_audit">
+            <article class="surface">
+              <h2>Data Audit</h2>
+              <div id="audit-confidence-card" class="audit-grade-card"></div>
+              <p id="audit-confidence" class="muted"></p>
+            </article>
 
-              <div class="table-wrap">
-                <table id="audit-table">
+            <article class="surface">
+              <h3>Source Counts</h3>
+              <div class="table-shell">
+                <table id="source-counts-table">
                   <thead>
                     <tr>
-                      <th>Item</th>
-                      <th>Value</th>
+                      <th>Source</th>
+                      <th>Items Found</th>
+                      <th>Quality Score</th>
+                      <th>Last Updated</th>
                     </tr>
                   </thead>
                   <tbody></tbody>
                 </table>
               </div>
+            </article>
 
-              <div class="split-grid">
-                <div>
-                  <h4 id="heading-audit-warnings">Warnings</h4>
-                  <ul id="audit-warnings" class="compact-list"></ul>
-                </div>
-                <div>
-                  <h4 id="heading-audit-missing">Missing / Sparse</h4>
-                  <ul id="audit-missing" class="compact-list"></ul>
-                </div>
+            <article class="surface">
+              <h3>Pipeline Task Breakdown</h3>
+              <div class="table-shell">
+                <table id="audit-task-table">
+                  <thead>
+                    <tr>
+                      <th>Task</th>
+                      <th>Status</th>
+                      <th>Duration</th>
+                      <th>Records Processed</th>
+                      <th>Errors</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
               </div>
+            </article>
 
-              <div class="split-grid">
-                <div>
-                  <h4 id="heading-audit-dedupe">Dedupe Stats</h4>
-                  <ul id="audit-dedupe" class="compact-list"></ul>
-                </div>
-                <div>
-                  <h4 id="heading-audit-failures">Discovery Failures</h4>
-                  <ul id="audit-failures" class="compact-list"></ul>
-                </div>
+            <article class="surface">
+              <h3>Transcript Discovery Funnel</h3>
+              <div id="audit-funnel" class="funnel-wrap"></div>
+            </article>
+
+            <article class="surface">
+              <h3>Fundamentals Cross-Validation</h3>
+              <div class="table-shell">
+                <table id="fundamentals-cross-table">
+                  <thead>
+                    <tr>
+                      <th>Field</th>
+                      <th>Yahoo</th>
+                      <th>Alpha Vantage</th>
+                      <th>Relative Diff</th>
+                      <th>Note</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
               </div>
+            </article>
 
-              <div class="split-grid">
-                <div>
-                  <h4 id="heading-audit-discarded">Discarded Near-Matches</h4>
-                  <ul id="audit-discarded" class="compact-list"></ul>
-                </div>
-                <div>
-                  <h4 id="heading-audit-parsing">Parsing Warnings</h4>
-                  <ul id="audit-parsing" class="compact-list"></ul>
-                </div>
+            <article class="surface split-two">
+              <div>
+                <h3>Warnings</h3>
+                <ul id="audit-warnings" class="compact-list"></ul>
+              </div>
+              <div>
+                <h3>Missing / Sparse</h3>
+                <ul id="audit-missing" class="compact-list"></ul>
+              </div>
+            </article>
+
+            <article class="surface split-two">
+              <div>
+                <h3>Discovery Failures</h3>
+                <ul id="audit-failures" class="compact-list"></ul>
+              </div>
+              <div>
+                <h3>Parsing Warnings</h3>
+                <ul id="audit-parsing" class="compact-list"></ul>
               </div>
             </article>
           </section>
@@ -256,9 +373,9 @@
           <h3 id="modal-title">Social Post</h3>
           <button id="modal-close" class="ghost-btn" type="button">Close</button>
         </header>
-        <p id="modal-meta" class="meta-line"></p>
+        <p id="modal-meta" class="muted mono"></p>
         <p id="modal-body" class="modal-body"></p>
-        <a id="modal-link" href="#" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+        <a id="modal-link" href="#" target="_blank" rel="noopener noreferrer">Open source</a>
       </article>
     </dialog>
 
@@ -268,13 +385,28 @@
           <h3 id="transcript-modal-title">Structured Transcript</h3>
           <button id="transcript-modal-close" class="ghost-btn" type="button">Close</button>
         </header>
-        <p id="transcript-modal-meta" class="meta-line"></p>
+        <p id="transcript-modal-meta" class="muted mono"></p>
         <div id="transcript-modal-body" class="transcript-modal-body"></div>
       </article>
     </dialog>
 
     <script>
+      const STAGE_DESCRIPTIONS = {
+        overview: "Generating executive summary",
+        market_reaction: "Analyzing news & social sentiment",
+        fundamentals: "Processing financial metrics",
+        transcript: "Parsing earnings call transcript",
+        data_audit: "Validating data quality",
+      };
+
       const SECTION_ORDER = ["overview", "transcript", "market_reaction", "fundamentals", "data_audit"];
+      const TAB_LABELS = {
+        overview: "Overview",
+        transcript: "Transcript",
+        market_reaction: "Market Reaction",
+        fundamentals: "Fundamentals",
+        data_audit: "Data Audit",
+      };
 
       const state = {
         payload: null,
@@ -283,96 +415,85 @@
         currentJobId: null,
         jobProgress: null,
         charts: {
-          speaker: null,
-          fundamentals: null,
-        },
-        chartData: {
-          speaker: null,
-          fundamentals: null,
+          marketDistribution: null,
+          fundamentalsRevenue: null,
+          fundamentalsNet: null,
+          fundamentalsEps: null,
         },
         speakerRows: [],
+        speakerRoleMap: {},
         transcriptQuarterDocs: {},
+        speakerSort: { key: "statements", direction: "desc" },
       };
 
       const elements = {
-        workspace: document.getElementById("workspace"),
         status: document.getElementById("status"),
+        workspace: document.getElementById("workspace"),
+        emptyState: document.getElementById("empty-state"),
         loadingOverlay: document.getElementById("loading-overlay"),
         loadingTitle: document.getElementById("loading-title"),
         loadingSubtitle: document.getElementById("loading-subtitle"),
         loadingProgressBar: document.getElementById("loading-progress-bar"),
         loadingProgressList: document.getElementById("loading-progress-list"),
+
         tickerInput: document.getElementById("ticker"),
         analyzeBtn: document.getElementById("analyze-btn"),
-        sectionNav: document.getElementById("section-nav"),
+        tickerChips: Array.from(document.querySelectorAll(".ticker-chip")),
+
+        reportTabs: document.getElementById("report-tabs"),
+
         runContext: document.getElementById("run-context"),
         pipelineStatus: document.getElementById("pipeline-status"),
-        heroTitle: document.getElementById("hero-title"),
-        heroSubtitle: document.getElementById("hero-subtitle"),
-        tickerLabel: document.getElementById("ticker-label"),
-        heroKicker: document.getElementById("hero-kicker"),
-        queryNote: document.getElementById("query-note"),
 
-        headingOverview: document.getElementById("heading-overview"),
-        headingSpeakerProfile: document.getElementById("heading-speaker-profile"),
-        headingTranscript: document.getElementById("heading-transcript"),
-        headingQuotes: document.getElementById("heading-quotes"),
-        headingPressure: document.getElementById("heading-pressure"),
-        headingSpeakerTable: document.getElementById("heading-speaker-table"),
-        headingMarket: document.getElementById("heading-market"),
-        headingNews: document.getElementById("heading-news"),
-        headingSocial: document.getElementById("heading-social"),
-        headingFundamentals: document.getElementById("heading-fundamentals"),
-        headingFundamentalsChart: document.getElementById("heading-fundamentals-chart"),
-        headingAudit: document.getElementById("heading-audit"),
-        headingAuditWarnings: document.getElementById("heading-audit-warnings"),
-        headingAuditMissing: document.getElementById("heading-audit-missing"),
-        headingAuditDedupe: document.getElementById("heading-audit-dedupe"),
-        headingAuditFailures: document.getElementById("heading-audit-failures"),
-        headingAuditDiscarded: document.getElementById("heading-audit-discarded"),
-        headingAuditParsing: document.getElementById("heading-audit-parsing"),
-
-        overviewSummary: document.getElementById("overview-summary"),
-        overviewTakeaways: document.getElementById("overview-takeaways"),
+        companyHeader: document.getElementById("company-header"),
+        signalSummary: document.getElementById("signal-summary"),
         overviewMetrics: document.getElementById("overview-metrics"),
+        overviewTakeaways: document.getElementById("overview-takeaways"),
 
         transcriptAvailability: document.getElementById("transcript-availability"),
         transcriptSummary: document.getElementById("transcript-summary"),
         transcriptPreparedQa: document.getElementById("transcript-prepared-qa"),
-        transcriptQuotes: document.getElementById("transcript-quotes"),
-        transcriptPressure: document.getElementById("transcript-pressure"),
         transcriptQuarterActions: document.getElementById("transcript-quarter-actions"),
-        speakerTableBody: document.querySelector("#speaker-analysis-table tbody"),
+        transcriptQuotes: document.getElementById("transcript-quotes"),
+        qaPressureBody: document.querySelector("#qa-pressure-table tbody"),
+        speakerRollupCards: document.getElementById("speaker-rollup-cards"),
+
+        filterRole: document.getElementById("filter-role"),
         filterSpeaker: document.getElementById("filter-speaker"),
         filterSection: document.getElementById("filter-section"),
         filterTopic: document.getElementById("filter-topic"),
         filterSentiment: document.getElementById("filter-sentiment"),
         filterConfidenceMin: document.getElementById("filter-confidence-min"),
-        filterEvasivenessMax: document.getElementById("filter-evasiveness-max"),
-        filterSpecificityMin: document.getElementById("filter-specificity-min"),
         filterReset: document.getElementById("filter-reset"),
+        speakerTableBody: document.querySelector("#speaker-analysis-table tbody"),
 
         marketBalance: document.getElementById("market-balance"),
+        marketDistributionChart: document.getElementById("market-distribution-chart"),
+        marketDistributionEmpty: document.getElementById("market-distribution-empty"),
         newsCards: document.getElementById("news-cards"),
         socialCards: document.getElementById("social-cards"),
 
         fundamentalsContext: document.getElementById("fundamentals-context"),
         fundamentalsMetrics: document.getElementById("fundamentals-metrics"),
+        fundamentalsHighlights: document.getElementById("fundamentals-highlights"),
         fundamentalsTableBody: document.querySelector("#fundamentals-table tbody"),
+        fundamentalsRevenueChart: document.getElementById("fundamentals-revenue-chart"),
+        fundamentalsRevenueEmpty: document.getElementById("fundamentals-revenue-empty"),
+        fundamentalsNetChart: document.getElementById("fundamentals-net-chart"),
+        fundamentalsNetEmpty: document.getElementById("fundamentals-net-empty"),
+        fundamentalsEpsChart: document.getElementById("fundamentals-eps-chart"),
+        fundamentalsEpsEmpty: document.getElementById("fundamentals-eps-empty"),
 
+        auditConfidenceCard: document.getElementById("audit-confidence-card"),
         auditConfidence: document.getElementById("audit-confidence"),
-        auditTableBody: document.querySelector("#audit-table tbody"),
+        sourceCountsBody: document.querySelector("#source-counts-table tbody"),
+        auditTaskBody: document.querySelector("#audit-task-table tbody"),
+        auditFunnel: document.getElementById("audit-funnel"),
+        fundamentalsCrossBody: document.querySelector("#fundamentals-cross-table tbody"),
         auditWarnings: document.getElementById("audit-warnings"),
         auditMissing: document.getElementById("audit-missing"),
-        auditDedupe: document.getElementById("audit-dedupe"),
         auditFailures: document.getElementById("audit-failures"),
-        auditDiscarded: document.getElementById("audit-discarded"),
         auditParsing: document.getElementById("audit-parsing"),
-
-        speakerChartSurface: document.getElementById("speaker-confidence-chart"),
-        speakerChartEmpty: document.getElementById("speaker-chart-empty"),
-        fundamentalsChartSurface: document.getElementById("fundamentals-chart"),
-        fundamentalsChartEmpty: document.getElementById("fundamentals-chart-empty"),
 
         modal: document.getElementById("social-modal"),
         modalClose: document.getElementById("modal-close"),
@@ -393,20 +514,24 @@
       }
 
       function fmtNum(value, digits = 2) {
-        if (value === null || value === undefined || Number.isNaN(value)) return "-";
+        if (value === null || value === undefined || Number.isNaN(value)) return "n/a";
         return new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(value);
       }
 
       function fmtCurrency(value) {
-        if (value === null || value === undefined || Number.isNaN(value)) return "-";
+        if (value === null || value === undefined || Number.isNaN(value)) return "n/a";
         return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
       }
 
-      function fmtDate(utc) {
-        if (!utc) return "n/a";
-        const date = new Date(utc * 1000);
-        if (Number.isNaN(date.getTime())) return "n/a";
-        return date.toISOString().slice(0, 10);
+      function fmtPct(value, digits = 1) {
+        if (value === null || value === undefined || Number.isNaN(value)) return "n/a";
+        return `${fmtNum(value, digits)}%`;
+      }
+
+      function fmtDate(utcSeconds) {
+        if (!utcSeconds) return "n/a";
+        const date = new Date(Number(utcSeconds) * 1000);
+        return Number.isNaN(date.getTime()) ? "n/a" : date.toISOString().slice(0, 10);
       }
 
       function fmtExternalDate(value) {
@@ -417,39 +542,38 @@
         return raw.slice(0, 10);
       }
 
-      function compactText(text, maxChars = 180) {
-        const cleaned = String(text || "").replace(/\s+/g, " ").trim();
-        if (!cleaned) return "";
-        return cleaned.length <= maxChars ? cleaned : `${cleaned.slice(0, maxChars - 1).trimEnd()}…`;
-      }
-
       function humanizeToken(value) {
         return String(value || "n/a")
           .replaceAll("_", " ")
           .toLowerCase()
-          .replace(/\b\w/g, (match) => match.toUpperCase());
+          .replace(/\b\w/g, (m) => m.toUpperCase());
       }
 
-      function externalIcon() {
-        return `
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M14 4h6v6M20 4l-9 9" />
-            <path d="M10 6H7a3 3 0 0 0-3 3v8a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3" />
-          </svg>
-        `;
+      function sentimentClass(labelOrScore) {
+        const raw = String(labelOrScore || "").toLowerCase();
+        if (raw.includes("bull") || Number(labelOrScore) > 0.12) return "sentiment-bullish";
+        if (raw.includes("bear") || Number(labelOrScore) < -0.12) return "sentiment-bearish";
+        return "sentiment-neutral";
       }
 
-      function clearList(el) {
-        el.innerHTML = "";
+      function sentimentBucket(label) {
+        const text = String(label || "").toLowerCase();
+        if (text.includes("bull")) return "positive";
+        if (text.includes("bear")) return "negative";
+        return "neutral";
       }
 
-      function renderList(el, items, fallback) {
-        clearList(el);
+      function clearNode(node) {
+        node.innerHTML = "";
+      }
+
+      function renderList(node, items, fallback) {
+        clearNode(node);
         const rows = items && items.length ? items : [fallback];
-        rows.forEach((value) => {
+        rows.forEach((text) => {
           const li = document.createElement("li");
-          li.textContent = String(value);
-          el.appendChild(li);
+          li.textContent = String(text);
+          node.appendChild(li);
         });
       }
 
@@ -460,48 +584,87 @@
         if (subtitle) elements.loadingSubtitle.textContent = subtitle;
       }
 
-      function setChartVisibility(surface, empty, enabled) {
-        surface.style.display = enabled ? "block" : "none";
-        empty.style.display = enabled ? "none" : "block";
-      }
+      function buildTabs() {
+        elements.reportTabs.innerHTML = SECTION_ORDER.map((section, idx) => {
+          const active = idx === 0 ? "active" : "";
+          return `<button id="tab-${section}" class="tab-btn ${active}" type="button" data-section="${section}">${TAB_LABELS[section] || humanizeToken(section)}</button>`;
+        }).join("");
 
-      function destroyCharts() {
-        Object.keys(state.charts).forEach((key) => {
-          const chart = state.charts[key];
-          if (chart && typeof chart.destroy === "function") chart.destroy();
-          state.charts[key] = null;
+        elements.reportTabs.querySelectorAll(".tab-btn").forEach((btn) => {
+          btn.addEventListener("click", () => switchSection(btn.dataset.section));
         });
       }
 
-      function stageLabels() {
-        return state.uiCopy?.section_labels || {
-          overview: "Overview",
-          transcript: "Transcript",
-          market_reaction: "Market Reaction",
-          fundamentals: "Fundamentals",
-          data_audit: "Data Audit",
-        };
+      function switchSection(sectionId) {
+        state.currentSection = sectionId;
+        document.querySelectorAll(".tab-btn").forEach((btn) => {
+          btn.classList.toggle("active", btn.dataset.section === sectionId);
+        });
+        document.querySelectorAll(".tab-panel").forEach((panel) => {
+          panel.classList.toggle("active", panel.id === `section-${sectionId}`);
+        });
+        requestAnimationFrame(renderVisibleCharts);
       }
 
-      function renderPipelineStatus() {
+      function stageStateIcon(status) {
+        if (status === "done") return "✓";
+        if (status === "loading") return "◌";
+        if (status === "error") return "✕";
+        return "•";
+      }
+
+      function stageStateText(status) {
+        if (status === "done") return "Complete";
+        if (status === "loading") return "Running";
+        if (status === "error") return "Error";
+        return "Pending";
+      }
+
+      function renderLoadingProgress() {
         const progress = state.jobProgress;
-        const labels = stageLabels();
-        const stages = progress?.stages || SECTION_ORDER.map((key) => ({ key, status: "pending", subtask: "", message: "" }));
+        const stages = progress?.stages || SECTION_ORDER.map((key) => ({ key, status: "pending", progress: 0 }));
+        const percent = Math.max(0, Math.min(100, Number(progress?.percent || 0)));
+        elements.loadingProgressBar.style.width = `${percent}%`;
+        elements.loadingProgressList.innerHTML = stages
+          .map((stage) => {
+            const stateText = stageStateText(stage.status);
+            return `
+              <div class="loading-stage-row ${stage.status}">
+                <div>
+                  <strong>${TAB_LABELS[stage.key] || humanizeToken(stage.key)}</strong>
+                  <p>${STAGE_DESCRIPTIONS[stage.key] || "Running task"}</p>
+                </div>
+                <span class="state-pill ${stage.status}">${stageStateIcon(stage.status)} ${stateText}</span>
+              </div>
+            `;
+          })
+          .join("");
+
+        const activeLabel = TAB_LABELS[progress?.active_stage] || "Booting Analysis";
+        const subtask = progress?.active_subtask ? humanizeToken(progress.active_subtask) : "Preparing full report";
+        elements.loadingTitle.textContent = `${activeLabel}`;
+        elements.loadingSubtitle.textContent = subtask;
+      }
+
+      function renderStageSummary() {
+        const progress = state.jobProgress;
+        const stages = progress?.stages || SECTION_ORDER.map((key) => ({ key, status: "pending", message: "Queued" }));
         elements.pipelineStatus.innerHTML = `
-          <h3>Section Progress</h3>
-          <div class="pipeline-list">
+          <h3>Pipeline Progress</h3>
+          <div class="stage-list">
             ${stages
               .map((stage) => {
-                const status = stage.status || "pending";
-                const icon = status === "done" ? "✓" : status === "loading" ? "…" : status === "error" ? "!" : "·";
-                const text = status === "done" ? "Ready" : status === "loading" ? "Loading" : status === "error" ? "Error" : "Queued";
                 return `
-                  <div class="pipeline-row">
-                    <span class="pipeline-label">${labels[stage.key] || humanizeToken(stage.key)}</span>
-                    <span class="pipeline-badge is-${status}">
-                      <span class="dot">${icon}</span>${text}
-                    </span>
-                  </div>
+                  <article class="stage-row ${stage.status}">
+                    <div class="stage-title-wrap">
+                      <span class="state-icon ${stage.status}">${stageStateIcon(stage.status)}</span>
+                      <div>
+                        <h4>${TAB_LABELS[stage.key] || humanizeToken(stage.key)}</h4>
+                        <p>${STAGE_DESCRIPTIONS[stage.key] || ""}</p>
+                      </div>
+                    </div>
+                    <div class="stage-meta mono">${stageStateText(stage.status)}</div>
+                  </article>
                 `;
               })
               .join("")}
@@ -509,222 +672,269 @@
         `;
       }
 
-      function renderLoadingProgress() {
-        const progress = state.jobProgress;
-        const stages = progress?.stages || SECTION_ORDER.map((key) => ({ key, status: "pending" }));
-        const labels = stageLabels();
-        const percent = Math.max(0, Math.min(100, Number(progress?.percent || 0)));
-        elements.loadingProgressBar.style.width = `${percent}%`;
-        elements.loadingProgressList.innerHTML = stages
-          .map((stage) => {
-            const status = stage.status || "pending";
-            const text = status === "done" ? "Ready" : status === "loading" ? "Loading" : status === "error" ? "Error" : "Queued";
+      function updateProgressView(payload) {
+        state.jobProgress = payload?.progress || null;
+        renderLoadingProgress();
+        renderStageSummary();
+      }
+
+      function compactText(text, maxChars = 240) {
+        const cleaned = String(text || "").replace(/\s+/g, " ").trim();
+        if (!cleaned) return "";
+        return cleaned.length <= maxChars ? cleaned : `${cleaned.slice(0, maxChars - 1).trimEnd()}…`;
+      }
+
+      function buildSpeakerRoleMap(transcriptDocs) {
+        const roleMap = {};
+        (transcriptDocs || []).forEach((doc) => {
+          (doc.participants || []).forEach((participant) => {
+            const name = String(participant.name || "").trim();
+            if (!name) return;
+            const role = String(participant.role || "").trim();
+            if (role && !roleMap[name]) roleMap[name] = role;
+          });
+        });
+        return roleMap;
+      }
+
+      function renderRunContext(payload) {
+        const ticker = payload.ticker || payload.overview?.ticker || "n/a";
+        const overallLabel = humanizeToken(payload.overall_sentiment_label || "mixed");
+        const score = fmtNum(payload.overall_sentiment_score, 3);
+        const transcriptsFound = payload.transcript?.transcript_count_found || 0;
+        const transcriptsRequested = payload.transcript?.transcript_count_requested || 0;
+        const newsCount = payload.market_reaction?.news_count || 0;
+        const socialCount = payload.market_reaction?.social_count || 0;
+        const normalization = humanizeToken(payload.data_audit?.normalization_mode || "unknown");
+        const sentimentTone = sentimentClass(payload.overall_sentiment_label || "mixed");
+
+        elements.runContext.innerHTML = `
+          <div class="summary-head">
+            <h2>${ticker}</h2>
+            <span class="sentiment-pill ${sentimentTone}">${overallLabel}</span>
+          </div>
+          <p class="summary-copy">Composite sentiment score <strong class="mono">${score}</strong></p>
+          <div class="summary-grid mono">
+            <span>Transcripts ${transcriptsFound}/${transcriptsRequested}</span>
+            <span>News ${newsCount}</span>
+            <span>Social ${socialCount}</span>
+            <span>${normalization}</span>
+          </div>
+        `;
+      }
+
+      function renderCompanyHeader(payload) {
+        const overview = payload.overview || {};
+        const companyName = overview.company_name || payload.ticker;
+        const ticker = overview.ticker || payload.ticker;
+        const latestTranscript = (payload.transcript?.transcripts || [])[0] || null;
+        const callDate = latestTranscript?.published_date || "n/a";
+        const sector = payload.fundamentals?.sector || "Sector n/a";
+        elements.companyHeader.innerHTML = `
+          <div class="company-inline">
+            <span class="ticker-badge mono">${ticker}</span>
+            <div>
+              <h2>${companyName}</h2>
+              <p class="muted">${sector} · Call Date ${callDate}</p>
+            </div>
+          </div>
+        `;
+      }
+
+      function renderSignalSummary(payload) {
+        const aggregate = payload.aggregate_scores || {};
+        const overview = payload.overview || {};
+        const score = Number(payload.overall_sentiment_score || 0);
+        const sentimentTone = sentimentClass(payload.overall_sentiment_label || "mixed");
+        const confidence = aggregate.confidence_score ?? 0;
+
+        elements.signalSummary.innerHTML = `
+          <div class="signal-wrap">
+            <div>
+              <p class="muted">Signal Summary</p>
+              <h3>${humanizeToken(payload.overall_sentiment_label || overview.stance_label || "mixed")}</h3>
+              <p class="muted">Confidence <strong class="mono">${fmtNum(confidence, 1)}%</strong></p>
+            </div>
+            <div class="signal-score ${sentimentTone}">
+              <span class="mono">${score >= 0 ? "+" : ""}${fmtNum(score, 3)}</span>
+            </div>
+          </div>
+        `;
+      }
+
+      function keyMetricByKey(metrics, key, fallbackLabel) {
+        const found = (metrics || []).find((metric) => String(metric.key || "") === key);
+        if (found) return found;
+        return { key, label: fallbackLabel, value: "n/a" };
+      }
+
+      function renderOverview(payload) {
+        const metrics = payload.overview?.metrics || [];
+        const selected = [
+          keyMetricByKey(metrics, "management_confidence", "Confidence Score"),
+          keyMetricByKey(metrics, "evasiveness", "Evasiveness Index"),
+          keyMetricByKey(metrics, "outlook_strength", "Outlook Strength"),
+        ];
+
+        elements.overviewMetrics.innerHTML = selected
+          .map((metric) => {
+            const label = metric.label || humanizeToken(metric.key);
+            const value = String(metric.value || "n/a");
+            let tone = "sentiment-neutral";
+            if (metric.key === "management_confidence" || metric.key === "outlook_strength") {
+              const numeric = Number(value);
+              tone = numeric >= 60 ? "sentiment-bullish" : numeric <= 40 ? "sentiment-bearish" : "sentiment-neutral";
+            }
+            if (metric.key === "evasiveness") {
+              const numeric = Number(value);
+              tone = numeric <= 35 ? "sentiment-bullish" : numeric >= 60 ? "sentiment-bearish" : "sentiment-neutral";
+            }
             return `
-              <div class="loading-progress-row">
-                <span class="name">${labels[stage.key] || humanizeToken(stage.key)}</span>
-                <span class="state ${status}">${text}</span>
-              </div>
+              <article class="metric-card">
+                <p>${label}</p>
+                <strong class="mono">${value}</strong>
+                <span class="sentiment-pill ${tone}">${tone.includes("bullish") ? "Favorable" : tone.includes("bearish") ? "Caution" : "Neutral"}</span>
+              </article>
             `;
           })
           .join("");
 
-        const activeStage = labels[progress?.active_stage] || "Booting Analysis";
-        const activeTask = progress?.active_subtask ? humanizeToken(progress.active_subtask) : "Preparing the complete report.";
-        elements.loadingTitle.textContent = `${activeStage} in progress…`;
-        elements.loadingSubtitle.textContent = activeTask;
+        renderList(elements.overviewTakeaways, payload.overview?.key_takeaways || [], "No takeaways available yet.");
       }
 
-      function updateProgressView(jobPayload) {
-        state.jobProgress = jobPayload?.progress || null;
-        renderPipelineStatus();
-        renderLoadingProgress();
+      function sentimentLabelFromScore(score) {
+        const numeric = Number(score || 0);
+        if (numeric >= 0.12) return "Bullish";
+        if (numeric <= -0.12) return "Bearish";
+        return "Neutral";
       }
 
-      function buildSectionNav(sectionLabels) {
-        elements.sectionNav.innerHTML = SECTION_ORDER.map((id, index) => {
-          const active = index === 0 ? "active" : "";
-          const label = sectionLabels[id] || humanizeToken(id);
-          return `<button type="button" class="nav-btn ${active}" data-section="${id}">${label}</button>`;
-        }).join("");
-
-        elements.sectionNav.querySelectorAll(".nav-btn").forEach((button) => {
-          button.addEventListener("click", () => switchSection(button.dataset.section));
-        });
-      }
-
-      function switchSection(sectionId) {
-        state.currentSection = sectionId;
-        document.querySelectorAll(".nav-btn").forEach((button) => {
-          button.classList.toggle("active", button.dataset.section === sectionId);
-        });
-        document.querySelectorAll(".section-pane").forEach((pane) => {
-          pane.classList.toggle("active", pane.id === `section-${sectionId}`);
-        });
-        renderVisibleCharts();
-      }
-
-      function applyCopy(copy) {
-        if (!copy) return;
-        state.uiCopy = copy;
-        elements.heroTitle.textContent = copy.app_title || "FinBERT Earnings Signals";
-        elements.heroSubtitle.textContent = copy.app_subtitle || elements.heroSubtitle.textContent;
-        elements.tickerLabel.textContent = copy.ui_labels?.ticker || "Ticker";
-        elements.analyzeBtn.textContent = copy.ui_labels?.run_analysis || "Run Analysis";
-        elements.queryNote.textContent = copy.microcopy?.query_note || elements.queryNote.textContent;
-        elements.heroKicker.textContent = copy.headings?.hero_kicker || elements.heroKicker.textContent;
-
-        elements.headingOverview.textContent = copy.headings?.overview || elements.headingOverview.textContent;
-        elements.headingSpeakerProfile.textContent = copy.headings?.speaker_profile_chart || elements.headingSpeakerProfile.textContent;
-        elements.headingTranscript.textContent = copy.headings?.transcript || elements.headingTranscript.textContent;
-        elements.headingQuotes.textContent = copy.headings?.transcript_quotes || elements.headingQuotes.textContent;
-        elements.headingPressure.textContent = copy.headings?.transcript_pressure || elements.headingPressure.textContent;
-        elements.headingSpeakerTable.textContent = copy.headings?.speaker_analysis_table || elements.headingSpeakerTable.textContent;
-        elements.headingMarket.textContent = copy.headings?.market_reaction || elements.headingMarket.textContent;
-        elements.headingNews.textContent = copy.headings?.news_feed || elements.headingNews.textContent;
-        elements.headingSocial.textContent = copy.headings?.social_feed || elements.headingSocial.textContent;
-        elements.headingFundamentals.textContent = copy.headings?.fundamentals || elements.headingFundamentals.textContent;
-        elements.headingFundamentalsChart.textContent = copy.headings?.fundamentals_chart || elements.headingFundamentalsChart.textContent;
-        elements.headingAudit.textContent = copy.headings?.data_audit || elements.headingAudit.textContent;
-        elements.headingAuditWarnings.textContent = copy.headings?.audit_warnings || elements.headingAuditWarnings.textContent;
-        elements.headingAuditMissing.textContent = copy.headings?.audit_missing || elements.headingAuditMissing.textContent;
-        elements.headingAuditDedupe.textContent = copy.headings?.audit_dedupe || elements.headingAuditDedupe.textContent;
-        elements.headingAuditFailures.textContent = copy.headings?.audit_failures || elements.headingAuditFailures.textContent;
-        elements.headingAuditDiscarded.textContent = copy.headings?.audit_discarded || elements.headingAuditDiscarded.textContent;
-        elements.headingAuditParsing.textContent = copy.headings?.audit_parsing || elements.headingAuditParsing.textContent;
-
-        elements.speakerChartEmpty.textContent = copy.empty_states?.speaker_profile || elements.speakerChartEmpty.textContent;
-        elements.fundamentalsChartEmpty.textContent = copy.empty_states?.fundamentals_chart || elements.fundamentalsChartEmpty.textContent;
-        elements.modalClose.textContent = copy.microcopy?.modal_close_action || elements.modalClose.textContent;
-        elements.modalLink.textContent = copy.microcopy?.modal_open_action || elements.modalLink.textContent;
-
-        buildSectionNav(copy.section_labels || {});
-      }
-
-      function renderRunContext(payload) {
-        const overview = payload.overview || {};
-        const transcript = payload.transcript || {};
-        const market = payload.market_reaction || {};
-        const overallLabel = humanizeToken(payload.overall_sentiment_label || "mixed");
-        const stanceLabel = humanizeToken(overview.stance_label || "mixed");
-        const cardTone = (payload.overall_sentiment_label || "").includes("bearish")
-          ? "tone-bearish"
-          : (payload.overall_sentiment_label || "").includes("bullish")
-            ? "tone-bullish"
-            : "tone-mixed";
-        elements.runContext.className = `rail-card ${cardTone}`;
-        elements.runContext.innerHTML = `
-          <h3>${overview.ticker || payload.ticker}</h3>
-          <p class="summary">Stance: ${stanceLabel} · Overall: ${overallLabel} (${fmtNum(payload.overall_sentiment_score, 3)})</p>
-          <p class="meta-line">Coverage T:${transcript.transcript_count_found || 0}/${transcript.transcript_count_requested || 0} · N:${market.news_count || 0} · S:${market.social_count || 0}</p>
-          <p class="meta-line">${humanizeToken(payload.data_audit?.normalization_mode || "snapshot_mode")}</p>
-        `;
-      }
-
-      function renderOverview(payload) {
-        elements.overviewSummary.textContent = payload.overview?.executive_summary || "No overview summary available.";
-        renderList(elements.overviewTakeaways, payload.overview?.key_takeaways || [], "No overview takeaways yet.");
-        elements.overviewMetrics.innerHTML = (payload.overview?.metrics || [])
-          .map((metric) => `<article class="metric-card"><p>${metric.label}</p><strong>${metric.value}</strong></article>`)
-          .join("");
-
-        const profile = payload.transcript?.speaker_confidence_profile || [];
-        const canChart = Boolean(payload.transcript?.chart_enabled && profile.length >= 2);
-        setChartVisibility(elements.speakerChartSurface, elements.speakerChartEmpty, canChart);
-        state.chartData.speaker = canChart
-          ? {
-              labels: profile.map((row) => row.speaker),
-              confidence: profile.map((row) => row.confidence),
-              evasiveness: profile.map((row) => row.evasiveness),
-            }
-          : null;
-      }
-
-      function populateFilters(rows) {
-        const speakers = Array.from(new Set(rows.map((row) => row.speaker))).sort();
-        const sections = Array.from(new Set(rows.map((row) => row.section_type))).sort();
-        const topics = Array.from(new Set(rows.map((row) => row.topic_label))).sort();
-        const sentimentOptions = [
-          { value: "all", label: "All" },
-          { value: "bullish", label: "Bullish Only" },
-          { value: "mixed", label: "Mixed/Neutral" },
-          { value: "bearish", label: "Bearish Only" },
-        ];
-
-        const makeOptions = (options, humanize = true) =>
-          [`<option value="all">All</option>`, ...options.map((value) => `<option value="${value}">${humanize ? humanizeToken(value) : value}</option>`)].join("");
-
-        elements.filterSpeaker.innerHTML = makeOptions(speakers, false);
-        elements.filterSection.innerHTML = makeOptions(sections);
-        elements.filterTopic.innerHTML = makeOptions(topics);
-        elements.filterSentiment.innerHTML = sentimentOptions.map((item) => `<option value="${item.value}">${item.label}</option>`).join("");
-      }
-
-      function sentimentBucket(value) {
-        if (value >= 0.12) return "bullish";
-        if (value <= -0.12) return "bearish";
-        return "mixed";
-      }
-
-      function filteredSpeakerRows() {
-        const speaker = elements.filterSpeaker.value;
-        const section = elements.filterSection.value;
-        const topic = elements.filterTopic.value;
-        const sentiment = elements.filterSentiment.value;
-        const minConfidence = Number(elements.filterConfidenceMin.value || 0);
-        const maxEvasiveness = Number(elements.filterEvasivenessMax.value || 100);
-        const minSpecificity = Number(elements.filterSpecificityMin.value || 0);
-
-        return state.speakerRows.filter((row) => {
-          if ((row.speaker || "").toLowerCase().startsWith("operator")) return false;
-          if (speaker && speaker !== "all" && row.speaker !== speaker) return false;
-          if (section && section !== "all" && row.section_type !== section) return false;
-          if (topic && topic !== "all" && row.topic_label !== topic) return false;
-          if (sentiment && sentiment !== "all" && sentimentBucket(Number(row.sentiment_direction || 0)) !== sentiment) return false;
-          if (Number(row.confidence || 0) < minConfidence) return false;
-          if (Number(row.evasiveness || 0) > maxEvasiveness) return false;
-          if (Number(row.specificity || 0) < minSpecificity) return false;
-          return true;
-        });
-      }
-
-      function renderSpeakerTable() {
-        const rows = filteredSpeakerRows();
-        const countBySpeaker = {};
+      function topQuoteRows(transcript) {
+        const rows = transcript?.speaker_analysis || [];
+        const quoteRows = [];
         rows.forEach((row) => {
-          countBySpeaker[row.speaker] = (countBySpeaker[row.speaker] || 0) + 1;
+          const snippet = (row.evidence_snippets || [])[0];
+          if (!snippet) return;
+          quoteRows.push({
+            speaker: row.speaker,
+            role: state.speakerRoleMap[row.speaker] || "n/a",
+            text: snippet,
+            sentiment: row.sentiment_direction,
+            topic: row.topic_label,
+          });
         });
-        rows.sort((a, b) => {
-          const diff = (countBySpeaker[b.speaker] || 0) - (countBySpeaker[a.speaker] || 0);
-          if (diff !== 0) return diff;
-          if (a.speaker !== b.speaker) return a.speaker.localeCompare(b.speaker);
-          return Number(b.confidence || 0) - Number(a.confidence || 0);
-        });
+        quoteRows.sort((a, b) => Math.abs(Number(b.sentiment || 0)) - Math.abs(Number(a.sentiment || 0)));
+        return quoteRows.slice(0, 8);
+      }
 
-        elements.speakerTableBody.innerHTML = "";
-        let previousSpeaker = "";
+      function renderTranscriptQuotes(transcript) {
+        const derived = topQuoteRows(transcript);
+        if (!derived.length) {
+          const fallback = (transcript?.key_quotes || []).slice(0, 8).map((quote) => ({
+            speaker: "Unknown",
+            role: "n/a",
+            text: quote,
+            sentiment: 0,
+            topic: "general",
+          }));
+          derived.push(...fallback);
+        }
+
+        if (!derived.length) {
+          elements.transcriptQuotes.innerHTML = `<p class="empty-note">No key quotes extracted.</p>`;
+          return;
+        }
+
+        elements.transcriptQuotes.innerHTML = derived
+          .map((row) => {
+            const toneClass = sentimentClass(Number(row.sentiment || 0));
+            return `
+              <article class="quote-item ${toneClass}">
+                <header>
+                  <strong>${row.speaker}</strong>
+                  <span class="muted">${row.role}</span>
+                  <span class="sentiment-pill ${toneClass}">${sentimentLabelFromScore(row.sentiment)}</span>
+                </header>
+                <p>“${row.text}”</p>
+                <footer class="muted">Topic: ${humanizeToken(row.topic)}</footer>
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      function buildQaRows(transcript) {
+        const rows = (transcript?.speaker_analysis || [])
+          .filter((row) => String(row.section_type || "") === "qa")
+          .sort((a, b) => Number(b.evasiveness || 0) - Number(a.evasiveness || 0));
+
+        if (rows.length) {
+          return rows.slice(0, 8).map((row) => ({
+            analyst: row.speaker,
+            summary: humanizeToken(row.topic_label || "general"),
+            evasiveness: Number(row.evasiveness || 0),
+            quality: Math.max(0, 100 - Number(row.evasiveness || 0)),
+          }));
+        }
+
+        return (transcript?.qa_pressure_points || []).slice(0, 8).map((item) => ({
+          analyst: "n/a",
+          summary: String(item || ""),
+          evasiveness: null,
+          quality: null,
+        }));
+      }
+
+      function renderQaTable(transcript) {
+        const rows = buildQaRows(transcript);
+        elements.qaPressureBody.innerHTML = "";
+        if (!rows.length) {
+          elements.qaPressureBody.innerHTML = `<tr><td colspan="4">No pressure points identified.</td></tr>`;
+          return;
+        }
         rows.forEach((row) => {
           const tr = document.createElement("tr");
-          if (row.speaker !== previousSpeaker) tr.classList.add("speaker-group-start");
-          previousSpeaker = row.speaker;
           tr.innerHTML = `
-            <td>${row.speaker} <span class="meta-inline">(${countBySpeaker[row.speaker] || 0})</span></td>
-            <td>${humanizeToken(row.section_type)}</td>
-            <td>${fmtNum(row.sentiment_direction, 3)}</td>
-            <td>${fmtNum(row.confidence, 1)}</td>
-            <td>${fmtNum(row.evasiveness, 1)}</td>
-            <td>${fmtNum(row.specificity, 1)}</td>
-            <td>${humanizeToken(row.topic_label)}</td>
+            <td>${row.analyst}</td>
+            <td>${compactText(row.summary, 120)}</td>
+            <td class="mono">${row.evasiveness === null ? "n/a" : fmtNum(row.evasiveness, 1)}</td>
+            <td class="mono">${row.quality === null ? "n/a" : fmtNum(row.quality, 1)}</td>
           `;
-          elements.speakerTableBody.appendChild(tr);
+          elements.qaPressureBody.appendChild(tr);
         });
-        if (!rows.length) {
-          elements.speakerTableBody.innerHTML = `<tr><td colspan="7">No speaker blocks match the current filters.</td></tr>`;
+      }
+
+      function renderSpeakerRollups(transcript) {
+        const rollups = (transcript?.speaker_rollup || []).filter((row) => !String(row.speaker || "").toLowerCase().startsWith("operator"));
+        if (!rollups.length) {
+          elements.speakerRollupCards.innerHTML = `<p class="empty-note">No speaker rollup metrics available.</p>`;
+          return;
         }
+        elements.speakerRollupCards.innerHTML = rollups
+          .slice(0, 12)
+          .map((row) => {
+            const tone = sentimentClass(Number(row.avg_sentiment_direction || 0));
+            return `
+              <article class="speaker-card">
+                <header>
+                  <strong>${row.speaker}</strong>
+                  <span class="sentiment-pill ${tone}">${sentimentLabelFromScore(row.avg_sentiment_direction)}</span>
+                </header>
+                <p class="muted">${state.speakerRoleMap[row.speaker] || "Role n/a"}</p>
+                <div class="speaker-card-metrics mono">
+                  <span>Statements ${row.mention_count}</span>
+                  <span>Confidence ${fmtNum(row.avg_confidence, 1)}</span>
+                  <span>Evasiveness ${fmtNum(row.avg_evasiveness, 1)}</span>
+                </div>
+                <p class="muted">Topic ${humanizeToken(row.dominant_topic)}</p>
+              </article>
+            `;
+          })
+          .join("");
       }
 
       function transcriptDocForQuarter(quarterLabel, docs, quarterStatus) {
-        const statusRows = quarterStatus || [];
-        const foundRows = statusRows.filter((row) => row.status === "found");
+        const foundRows = (quarterStatus || []).filter((row) => row.status === "found");
         const foundIndex = foundRows.findIndex((row) => row.quarter === quarterLabel);
         if (foundIndex < 0) return null;
         return docs[foundIndex] || null;
@@ -738,14 +948,14 @@
         elements.transcriptModalBody.innerHTML = `
           <p><strong>Participants:</strong> ${participantLine || "n/a"}</p>
           ${(doc.sections || [])
-            .slice(0, 120)
+            .slice(0, 160)
             .map(
               (section) => `
-              <article class="transcript-section-block">
-                <header>${section.speaker || "Unknown"} · ${humanizeToken(section.section_type)}</header>
-                <p>${section.text || ""}</p>
-              </article>
-            `
+                <article class="transcript-section-block">
+                  <header>${section.speaker || "Unknown"} · ${humanizeToken(section.section_type)}</header>
+                  <p>${section.text || ""}</p>
+                </article>
+              `
             )
             .join("")}
         `;
@@ -756,6 +966,7 @@
         const statusRows = transcript.quarter_status || [];
         const docs = transcript.transcripts || [];
         state.transcriptQuarterDocs = {};
+
         elements.transcriptQuarterActions.innerHTML = statusRows
           .slice(0, 4)
           .map((row) => {
@@ -776,165 +987,194 @@
         });
       }
 
+      function populateTranscriptFilters(rows) {
+        const roles = Array.from(new Set(rows.map((row) => state.speakerRoleMap[row.speaker] || "n/a"))).sort();
+        const speakers = Array.from(new Set(rows.map((row) => row.speaker))).sort();
+        const sections = Array.from(new Set(rows.map((row) => row.section_type))).sort();
+        const topics = Array.from(new Set(rows.map((row) => row.topic_label))).sort();
+
+        const options = (list, humanize = true) => ["<option value=\"all\">All</option>", ...list.map((value) => `<option value=\"${value}\">${humanize ? humanizeToken(value) : value}</option>`)].join("");
+
+        elements.filterRole.innerHTML = options(roles, false);
+        elements.filterSpeaker.innerHTML = options(speakers, false);
+        elements.filterSection.innerHTML = options(sections);
+        elements.filterTopic.innerHTML = options(topics);
+        elements.filterSentiment.innerHTML = `
+          <option value="all">All</option>
+          <option value="bullish">Bullish</option>
+          <option value="neutral">Neutral</option>
+          <option value="bearish">Bearish</option>
+        `;
+      }
+
+      function derivedSpeakerRows() {
+        const statementCount = {};
+        state.speakerRows.forEach((row) => {
+          statementCount[row.speaker] = (statementCount[row.speaker] || 0) + 1;
+        });
+
+        return state.speakerRows
+          .filter((row) => !String(row.speaker || "").toLowerCase().startsWith("operator"))
+          .map((row) => ({
+            speaker: row.speaker,
+            role: state.speakerRoleMap[row.speaker] || "n/a",
+            section: row.section_type,
+            topic: row.topic_label,
+            statements: statementCount[row.speaker] || 0,
+            sentiment: Number(row.sentiment_direction || 0),
+            hedging: Number(row.risk_language_intensity || 0),
+            confidence: Number(row.confidence || 0),
+            keyPhrase: compactText((row.evidence_snippets || [])[0] || "n/a", 120),
+          }));
+      }
+
+      function filterSpeakerRows(rows) {
+        const role = elements.filterRole.value;
+        const speaker = elements.filterSpeaker.value;
+        const section = elements.filterSection.value;
+        const topic = elements.filterTopic.value;
+        const sentiment = elements.filterSentiment.value;
+        const minConfidence = Number(elements.filterConfidenceMin.value || 0);
+
+        return rows.filter((row) => {
+          if (role !== "all" && row.role !== role) return false;
+          if (speaker !== "all" && row.speaker !== speaker) return false;
+          if (section !== "all" && row.section !== section) return false;
+          if (topic !== "all" && row.topic !== topic) return false;
+          if (sentiment !== "all" && sentimentLabelFromScore(row.sentiment).toLowerCase() !== sentiment) return false;
+          if (row.confidence < minConfidence) return false;
+          return true;
+        });
+      }
+
+      function sortSpeakerRows(rows) {
+        const { key, direction } = state.speakerSort;
+        const multiplier = direction === "asc" ? 1 : -1;
+        const list = [...rows];
+        list.sort((a, b) => {
+          if (key === "speaker" || key === "role") return a[key].localeCompare(b[key]) * multiplier;
+          if (key === "statements") {
+            if (a.statements === b.statements) return a.speaker.localeCompare(b.speaker);
+            return (a.statements - b.statements) * multiplier;
+          }
+          if (key === "sentiment") return (a.sentiment - b.sentiment) * multiplier;
+          if (key === "hedging") return (a.hedging - b.hedging) * multiplier;
+          return 0;
+        });
+        return list;
+      }
+
+      function renderSpeakerTable() {
+        const rows = sortSpeakerRows(filterSpeakerRows(derivedSpeakerRows()));
+        clearNode(elements.speakerTableBody);
+
+        if (!rows.length) {
+          elements.speakerTableBody.innerHTML = `<tr><td colspan="6">No rows match current filters.</td></tr>`;
+          return;
+        }
+
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${row.speaker}</td>
+            <td>${row.role}</td>
+            <td class="mono">${row.statements}</td>
+            <td class="mono">${row.sentiment >= 0 ? "+" : ""}${fmtNum(row.sentiment, 3)}</td>
+            <td class="mono">${fmtNum(row.hedging, 1)}</td>
+            <td>${row.keyPhrase}</td>
+          `;
+          elements.speakerTableBody.appendChild(tr);
+        });
+      }
+
       function renderTranscript(payload) {
         const transcript = payload.transcript || {};
-        elements.transcriptAvailability.textContent = `Availability: ${humanizeToken(transcript.availability)} · Coverage ${transcript.transcript_count_found || 0}/${transcript.transcript_count_requested || 0}`;
-        elements.transcriptSummary.textContent = transcript.latest_summary || "No transcript summary available.";
-        elements.transcriptPreparedQa.textContent = transcript.prepared_vs_qa_note || "Prepared remarks vs Q&A distinction unavailable.";
-        renderList(elements.transcriptQuotes, transcript.key_quotes || [], "No quotes extracted.");
-        renderList(elements.transcriptPressure, transcript.qa_pressure_points || [], "No pressure points identified.");
-
+        state.speakerRoleMap = buildSpeakerRoleMap(transcript.transcripts || []);
         state.speakerRows = transcript.speaker_analysis || [];
-        populateFilters(state.speakerRows);
-        renderSpeakerTable();
+
+        elements.transcriptAvailability.textContent = `Availability ${humanizeToken(transcript.availability)} · Coverage ${transcript.transcript_count_found || 0}/${transcript.transcript_count_requested || 0}`;
+        elements.transcriptSummary.textContent = transcript.latest_summary || "No transcript summary available.";
+        elements.transcriptPreparedQa.textContent = transcript.prepared_vs_qa_note || "Prepared vs Q&A split unavailable.";
+
         renderTranscriptQuarterActions(transcript);
+        renderTranscriptQuotes(transcript);
+        renderQaTable(transcript);
+        renderSpeakerRollups(transcript);
+        populateTranscriptFilters(state.speakerRows);
+        renderSpeakerTable();
       }
 
       function renderNewsCards(items) {
-        elements.newsCards.innerHTML = "";
+        clearNode(elements.newsCards);
         if (!items || !items.length) {
-          elements.newsCards.innerHTML = `<p class="empty-note">${state.uiCopy?.empty_states?.news || "No news items met the quality threshold."}</p>`;
+          elements.newsCards.innerHTML = `<p class="empty-note">No ranked news items available.</p>`;
           return;
         }
         elements.newsCards.innerHTML = items
           .map(
             (item) => `
-            <article class="feed-card">
-              <a class="card-link-icon" href="${item.url}" target="_blank" rel="noopener noreferrer" aria-label="Open in new tab">${externalIcon()}</a>
-              <div class="feed-meta">
-                <span>${item.source || "source n/a"}</span>
-                <span>${fmtExternalDate(item.time_published)}</span>
-                <span>${humanizeToken(item.sentiment_label)} ${fmtNum(item.sentiment_score, 3)}</span>
-              </div>
-              <h4><a href="${item.url}" target="_blank" rel="noopener noreferrer">${item.title}</a></h4>
-              <p>${compactText(item.summary || "No preview available.", 190)}</p>
-            </article>
-          `
+              <details class="news-item">
+                <summary>
+                  <span class="source mono">${item.source || "source n/a"}</span>
+                  <span>${item.title || "Untitled"}</span>
+                  <span class="sentiment-pill ${sentimentClass(item.sentiment_label)}">${humanizeToken(item.sentiment_label)} ${fmtNum(item.sentiment_score, 3)}</span>
+                </summary>
+                <p class="muted">${fmtExternalDate(item.time_published)} · <a href="${item.url}" target="_blank" rel="noopener noreferrer">Open source</a></p>
+                <p>${item.summary || "No summary provided."}</p>
+              </details>
+            `
           )
           .join("");
       }
 
       function openSocialModal(item) {
         elements.modalTitle.textContent = item.title || "Social Post";
-        elements.modalMeta.textContent = `${item.subreddit ? `r/${item.subreddit}` : "social"} · ${fmtDate(item.created_utc)} · ${humanizeToken(item.sentiment_label)} ${fmtNum(item.sentiment_score, 3)}`;
+        elements.modalMeta.textContent = `${item.subreddit ? `r/${item.subreddit}` : item.source || "social"} · ${fmtDate(item.created_utc)} · relevance ${fmtNum(item.relevance_score, 2)} · ${humanizeToken(item.sentiment_label)} ${fmtNum(item.sentiment_score, 3)}`;
         elements.modalBody.textContent = item.body || "No body text available.";
         elements.modalLink.href = item.url || "#";
         elements.modal.showModal();
       }
 
       function renderSocialCards(items) {
-        elements.socialCards.innerHTML = "";
+        clearNode(elements.socialCards);
         if (!items || !items.length) {
-          elements.socialCards.innerHTML = `<p class="empty-note">${state.uiCopy?.empty_states?.social || "No social items met the quality threshold."}</p>`;
+          elements.socialCards.innerHTML = `<p class="empty-note">No ranked social records available.</p>`;
           return;
         }
+
         elements.socialCards.innerHTML = items
           .map(
-            (item, index) => `
-            <article class="feed-card social-card" data-index="${index}">
-              <a class="card-link-icon" href="${item.url}" target="_blank" rel="noopener noreferrer" aria-label="Open in new tab">${externalIcon()}</a>
-              <div class="feed-meta">
-                <span>${item.subreddit ? `r/${item.subreddit}` : item.source || "social"}</span>
-                <span>${fmtDate(item.created_utc)}</span>
-                <span>${humanizeToken(item.sentiment_label)} ${fmtNum(item.sentiment_score, 3)}</span>
-              </div>
-              <h4>${item.title}</h4>
-              <p>${item.excerpt || "No excerpt available."}</p>
-            </article>
-          `
+            (item, idx) => `
+              <article class="social-item" data-index="${idx}">
+                <div class="social-head">
+                  <span class="platform mono">${item.subreddit ? `r/${item.subreddit}` : item.source || "social"}</span>
+                  <span class="sentiment-pill ${sentimentClass(item.sentiment_label)}">${humanizeToken(item.sentiment_label)}</span>
+                </div>
+                <h4>${compactText(item.title || "Untitled", 110)}</h4>
+                <p>${compactText(item.excerpt || item.body || "No preview.", 160)}</p>
+                <div class="social-meta mono">
+                  <span>${fmtDate(item.created_utc)}</span>
+                  <span>Relevance ${fmtNum(item.relevance_score, 2)}</span>
+                </div>
+              </article>
+            `
           )
           .join("");
-        elements.socialCards.querySelectorAll(".social-card").forEach((card) => {
-          const idx = Number(card.dataset.index);
-          card.addEventListener("click", (event) => {
-            if (event.target.closest(".card-link-icon")) return;
+
+        elements.socialCards.querySelectorAll(".social-item").forEach((el) => {
+          el.addEventListener("click", () => {
+            const idx = Number(el.dataset.index);
             openSocialModal(items[idx]);
           });
         });
       }
 
-      function renderMarketReaction(payload) {
-        const market = payload.market_reaction || {};
-        elements.marketBalance.textContent = market.balance_summary || "No market reaction summary available.";
-        renderNewsCards(market.news_items || []);
-        renderSocialCards(market.social_items || []);
-      }
-
-      function prepareFundamentalsChartData(fundamentalsWorkspace) {
-        const trend = fundamentalsWorkspace?.trend_series || [];
-        if (!fundamentalsWorkspace?.chart_enabled || trend.length < 3) return null;
-        return {
-          labels: trend.map((point) => point.quarter),
-          revenue: trend.map((point) => point.revenue),
-          netIncome: trend.map((point) => point.net_income),
-          eps: trend.map((point) => point.eps),
-          epsEstimate: trend.map((point) => point.eps_estimate),
-        };
-      }
-
-      function renderFundamentals(payload) {
-        const f = payload.fundamentals_workspace || {};
-        elements.fundamentalsContext.textContent = f.operating_context || "No fundamentals context available.";
-        elements.fundamentalsMetrics.innerHTML = (f.metrics || [])
-          .map((metric) => `<article class="metric-card"><p>${metric.label}</p><strong>${metric.value}</strong></article>`)
-          .join("");
-
-        elements.fundamentalsTableBody.innerHTML = "";
-        (f.table || []).forEach((row) => {
-          const tr = document.createElement("tr");
-          tr.innerHTML = `
-            <td>${row.quarter}</td>
-            <td>${fmtCurrency(row.revenue)}</td>
-            <td>${fmtCurrency(row.net_income)}</td>
-            <td>${fmtNum(row.reported_eps, 2)}</td>
-            <td>${fmtNum(row.eps_estimate, 2)}</td>
-          `;
-          elements.fundamentalsTableBody.appendChild(tr);
+      function distributionCounts(items) {
+        const counts = { positive: 0, neutral: 0, negative: 0 };
+        (items || []).forEach((item) => {
+          counts[sentimentBucket(item.sentiment_label)] += 1;
         });
-        state.chartData.fundamentals = prepareFundamentalsChartData(f);
-        setChartVisibility(elements.fundamentalsChartSurface, elements.fundamentalsChartEmpty, Boolean(state.chartData.fundamentals));
-      }
-
-      function renderDataAudit(payload) {
-        const audit = payload.data_audit || {};
-        elements.auditConfidence.textContent = `${audit.confidence_note || "No audit confidence note."} Normalization mode: ${humanizeToken(audit.normalization_mode || "unknown")}.`;
-
-        elements.auditTableBody.innerHTML = "";
-        const rows = [
-          ["Pages Scanned", audit.transcript_discovery?.pages_scanned],
-          ["Candidates Total", audit.transcript_discovery?.candidates_total],
-          ["Transcript-like Titles", audit.transcript_discovery?.transcript_like_count],
-          ["Match-filtered", audit.transcript_discovery?.match_filtered_count],
-          ["Selected", audit.transcript_discovery?.selected_count],
-          ["Fetch Failures", (audit.transcript_discovery?.fetch_failures || []).length],
-          ["Playwright Fallback Used", audit.transcript_discovery?.playwright_fallback_used ? "yes" : "no"],
-          ["Validation Mismatches", (audit.fundamentals_validation?.mismatches || []).length],
-          ["Slowest Tasks", (audit.slowest_tasks || []).length],
-        ];
-        rows.forEach(([label, value]) => {
-          const tr = document.createElement("tr");
-          tr.innerHTML = `<td>${label}</td><td>${value ?? "-"}</td>`;
-          elements.auditTableBody.appendChild(tr);
-        });
-
-        const warnings = [...(audit.warnings || [])];
-        const validationMismatches = audit.fundamentals_validation?.mismatches || [];
-        validationMismatches.forEach((row) => {
-          warnings.push(`${humanizeToken(row.key)} mismatch: Yahoo ${fmtNum(row.yahoo_value, 3)} vs Alpha ${fmtNum(row.alpha_value, 3)}.`);
-        });
-        renderList(elements.auditWarnings, warnings, "No warnings.");
-        renderList(elements.auditMissing, [...(audit.missing_items || []), ...(audit.slowest_tasks || [])], "No missing-source flags.");
-        renderList(
-          elements.auditDedupe,
-          Object.entries(audit.dedupe_counts || {}).map(([key, value]) => `${humanizeToken(key)}: ${value}`),
-          "No dedupe stats."
-        );
-        renderList(elements.auditFailures, audit.transcript_discovery?.fetch_failures || [], "No discovery fetch failures.");
-        renderList(elements.auditDiscarded, audit.transcript_discovery?.discarded_near_matches || [], "No discarded near-matches.");
-
-        const taskRows = (audit.task_breakdown || []).map((row) => `${row.label}: ${row.duration_ms}ms (${humanizeToken(row.status)})`);
-        const parsingRows = [...(audit.parsing_warnings || []), ...taskRows];
-        renderList(elements.auditParsing, parsingRows, "No transcript parsing warnings.");
+        return counts;
       }
 
       function buildChartCanvas(container) {
@@ -944,122 +1184,376 @@
         return canvas;
       }
 
-      function renderVisibleCharts() {
-        if (state.currentSection === "overview") {
-          if (state.charts.fundamentals) {
-            state.charts.fundamentals.destroy();
-            state.charts.fundamentals = null;
+      function setChartVisibility(surface, empty, enabled) {
+        surface.style.display = enabled ? "block" : "none";
+        empty.style.display = enabled ? "none" : "block";
+      }
+
+      function destroyChart(key) {
+        const chart = state.charts[key];
+        if (chart && typeof chart.destroy === "function") chart.destroy();
+        state.charts[key] = null;
+      }
+
+      function renderMarketDistributionChart(payload) {
+        const market = payload.market_reaction || {};
+        const news = distributionCounts(market.news_items || []);
+        const social = distributionCounts(market.social_items || []);
+        const total = Object.values(news).reduce((sum, value) => sum + value, 0) + Object.values(social).reduce((sum, value) => sum + value, 0);
+        const enabled = total > 0;
+
+        setChartVisibility(elements.marketDistributionChart, elements.marketDistributionEmpty, enabled);
+        destroyChart("marketDistribution");
+        if (!enabled) return;
+
+        const canvas = buildChartCanvas(elements.marketDistributionChart);
+        state.charts.marketDistribution = new Chart(canvas, {
+          type: "bar",
+          data: {
+            labels: ["Positive", "Neutral", "Negative"],
+            datasets: [
+              { label: "News", data: [news.positive, news.neutral, news.negative], backgroundColor: "rgba(112,210,148,0.65)", borderRadius: 8 },
+              { label: "Social", data: [social.positive, social.neutral, social.negative], backgroundColor: "rgba(102,159,255,0.62)", borderRadius: 8 },
+            ],
+          },
+          options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { ticks: { color: "#aeb6c7" }, grid: { color: "rgba(255,255,255,0.06)" } },
+              y: { ticks: { color: "#aeb6c7" }, grid: { color: "rgba(255,255,255,0.06)" } },
+            },
+            plugins: { legend: { labels: { color: "#ece9df" } } },
+          },
+        });
+      }
+
+      function renderMarketReaction(payload) {
+        const market = payload.market_reaction || {};
+        elements.marketBalance.textContent = market.balance_summary || "No market reaction summary available.";
+        renderNewsCards(market.news_items || []);
+        renderSocialCards(market.social_items || []);
+        renderMarketDistributionChart(payload);
+      }
+
+      function buildFundamentalsHighlights(fundamentalsWorkspace) {
+        const rows = fundamentalsWorkspace?.table || [];
+        const out = [];
+        if (rows.length >= 2) {
+          const latest = rows[0];
+          const prev = rows[1];
+          if (latest.revenue != null && prev.revenue) {
+            const delta = ((latest.revenue - prev.revenue) / Math.abs(prev.revenue || 1)) * 100;
+            out.push(`Latest quarter revenue moved ${delta >= 0 ? "up" : "down"} ${fmtPct(Math.abs(delta), 1)} vs prior quarter.`);
           }
-          const chartData = state.chartData.speaker;
-          if (!chartData) return;
-          if (state.charts.speaker) state.charts.speaker.destroy();
-          const canvas = buildChartCanvas(elements.speakerChartSurface);
-          state.charts.speaker = new Chart(canvas, {
+          if (latest.net_income != null && prev.net_income) {
+            const delta = ((latest.net_income - prev.net_income) / Math.abs(prev.net_income || 1)) * 100;
+            out.push(`Net income changed ${delta >= 0 ? "+" : "-"}${fmtPct(Math.abs(delta), 1)} quarter over quarter.`);
+          }
+          if (latest.reported_eps != null && latest.eps_estimate != null) {
+            const beat = latest.reported_eps - latest.eps_estimate;
+            out.push(`Reported EPS ${beat >= 0 ? "beat" : "missed"} estimate by ${fmtNum(Math.abs(beat), 2)}.`);
+          }
+        }
+
+        const revenueQoq = (fundamentalsWorkspace?.metrics || []).find((metric) => metric.key === "revenue_qoq")?.value;
+        if (revenueQoq) out.push(`Revenue QoQ signal currently reads ${revenueQoq}.`);
+
+        if (!out.length) out.push("Quarterly highlights unavailable due to sparse fundamentals depth.");
+        return out.slice(0, 5);
+      }
+
+      function renderFundamentalsCharts(payload) {
+        const f = payload.fundamentals_workspace || {};
+        const trend = f.trend_series || [];
+        const labels = trend.map((row) => row.quarter);
+
+        const revenueSeries = trend.map((row) => row.revenue);
+        const netSeries = trend.map((row) => row.net_income);
+        const epsSeries = trend.map((row) => row.eps);
+        const estimateSeries = trend.map((row) => row.eps_estimate);
+
+        const revEnabled = labels.length >= 3 && revenueSeries.some((value) => value != null);
+        const netEnabled = labels.length >= 3 && netSeries.some((value) => value != null);
+        const epsEnabled = labels.length >= 3 && epsSeries.some((value) => value != null) && estimateSeries.some((value) => value != null);
+
+        setChartVisibility(elements.fundamentalsRevenueChart, elements.fundamentalsRevenueEmpty, revEnabled);
+        setChartVisibility(elements.fundamentalsNetChart, elements.fundamentalsNetEmpty, netEnabled);
+        setChartVisibility(elements.fundamentalsEpsChart, elements.fundamentalsEpsEmpty, epsEnabled);
+
+        destroyChart("fundamentalsRevenue");
+        destroyChart("fundamentalsNet");
+        destroyChart("fundamentalsEps");
+
+        if (revEnabled) {
+          state.charts.fundamentalsRevenue = new Chart(buildChartCanvas(elements.fundamentalsRevenueChart), {
             type: "bar",
             data: {
-              labels: chartData.labels,
-              datasets: [
-                {
-                  label: "Confidence",
-                  data: chartData.confidence,
-                  backgroundColor: "rgba(80, 202, 163, 0.7)",
-                  borderRadius: 8,
-                },
-                {
-                  label: "Evasiveness",
-                  data: chartData.evasiveness,
-                  backgroundColor: "rgba(240, 99, 123, 0.65)",
-                  borderRadius: 8,
-                },
-              ],
+              labels,
+              datasets: [{ label: "Revenue", data: revenueSeries, backgroundColor: "rgba(102,159,255,0.63)", borderRadius: 8 }],
             },
             options: {
               responsive: true,
               maintainAspectRatio: false,
               scales: {
-                x: { ticks: { color: "#c9d6ec" } },
-                y: { min: 0, max: 100, ticks: { color: "#c9d6ec" } },
+                x: { ticks: { color: "#aeb6c7" } },
+                y: { ticks: { color: "#aeb6c7" }, grid: { color: "rgba(255,255,255,0.06)" } },
               },
-              plugins: { legend: { labels: { color: "#dce7fa" } } },
+              plugins: { legend: { labels: { color: "#ece9df" } } },
             },
           });
         }
 
-        if (state.currentSection === "fundamentals") {
-          if (state.charts.speaker) {
-            state.charts.speaker.destroy();
-            state.charts.speaker = null;
-          }
-          const chartData = state.chartData.fundamentals;
-          if (!chartData) return;
-          if (state.charts.fundamentals) state.charts.fundamentals.destroy();
-          const canvas = buildChartCanvas(elements.fundamentalsChartSurface);
-          state.charts.fundamentals = new Chart(canvas, {
+        if (netEnabled) {
+          state.charts.fundamentalsNet = new Chart(buildChartCanvas(elements.fundamentalsNetChart), {
+            type: "line",
             data: {
-              labels: chartData.labels,
+              labels,
+              datasets: [{ label: "Net Income", data: netSeries, borderColor: "rgba(112,210,148,0.95)", backgroundColor: "rgba(112,210,148,0.4)", tension: 0.28, fill: true }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                x: { ticks: { color: "#aeb6c7" } },
+                y: { ticks: { color: "#aeb6c7" }, grid: { color: "rgba(255,255,255,0.06)" } },
+              },
+              plugins: { legend: { labels: { color: "#ece9df" } } },
+            },
+          });
+        }
+
+        if (epsEnabled) {
+          state.charts.fundamentalsEps = new Chart(buildChartCanvas(elements.fundamentalsEpsChart), {
+            type: "bar",
+            data: {
+              labels,
               datasets: [
-                {
-                  type: "bar",
-                  label: "Revenue",
-                  data: chartData.revenue,
-                  backgroundColor: "rgba(120, 191, 255, 0.58)",
-                  borderRadius: 7,
-                  yAxisID: "yUSD",
-                },
-                {
-                  type: "bar",
-                  label: "Net Income",
-                  data: chartData.netIncome,
-                  backgroundColor: "rgba(82, 205, 162, 0.58)",
-                  borderRadius: 7,
-                  yAxisID: "yUSD",
-                },
-                {
-                  type: "line",
-                  label: "Reported EPS",
-                  data: chartData.eps,
-                  borderColor: "#f4c66e",
-                  backgroundColor: "#f4c66e",
-                  tension: 0.3,
-                  yAxisID: "yEPS",
-                },
-                {
-                  type: "line",
-                  label: "EPS Estimate",
-                  data: chartData.epsEstimate,
-                  borderColor: "#ff9f7a",
-                  backgroundColor: "#ff9f7a",
-                  borderDash: [6, 4],
-                  tension: 0.3,
-                  yAxisID: "yEPS",
-                },
+                { label: "Reported EPS", data: epsSeries, backgroundColor: "rgba(244,198,110,0.68)", borderRadius: 8 },
+                { label: "EPS Estimate", data: estimateSeries, backgroundColor: "rgba(255,131,98,0.68)", borderRadius: 8 },
               ],
             },
             options: {
               responsive: true,
               maintainAspectRatio: false,
-              interaction: { mode: "index", intersect: false },
               scales: {
-                yUSD: { type: "linear", position: "left", ticks: { color: "#c9d6ec" } },
-                yEPS: { type: "linear", position: "right", grid: { drawOnChartArea: false }, ticks: { color: "#c9d6ec" } },
-                x: { ticks: { color: "#c9d6ec" } },
+                x: { ticks: { color: "#aeb6c7" } },
+                y: { ticks: { color: "#aeb6c7" }, grid: { color: "rgba(255,255,255,0.06)" } },
               },
-              plugins: { legend: { labels: { color: "#dce7fa" } } },
+              plugins: { legend: { labels: { color: "#ece9df" } } },
             },
           });
         }
       }
 
+      function renderFundamentals(payload) {
+        const f = payload.fundamentals_workspace || {};
+        elements.fundamentalsContext.textContent = f.operating_context || "No fundamentals context available.";
+
+        const topMetrics = (f.metrics || []).slice(0, 6);
+        elements.fundamentalsMetrics.innerHTML = topMetrics
+          .map((metric) => {
+            return `
+              <article class="metric-card">
+                <p>${metric.label}</p>
+                <strong class="mono">${metric.value}</strong>
+                <span class="muted">${humanizeToken(metric.key)}</span>
+              </article>
+            `;
+          })
+          .join("");
+
+        renderList(elements.fundamentalsHighlights, buildFundamentalsHighlights(f), "No highlights available.");
+
+        clearNode(elements.fundamentalsTableBody);
+        (f.table || []).forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${row.quarter}</td>
+            <td class="mono">${fmtCurrency(row.revenue)}</td>
+            <td class="mono">${fmtCurrency(row.net_income)}</td>
+            <td class="mono">${fmtNum(row.reported_eps, 2)}</td>
+            <td class="mono">${fmtNum(row.eps_estimate, 2)}</td>
+          `;
+          elements.fundamentalsTableBody.appendChild(tr);
+        });
+
+        renderFundamentalsCharts(payload);
+      }
+
+      function qualityBand(score) {
+        if (score >= 85) return "A";
+        if (score >= 75) return "B";
+        if (score >= 65) return "C";
+        if (score >= 50) return "D";
+        return "F";
+      }
+
+      function computeDataQuality(payload) {
+        const audit = payload.data_audit || {};
+        const warnings = (audit.warnings || []).length;
+        const missing = (audit.missing_items || []).length;
+        const failures = (audit.transcript_discovery?.fetch_failures || []).length;
+        const mismatches = (audit.fundamentals_validation?.mismatches || []).length;
+        const score = Math.max(0, 100 - warnings * 4 - missing * 9 - failures * 6 - mismatches * 5);
+
+        return {
+          overall: score,
+          grade: qualityBand(score),
+          transcript: Math.max(0, 100 - missing * 10 - failures * 8),
+          fundamentals: Math.max(0, 100 - mismatches * 10),
+          market: Math.max(0, 100 - Math.max(0, 8 - ((payload.market_reaction?.news_count || 0) + (payload.market_reaction?.social_count || 0))) * 5),
+        };
+      }
+
+      function sourceQualityFromCount(count) {
+        if (count >= 40) return "A";
+        if (count >= 20) return "B";
+        if (count >= 10) return "C";
+        if (count > 0) return "D";
+        return "F";
+      }
+
+      function extractRecordsProcessed(detail) {
+        const text = String(detail || "");
+        const match = text.match(/(\d+)\s+(records|scored|parsed|docs|documents|blocks)/i);
+        return match ? match[1] : "n/a";
+      }
+
+      function renderAuditTables(payload) {
+        const audit = payload.data_audit || {};
+        const quality = computeDataQuality(payload);
+
+        elements.auditConfidenceCard.innerHTML = `
+          <div>
+            <p class="muted">Overall Data Quality</p>
+            <h3>${quality.grade}</h3>
+            <p class="mono">${fmtNum(quality.overall, 1)} / 100</p>
+          </div>
+          <ul class="quality-breakdown mono">
+            <li>Transcript ${fmtNum(quality.transcript, 1)}</li>
+            <li>Fundamentals ${fmtNum(quality.fundamentals, 1)}</li>
+            <li>Market Freshness ${fmtNum(quality.market, 1)}</li>
+          </ul>
+        `;
+
+        elements.auditConfidence.textContent = `${audit.confidence_note || "No confidence note."} Normalization mode ${humanizeToken(audit.normalization_mode || "unknown")}.`;
+
+        clearNode(elements.sourceCountsBody);
+        const sourceCounts = audit.source_counts || {};
+        const nowDate = new Date().toISOString().slice(0, 10);
+        ["transcripts", "news", "social"].forEach((source) => {
+          const count = Number(sourceCounts[source] || 0);
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${humanizeToken(source)}</td>
+            <td class="mono">${count}</td>
+            <td><span class="sentiment-pill ${sourceQualityFromCount(count) <= "C" ? "sentiment-bearish" : "sentiment-bullish"}">${sourceQualityFromCount(count)}</span></td>
+            <td class="mono">${nowDate}</td>
+          `;
+          elements.sourceCountsBody.appendChild(tr);
+        });
+
+        clearNode(elements.auditTaskBody);
+        const taskRows = audit.task_breakdown || [];
+        if (!taskRows.length) {
+          elements.auditTaskBody.innerHTML = `<tr><td colspan="5">No task breakdown available.</td></tr>`;
+        } else {
+          taskRows.forEach((task) => {
+            const tr = document.createElement("tr");
+            const hasError = task.status === "error";
+            tr.innerHTML = `
+              <td>${task.label}</td>
+              <td><span class="sentiment-pill ${hasError ? "sentiment-bearish" : task.status === "done" ? "sentiment-bullish" : "sentiment-neutral"}">${humanizeToken(task.status)}</span></td>
+              <td class="mono">${fmtNum(task.duration_ms, 0)} ms</td>
+              <td class="mono">${extractRecordsProcessed(task.detail)}</td>
+              <td>${hasError ? compactText(task.detail || "error", 120) : "-"}</td>
+            `;
+            elements.auditTaskBody.appendChild(tr);
+          });
+        }
+
+        const discovery = audit.transcript_discovery || {};
+        const funnelSteps = [
+          { label: "Quarters Searched", value: (payload.data_health?.transcripts?.requested_quarters || []).length || payload.transcript?.transcript_count_requested || 0 },
+          { label: "Transcripts Found", value: payload.transcript?.transcript_count_found || 0 },
+          { label: "Successfully Parsed", value: Number(discovery.selected_count || 0) - Number((discovery.fetch_failures || []).length || 0) },
+          { label: "Quality Validated", value: Math.max(0, (payload.transcript?.transcript_count_found || 0) - (audit.parsing_warnings || []).length) },
+        ];
+
+        const maxStep = Math.max(1, ...funnelSteps.map((step) => Number(step.value || 0)));
+        elements.auditFunnel.innerHTML = funnelSteps
+          .map((step) => {
+            const width = Math.max(8, Math.round((Number(step.value || 0) / maxStep) * 100));
+            return `
+              <article class="funnel-step">
+                <header>
+                  <span>${step.label}</span>
+                  <strong class="mono">${step.value}</strong>
+                </header>
+                <div class="funnel-bar"><span style="width:${width}%"></span></div>
+              </article>
+            `;
+          })
+          .join("");
+
+        clearNode(elements.fundamentalsCrossBody);
+        const mismatches = audit.fundamentals_validation?.mismatches || [];
+        if (!mismatches.length) {
+          elements.fundamentalsCrossBody.innerHTML = `<tr><td colspan="5">No provider discrepancies detected.</td></tr>`;
+        } else {
+          mismatches.forEach((row) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+              <td>${humanizeToken(row.key)}</td>
+              <td class="mono">${fmtNum(row.yahoo_value, 4)}</td>
+              <td class="mono">${fmtNum(row.alpha_value, 4)}</td>
+              <td class="mono">${row.relative_diff_pct == null ? "n/a" : fmtPct(row.relative_diff_pct, 2)}</td>
+              <td>${row.note || "-"}</td>
+            `;
+            elements.fundamentalsCrossBody.appendChild(tr);
+          });
+        }
+      }
+
+      function renderDataAudit(payload) {
+        const audit = payload.data_audit || {};
+        renderAuditTables(payload);
+
+        renderList(elements.auditWarnings, audit.warnings || [], "No warnings.");
+        renderList(elements.auditMissing, [...(audit.missing_items || []), ...(audit.slowest_tasks || [])], "No missing-source flags.");
+        renderList(elements.auditFailures, audit.transcript_discovery?.fetch_failures || [], "No discovery failures.");
+        renderList(elements.auditParsing, audit.parsing_warnings || [], "No parsing warnings.");
+      }
+
+      function renderVisibleCharts() {
+        if (state.currentSection !== "market_reaction") destroyChart("marketDistribution");
+        if (state.currentSection !== "fundamentals") {
+          destroyChart("fundamentalsRevenue");
+          destroyChart("fundamentalsNet");
+          destroyChart("fundamentalsEps");
+        }
+        if (!state.payload) return;
+        if (state.currentSection === "market_reaction") renderMarketDistributionChart(state.payload);
+        if (state.currentSection === "fundamentals") renderFundamentalsCharts(state.payload);
+      }
+
       function renderAll(payload) {
         state.payload = payload;
-        applyCopy(payload.ui_copy);
+        elements.emptyState.classList.add("hidden");
+        elements.workspace.classList.remove("hidden");
+
         renderRunContext(payload);
+        renderStageSummary();
+        renderCompanyHeader(payload);
+        renderSignalSummary(payload);
         renderOverview(payload);
         renderTranscript(payload);
         renderMarketReaction(payload);
         renderFundamentals(payload);
         renderDataAudit(payload);
-        elements.workspace.classList.remove("hidden");
+
         switchSection("overview");
       }
 
@@ -1088,18 +1582,19 @@
         const ticker = elements.tickerInput.value.trim().toUpperCase();
         if (!ticker) {
           elements.status.className = "status-line error";
-          elements.status.textContent = "Enter a ticker first.";
+          elements.status.textContent = "Please enter a valid ticker symbol.";
           return;
         }
+        if (!/^[A-Z0-9.-]{1,12}$/.test(ticker)) {
+          elements.status.className = "status-line error";
+          elements.status.textContent = "Ticker may contain only letters, numbers, dot, and dash.";
+          return;
+        }
+
         elements.analyzeBtn.disabled = true;
-        elements.workspace.classList.add("hidden");
-        destroyCharts();
-        state.payload = null;
-        state.currentJobId = null;
-        state.jobProgress = null;
         elements.status.className = "status-line";
         elements.status.textContent = `Queued analysis for ${ticker}...`;
-        setLoadingOverlay(true, "Booting Analysis…", "Waiting for backend job to start.");
+        setLoadingOverlay(true, "Bootstrapping analysis", "Waiting for backend job start");
 
         try {
           const startResponse = await fetch("/api/analyze/jobs", {
@@ -1112,7 +1607,6 @@
 
           state.currentJobId = startPayload.job_id;
           updateProgressView(startPayload);
-          elements.status.textContent = `Running ${ticker} (job ${startPayload.job_id})...`;
 
           const result = await pollJob(startPayload.job_id);
           renderAll(result);
@@ -1128,34 +1622,55 @@
         }
       }
 
-      elements.filterSpeaker.addEventListener("change", renderSpeakerTable);
-      elements.filterSection.addEventListener("change", renderSpeakerTable);
-      elements.filterTopic.addEventListener("change", renderSpeakerTable);
-      elements.filterSentiment.addEventListener("change", renderSpeakerTable);
-      elements.filterConfidenceMin.addEventListener("input", renderSpeakerTable);
-      elements.filterEvasivenessMax.addEventListener("input", renderSpeakerTable);
-      elements.filterSpecificityMin.addEventListener("input", renderSpeakerTable);
-      elements.filterReset.addEventListener("click", () => {
-        elements.filterSpeaker.value = "all";
-        elements.filterSection.value = "all";
-        elements.filterTopic.value = "all";
-        elements.filterSentiment.value = "all";
-        elements.filterConfidenceMin.value = "0";
-        elements.filterEvasivenessMax.value = "100";
-        elements.filterSpecificityMin.value = "0";
-        renderSpeakerTable();
-      });
-
       elements.analyzeBtn.addEventListener("click", runAnalysis);
       elements.tickerInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter") runAnalysis();
       });
 
+      elements.tickerChips.forEach((chip) => {
+        chip.addEventListener("click", () => {
+          const ticker = chip.dataset.ticker || "";
+          elements.tickerInput.value = ticker;
+          runAnalysis();
+        });
+      });
+
+      elements.filterRole.addEventListener("change", renderSpeakerTable);
+      elements.filterSpeaker.addEventListener("change", renderSpeakerTable);
+      elements.filterSection.addEventListener("change", renderSpeakerTable);
+      elements.filterTopic.addEventListener("change", renderSpeakerTable);
+      elements.filterSentiment.addEventListener("change", renderSpeakerTable);
+      elements.filterConfidenceMin.addEventListener("input", renderSpeakerTable);
+
+      elements.filterReset.addEventListener("click", () => {
+        elements.filterRole.value = "all";
+        elements.filterSpeaker.value = "all";
+        elements.filterSection.value = "all";
+        elements.filterTopic.value = "all";
+        elements.filterSentiment.value = "all";
+        elements.filterConfidenceMin.value = "0";
+        renderSpeakerTable();
+      });
+
+      document.querySelectorAll("#speaker-analysis-table thead button[data-sort]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const key = button.dataset.sort;
+          if (!key) return;
+          if (state.speakerSort.key === key) {
+            state.speakerSort.direction = state.speakerSort.direction === "asc" ? "desc" : "asc";
+          } else {
+            state.speakerSort = { key, direction: key === "speaker" || key === "role" ? "asc" : "desc" };
+          }
+          renderSpeakerTable();
+        });
+      });
+
       elements.modalClose.addEventListener("click", () => elements.modal.close());
       elements.transcriptModalClose.addEventListener("click", () => elements.transcriptModal.close());
 
-      buildSectionNav(stageLabels());
-      renderPipelineStatus();
+      buildTabs();
+      renderStageSummary();
+      renderLoadingProgress();
     </script>
   </body>
 </html>
