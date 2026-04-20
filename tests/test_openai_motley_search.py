@@ -6,11 +6,13 @@ from finbert_site.openai_motley_search import (
     _build_html_report,
     _build_request_payload,
     _build_speaker_sections,
+    _clean_candidates,
     _dedupe_links,
     _extract_participants_from_lines,
     _extract_text_lines_from_script_payloads,
     _extract_text_lines_relaxed,
     _extract_transcript_lines,
+    _extract_transcript_lines_with_diagnostics,
     _extract_sources,
     _fetch_transcript_sections,
     _is_low_quality_structured_sections,
@@ -152,6 +154,18 @@ def test_extract_transcript_lines_from_full_transcript_heading() -> None:
         "Timothy D. Cook: Opening remarks.",
         "Operator: Next question.",
     ]
+
+
+def test_extract_transcript_lines_does_not_treat_inline_phrase_as_heading() -> None:
+    lines = [
+        "Timothy D. Cook: Opening remarks.",
+        "Operator: Next question.",
+        "Analyst: Sorry, I missed that in your prepared remarks.",
+        "Operator: Thank you.",
+    ]
+    transcript, marker = _extract_transcript_lines_with_diagnostics(lines)
+    assert marker["start_reason"] in {"repeated_speaker", "single_speaker_fallback"}
+    assert transcript[0].startswith("Timothy D. Cook:")
 
 
 def test_build_speaker_sections_preserves_sequence() -> None:
@@ -374,6 +388,35 @@ def test_discover_last_quarter_links_uses_source_fallback_when_structured_missin
     assert report["found_quarters"] == ["2026-Q1"]
     assert len(report["candidate_pool"]) >= 1
     assert "Candidates derived from OpenAI web_search sources" in report.get("notes", "")
+
+
+def test_clean_candidates_drops_off_ticker_urls_using_company_tokens() -> None:
+    raw_candidates = [
+        {
+            "title": "Apple (AAPL) Q1 2026 Earnings Call Transcript",
+            "url": "https://www.fool.com/earnings/call-transcripts/2026/01/29/apple-aapl-q1-2026-earnings-call-transcript/",
+            "published_date": "2026-01-29",
+            "source": "web_search",
+        },
+        {
+            "title": "Apple Q4 2025 Earnings Call Transcript",
+            "url": "https://www.fool.com/earnings/call-transcripts/2025/10/31/apple-q4-2025-earnings-call-transcript/",
+            "published_date": "2025-10-31",
+            "source": "web_search",
+        },
+        {
+            "title": "Macerich (MAC) Q4 2025 Earnings Call Transcript",
+            "url": "https://www.fool.com/earnings/call-transcripts/2026/02/24/macerich-mac-q4-2025-earnings-call-transcript/",
+            "published_date": "2026-02-24",
+            "source": "web_search",
+        },
+    ]
+    cleaned, warnings = _clean_candidates(ticker="AAPL", raw_candidates=raw_candidates)
+    urls = [c.url for c in cleaned]
+    assert any("apple-aapl-q1-2026" in url for url in urls)
+    assert any("apple-q4-2025" in url for url in urls)
+    assert not any("macerich-mac-q4-2025" in url for url in urls)
+    assert any("off-ticker" in warning.lower() for warning in warnings)
 
 
 def test_parse_transcript_from_html_semantic_dom_source() -> None:

@@ -84,6 +84,33 @@ _BAD_SPEAKER_LABELS = {
     "good afternoon",
     "good morning",
 }
+_COMPANY_TOKEN_STOPWORDS = {
+    "inc",
+    "incorporated",
+    "corp",
+    "corporation",
+    "company",
+    "co",
+    "class",
+    "common",
+    "stock",
+    "holding",
+    "holdings",
+    "group",
+    "global",
+    "limited",
+    "ltd",
+    "plc",
+    "sa",
+    "nv",
+    "the",
+    "and",
+    "of",
+}
+_TRANSCRIPT_HEADING_PATTERN = re.compile(
+    r"^(full conference call transcript|prepared remarks|questions and answers|q&a)\s*[:\-–—]?\s*$",
+    flags=re.IGNORECASE,
+)
 
 _PARTICIPANT_STOP_MARKERS = {
     "takeaways",
@@ -234,6 +261,16 @@ def _speaker_line_match(line: str) -> Optional[tuple[str, str]]:
     return speaker, spoken
 
 
+def _is_transcript_heading_line(line: str) -> Optional[str]:
+    normalized = re.sub(r"\s+", " ", line.strip())
+    if not normalized:
+        return None
+    match = _TRANSCRIPT_HEADING_PATTERN.match(normalized)
+    if not match:
+        return None
+    return match.group(1).lower()
+
+
 def _guess_speaker_role(speaker: str) -> Optional[str]:
     lowered = speaker.lower()
     if "operator" in lowered:
@@ -246,10 +283,10 @@ def _guess_speaker_role(speaker: str) -> Optional[str]:
 
 
 def _detect_section_type(line: str, current: str) -> str:
-    lowered = line.lower().strip()
-    if "questions and answers" in lowered or lowered in {"q&a", "question-and-answer"}:
+    heading = _is_transcript_heading_line(line)
+    if heading in {"questions and answers", "q&a"}:
         return "qa"
-    if "prepared remarks" in lowered:
+    if heading == "prepared remarks":
         return "prepared_remarks"
     return current
 
@@ -472,7 +509,7 @@ def _find_repeated_speaker_start(lines: list[str], window: int = 25) -> Optional
         if len(in_window) < 2:
             continue
         names = {name for _, name in in_window}
-        if len(names) >= 1:
+        if len(names) >= 2:
             return idx
     return None
 
@@ -482,10 +519,9 @@ def _extract_transcript_lines_with_diagnostics(lines: list[str]) -> tuple[list[s
     start_marker = None
     start_reason = None
     for i, line in enumerate(lines):
-        lowered = line.lower()
-        marker = next((m for m in _TRANSCRIPT_START_MARKERS if m in lowered), None)
+        marker = _is_transcript_heading_line(line)
         if marker:
-            start_idx = i + (1 if "full conference call transcript" in lowered else 0)
+            start_idx = i + (1 if marker == "full conference call transcript" else 0)
             start_marker = marker
             start_reason = "marker"
             break
@@ -926,26 +962,64 @@ def _fetch_transcript_sections(
 
 
 def _select_most_recent_candidates(report: dict[str, Any], count: int) -> list[dict[str, str]]:
+    selected: list[dict[str, str]] = []
+    seen: set[str] = set()
+    target_count = max(count, 1)
+
+    found_links = report.get("found_transcript_links")
+    if isinstance(found_links, list):
+        for row in found_links:
+            if not isinstance(row, dict):
+                continue
+            url = str(row.get("url") or "").strip()
+            if not url:
+                continue
+            normalized = _normalize_url(url)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            selected.append(
+                {
+                    "quarter": str(row.get("quarter") or ""),
+                    "title": str(row.get("title") or ""),
+                    "url": normalized,
+                    "published_date": str(row.get("published_date") or _date_from_motley_url(normalized)),
+                }
+            )
+            if len(selected) >= target_count:
+                return selected
+
+    # Only fallback to candidate_pool if no quarter-resolved links were found.
+    if selected:
+        return selected
+
     pool = report.get("candidate_pool")
     if not isinstance(pool, list):
-        return []
+        return selected
 
-    selected: list[dict[str, str]] = []
     for row in pool:
         if not isinstance(row, dict):
             continue
         url = str(row.get("url") or "").strip()
         if not url:
             continue
+        normalized = _normalize_url(url)
+        if not normalized or normalized in seen:
+            continue
+        quality_raw = row.get("quality_score")
+        quality = float(quality_raw) if isinstance(quality_raw, (int, float)) else 10.0
+        if isinstance(quality_raw, (int, float)) and quality < 8.0:
+            continue
+        seen.add(normalized)
         selected.append(
             {
                 "quarter": str(row.get("quarter") or ""),
                 "title": str(row.get("title") or ""),
-                "url": url,
-                "published_date": str(row.get("published_date") or ""),
+                "url": normalized,
+                "published_date": str(row.get("published_date") or _date_from_motley_url(normalized)),
             }
         )
-        if len(selected) >= max(count, 1):
+        if len(selected) >= target_count:
             break
     return selected
 
@@ -1064,6 +1138,66 @@ def _is_motley_transcript_url(url: str) -> bool:
     if host != "fool.com":
         return False
     return "/earnings/call-transcripts/" in parsed.path.lower()
+
+
+def _candidate_has_explicit_ticker(ticker: str, title: str, url: str) -> bool:
+    ticker_upper = ticker.upper()
+    ticker_lower = ticker.lower()
+    title_upper = title.upper()
+    url_lower = url.lower()
+    return bool(
+        re.search(rf"\({re.escape(ticker_upper)}\)", title_upper)
+        or re.search(rf"\b{re.escape(ticker_upper)}\b", title_upper)
+        or f"-{ticker_lower}-" in url_lower
+    )
+
+
+def _extract_company_tokens_from_candidate(ticker: str, title: str, url: str) -> set[str]:
+    ticker_lower = ticker.lower()
+    tokens: set[str] = set()
+
+    slug = urlparse(url).path.rstrip("/").split("/")[-1].replace(".aspx", "")
+    slug_parts = [part.lower() for part in slug.split("-") if part]
+    for part in slug_parts:
+        if part == ticker_lower:
+            continue
+        if part in {"earnings", "call", "transcript", "conference"}:
+            break
+        if re.fullmatch(r"q[1-4]", part):
+            break
+        if re.fullmatch(r"20\d{2}", part):
+            break
+        if not re.fullmatch(r"[a-z]{3,}", part):
+            continue
+        if part in _COMPANY_TOKEN_STOPWORDS:
+            continue
+        tokens.add(part)
+
+    for part in re.findall(r"[A-Za-z]{3,}", title.lower()):
+        if part == ticker_lower:
+            continue
+        if part in _COMPANY_TOKEN_STOPWORDS:
+            continue
+        if part in {"earnings", "call", "transcript", "conference"}:
+            continue
+        tokens.add(part)
+        if len(tokens) >= 8:
+            break
+
+    return tokens
+
+
+def _candidate_matches_company_tokens(title: str, url: str, company_tokens: set[str]) -> bool:
+    if not company_tokens:
+        return False
+    title_lower = title.lower()
+    url_lower = url.lower()
+    for token in company_tokens:
+        if re.search(rf"\b{re.escape(token)}\b", title_lower):
+            return True
+        if re.search(rf"(^|[-/]){re.escape(token)}($|[-/.])", url_lower):
+            return True
+    return False
 
 
 def _score_candidate(ticker: str, title: str, url: str) -> float:
@@ -1962,7 +2096,7 @@ def _clean_candidates(
     ticker: str,
     raw_candidates: list[dict[str, Any]],
 ) -> tuple[list[MotleyTranscriptCandidate], list[str]]:
-    cleaned: list[MotleyTranscriptCandidate] = []
+    staged: list[dict[str, Any]] = []
     warnings: list[str] = []
     seen_urls: set[str] = set()
 
@@ -1986,15 +2120,56 @@ def _clean_candidates(
             continue
 
         year, quarter = infer_year_quarter(title=title, url=url, published_date=published_date)
+        explicit_ticker = _candidate_has_explicit_ticker(ticker=ticker, title=title, url=url)
+        base_quality = _score_candidate(ticker=ticker, title=title, url=url)
+        staged.append(
+            {
+                "title": title,
+                "url": url,
+                "published_date": published_date or _date_from_motley_url(url),
+                "source": source,
+                "year": year,
+                "quarter": quarter,
+                "explicit_ticker": explicit_ticker,
+                "base_quality": base_quality,
+            }
+        )
+
+    company_tokens: set[str] = set()
+    for row in staged:
+        if not bool(row.get("explicit_ticker")):
+            continue
+        company_tokens.update(
+            _extract_company_tokens_from_candidate(
+                ticker=ticker,
+                title=str(row.get("title") or ""),
+                url=str(row.get("url") or ""),
+            )
+        )
+
+    cleaned: list[MotleyTranscriptCandidate] = []
+    for row in staged:
+        title = str(row.get("title") or "")
+        url = str(row.get("url") or "")
+        explicit_ticker = bool(row.get("explicit_ticker"))
+        alias_match = _candidate_matches_company_tokens(title=title, url=url, company_tokens=company_tokens)
+        if company_tokens and not explicit_ticker and not alias_match:
+            warnings.append(f"Dropped likely off-ticker URL: {url}")
+            continue
+
+        quality = float(row.get("base_quality") or 0.0)
+        if alias_match and not explicit_ticker:
+            quality += 6.0
+
         cleaned.append(
             MotleyTranscriptCandidate(
                 title=title,
                 url=url,
-                published_date=published_date or _date_from_motley_url(url),
-                source=source,
-                year=year,
-                quarter=quarter,
-                quality_score=_score_candidate(ticker=ticker, title=title, url=url),
+                published_date=str(row.get("published_date") or ""),
+                source=str(row.get("source") or ""),
+                year=row.get("year"),
+                quarter=row.get("quarter"),
+                quality_score=quality,
             )
         )
 

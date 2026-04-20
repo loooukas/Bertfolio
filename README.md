@@ -199,6 +199,8 @@ Output shape (per ticker):
 - `llm_input_diagnostics` and `llm_input_preview` show the actual page-derived content passed to OpenAI for transcript structuring.
 - If only low-quality parser output is available, scraping records a `scrape_error` instead of returning misleading single `unknown` speaker sections.
 - Discovery is source-first: candidates are built from `web_search` source URLs so missing schema output no longer hard-fails discovery.
+- Candidate cleanup now drops likely off-ticker transcript URLs (for example, unrelated symbols that appear in search-source spillover) and prefers quarter-resolved links for scraping.
+- Transcript start markers are now heading-aware, so inline phrases like "in your prepared remarks" no longer incorrectly reset parsing into mid-call Q&A.
 
 ## Notes
 
