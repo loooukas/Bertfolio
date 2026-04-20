@@ -240,7 +240,7 @@ Output shape (per ticker):
 - If only low-quality parser output is available, output includes `quality_flags` (for example `parser_low_confidence`, reason, and optional OpenAI/browser errors).
 - If you interrupt a long run (`Ctrl+C`), CLI now returns partial JSON results cleanly without a Python traceback.
 - Discovery is deterministic-first: sitemap and author crawling run before OpenAI fallback, and OpenAI candidate extraction is source-first so missing schema output no longer hard-fails discovery.
-- In hybrid mode, OpenAI fallback only runs when deterministic discovery still has unresolved quarters, and the OpenAI query is focused on those unresolved quarter labels.
+- In hybrid mode, OpenAI fallback only runs when deterministic discovery still has unresolved quarters, and the OpenAI query is constrained to exact unresolved quarter labels (no adjacent-quarter substitution).
 - Scrape selection is strict to the requested quarter window; it does not backfill missing window quarters with older transcripts.
 - Candidate cleanup now drops likely off-ticker transcript URLs (for example, unrelated symbols that appear in search-source spillover) and prefers quarter-resolved links for scraping.
 - OpenAI discovery fallback now filters candidates against unresolved quarter labels and ticker/company tokens to reduce off-ticker quarter collisions.

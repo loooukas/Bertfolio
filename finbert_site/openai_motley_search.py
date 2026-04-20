@@ -1857,8 +1857,8 @@ def _build_search_prompt(ticker: str, max_candidates: int, missing_quarters: Opt
         base += (
             "Prior deterministic discovery already found some quarters.\n"
             f"Focus only on unresolved quarter labels: {', '.join(missing_labels)}.\n"
-            "If an exact unresolved quarter page is unavailable, return the closest adjacent Motley transcript "
-            "for this ticker and keep results newest first.\n"
+            "Return only exact quarter matches for unresolved quarter labels.\n"
+            "Do not substitute adjacent quarters.\n"
         )
     base += (
         f"Find up to {max_candidates} likely transcript pages if available, newest first.\n"

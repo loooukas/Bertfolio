@@ -98,6 +98,7 @@ def test_build_request_payload_includes_missing_quarter_focus() -> None:
     prompt = str(payload.get("input") or "")
     assert "2025-Q2" in prompt
     assert "Focus only on unresolved quarter labels" in prompt
+    assert "Do not substitute adjacent quarters" in prompt
 
 
 def test_extract_sources_collects_web_search_and_annotations() -> None:
