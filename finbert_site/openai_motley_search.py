@@ -44,6 +44,7 @@ _URL_QUARTER_PATTERN = re.compile(r"-q([1-4])-(20\d{2})-earnings-call-transcript
 _URL_DATE_PATTERN = re.compile(r"/earnings/call-transcripts/(\d{4})/(\d{2})/(\d{2})/")
 _SPEAKER_LINE_PATTERN = re.compile(r"^([A-Za-z][A-Za-z .,'&()\-/]{1,90}):\s*(.+)$")
 _PLAUSIBLE_PERSON_NAME_PATTERN = re.compile(r"^[A-Z][A-Za-z.'\-]+(?: [A-Z][A-Za-z.'\-]+){0,5}$")
+_URL_EXTRACT_PATTERN = re.compile(r"https?://[^\s<>'\"\\]+", flags=re.IGNORECASE)
 
 _TRANSCRIPT_END_MARKERS = {
     "read next",
@@ -277,7 +278,25 @@ def _sanitize_section_role(value: str) -> Optional[str]:
 
 def _default_logger(message: str) -> None:
     timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"[openai-motley-search {timestamp}] {message}", file=sys.stderr, flush=True)
+    print(_format_log_line(timestamp=timestamp, message=message), file=sys.stderr, flush=True)
+
+
+def _format_log_line(*, timestamp: str, message: str) -> str:
+    return f"[openai-motley-search {timestamp}] {message}"
+
+
+def _log_phase(log_fn: Optional[Callable[[str], None]], title: str, *, ticker: str = "") -> None:
+    if log_fn is None:
+        return
+    label = f"{ticker}: " if ticker else ""
+    log_fn(f"{label}------------------------------------------------------------")
+    log_fn(f"{label}{title}")
+    log_fn(f"{label}------------------------------------------------------------")
+
+
+def _build_readable_run_stamp(now: Optional[datetime] = None) -> str:
+    ts = now or datetime.now()
+    return ts.strftime("%Y-%m-%d__%H%M%S")
 
 
 def _speaker_line_match(line: str) -> Optional[tuple[str, str]]:
@@ -2300,6 +2319,14 @@ def _extract_sources(response_payload: dict[str, Any]) -> list[str]:
         seen.add(normalized)
         urls.append(normalized)
 
+    def _push_urls_from_text(raw_text: Any) -> None:
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            return
+        for match in _URL_EXTRACT_PATTERN.findall(raw_text):
+            _push(match)
+
+    _push_urls_from_text(response_payload.get("output_text"))
+
     for output_item in response_payload.get("output", []) or []:
         if not isinstance(output_item, dict):
             continue
@@ -2329,6 +2356,17 @@ def _extract_sources(response_payload: dict[str, Any]) -> list[str]:
                     _push(annotation.get("url"))
                     if isinstance(annotation.get("url_citation"), dict):
                         _push(annotation["url_citation"].get("url"))
+                text_value = block.get("text")
+                if isinstance(text_value, str):
+                    _push_urls_from_text(text_value)
+                elif isinstance(text_value, dict):
+                    _push_urls_from_text(text_value.get("value"))
+                    _push_urls_from_text(text_value.get("text"))
+
+        _push_urls_from_text(output_item.get("output_text"))
+        if isinstance(output_item.get("action"), dict):
+            _push_urls_from_text(output_item["action"].get("query"))
+            _push_urls_from_text(output_item["action"].get("result"))
 
     return urls
 
@@ -2534,7 +2572,20 @@ def discover_last_quarter_links(
     if response_payload is None:
         raise RuntimeError("OpenAI web-search request failed. " + " | ".join(tool_errors))
 
+    output_items = response_payload.get("output")
+    output_item_types: list[str] = []
+    if isinstance(output_items, list):
+        for item in output_items:
+            if isinstance(item, dict):
+                output_item_types.append(str(item.get("type") or "unknown"))
+    output_text_chars = len(str(response_payload.get("output_text") or ""))
+
     search_sources = _extract_sources(response_payload)
+    if not search_sources:
+        log(
+            f"{symbol}: no source URLs extracted from OpenAI response "
+            f"(tool={selected_tool}, output_types={output_item_types}, output_text_chars={output_text_chars})"
+        )
     raw_candidates = _fallback_candidates_from_sources(
         ticker=symbol,
         response_payload=response_payload,
@@ -2561,7 +2612,8 @@ def discover_last_quarter_links(
         except Exception as exc:
             structured_notes = (
                 "No web_search source URLs were returned and structured candidate parsing failed "
-                f"({exc})."
+                f"({exc}). response_shape=tool:{selected_tool}, output_types:{output_item_types}, "
+                f"output_text_chars:{output_text_chars}"
             )
             log(f"{symbol}: discovery produced no parseable source URLs or structured candidates")
 
@@ -2695,10 +2747,13 @@ def scrape_recent_transcripts_for_report(
     scraped: list[dict[str, Any]] = []
     scrape_errors: list[dict[str, Any]] = []
     for item in selected:
+        item_index = len(scraped) + len(scrape_errors) + 1
         url = item["url"]
         quarter = item["quarter"]
         title = item["title"]
         published_date = item["published_date"]
+        log(f"{ticker}: [SCRAPE ITEM {item_index}/{len(selected)}] quarter={quarter} date={published_date}")
+        log(f"{ticker}: [SCRAPE ITEM {item_index}/{len(selected)}] url={url}")
         cache_key = _build_scrape_cache_key(ticker, quarter, url)
         cache_path = _resolve_scrape_cache_path(
             cache_dir=cache_dir,
@@ -2973,6 +3028,19 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         default="",
         help="Optional output path for a simple HTML view of the final JSON results.",
     )
+    parser.add_argument(
+        "--write-output-dir",
+        default="",
+        help=(
+            "Optional directory to auto-write run artifacts with readable names "
+            "(YYYY-MM-DD__HHMMSS.{json,log,html})."
+        ),
+    )
+    parser.add_argument(
+        "--write-output-stamp",
+        default="",
+        help="Optional readable filename stamp when using --write-output-dir (default: current local timestamp).",
+    )
 
     args = parser.parse_args(argv)
     if not args.api_key:
@@ -2985,10 +3053,34 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
     reports: list[dict[str, Any]] = []
     had_error = False
     interrupted = False
-    log_fn = _default_logger if args.verbose else None
 
-    if args.verbose:
-        _default_logger(
+    auto_json_path: Optional[Path] = None
+    auto_log_path: Optional[Path] = None
+    auto_html_path: Optional[Path] = None
+    if args.write_output_dir:
+        output_dir = Path(args.write_output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        readable_stamp = (args.write_output_stamp or "").strip() or _build_readable_run_stamp()
+        auto_json_path = output_dir / f"{readable_stamp}.json"
+        auto_log_path = output_dir / f"{readable_stamp}.log"
+        auto_html_path = output_dir / f"{readable_stamp}.html"
+        # Reset prior file contents for this run.
+        auto_log_path.write_text("", encoding="utf-8")
+
+    def _log(message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        line = _format_log_line(timestamp=timestamp, message=message)
+        if args.verbose:
+            print(line, file=sys.stderr, flush=True)
+        if auto_log_path is not None:
+            with auto_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+
+    log_fn: Optional[Callable[[str], None]] = _log if (args.verbose or auto_log_path is not None) else None
+
+    if log_fn is not None:
+        _log_phase(log_fn, "RUN START")
+        log_fn(
             f"Starting run for {len(args.tickers)} ticker(s): {', '.join(args.tickers)} "
             f"(model={args.model}, timeout={args.timeout}s, retries={max(args.openai_retries, 1)}, "
             f"cache_mode={args.cache_mode})"
@@ -2996,8 +3088,9 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
 
     for ticker in args.tickers:
         try:
-            if args.verbose:
-                _default_logger(f"{ticker}: dispatching discovery")
+            _log_phase(log_fn, "DISCOVERY", ticker=ticker)
+            if log_fn is not None:
+                log_fn(f"{ticker}: dispatching discovery")
             report = discover_last_quarter_links(
                 ticker=ticker,
                 api_key=args.api_key,
@@ -3010,8 +3103,9 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
                 log_fn=log_fn,
             )
             if args.scrape and "error" not in report:
-                if args.verbose:
-                    _default_logger(f"{ticker}: scraping most recent {max(args.scrape_count, 1)} transcript links")
+                _log_phase(log_fn, "SCRAPE", ticker=ticker)
+                if log_fn is not None:
+                    log_fn(f"{ticker}: scraping most recent {max(args.scrape_count, 1)} transcript links")
                 scrape_payload = scrape_recent_transcripts_for_report(
                     report=report,
                     scrape_count=max(args.scrape_count, 1),
@@ -3029,16 +3123,16 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
                 )
                 report = {**report, **scrape_payload}
             reports.append(report)
-            if args.verbose:
-                _default_logger(
+            if log_fn is not None:
+                log_fn(
                     f"{ticker}: done (found={len(report.get('found_quarters', []))}, "
                     f"links={len(report.get('links', []))})"
                 )
         except KeyboardInterrupt:
             interrupted = True
             had_error = True
-            if args.verbose:
-                _default_logger(f"{ticker}: interrupted by user; returning partial results")
+            if log_fn is not None:
+                log_fn(f"{ticker}: interrupted by user; returning partial results")
             reports.append(
                 {
                     "ticker": _normalize_ticker(ticker),
@@ -3048,8 +3142,8 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
             break
         except Exception as exc:
             had_error = True
-            if args.verbose:
-                _default_logger(f"{ticker}: failed ({exc})")
+            if log_fn is not None:
+                log_fn(f"{ticker}: failed ({exc})")
             reports.append(
                 {
                     "ticker": _normalize_ticker(ticker),
@@ -3070,15 +3164,28 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
     else:
         print(json.dumps(output))
 
+    if auto_json_path is not None:
+        auto_json_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+
     if args.html_report:
         html_path = Path(args.html_report)
         html_path.parent.mkdir(parents=True, exist_ok=True)
         html_path.write_text(_build_html_report(output), encoding="utf-8")
-        if args.verbose:
-            _default_logger(f"HTML report written: {html_path}")
+        if log_fn is not None:
+            log_fn(f"HTML report written: {html_path}")
+    elif auto_html_path is not None:
+        auto_html_path.write_text(_build_html_report(output), encoding="utf-8")
+        if log_fn is not None:
+            log_fn(f"HTML report written: {auto_html_path}")
 
-    if args.verbose:
-        _default_logger(f"Run complete (had_error={had_error})")
+    if log_fn is not None and auto_json_path is not None:
+        log_fn(f"JSON output written: {auto_json_path}")
+    if log_fn is not None and auto_log_path is not None:
+        log_fn(f"Log output written: {auto_log_path}")
+
+    if log_fn is not None:
+        _log_phase(log_fn, "RUN COMPLETE")
+        log_fn(f"Run complete (had_error={had_error})")
 
     if interrupted:
         return 130

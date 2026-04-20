@@ -117,6 +117,22 @@ def test_extract_sources_collects_web_search_and_annotations() -> None:
     ]
 
 
+def test_extract_sources_parses_urls_from_output_text_fallback() -> None:
+    payload = {
+        "output_text": (
+            "Latest links: https://www.fool.com/earnings/call-transcripts/2026/01/28/"
+            "microsoft-msft-q2-2026-earnings-call-transcript/ and "
+            "https://www.fool.com/earnings/call-transcripts/2025/10/29/"
+            "microsoft-msft-q1-2026-earnings-call-transcript/"
+        )
+    }
+    links = _extract_sources(payload)
+    assert links == [
+        "https://www.fool.com/earnings/call-transcripts/2026/01/28/microsoft-msft-q2-2026-earnings-call-transcript/",
+        "https://www.fool.com/earnings/call-transcripts/2025/10/29/microsoft-msft-q1-2026-earnings-call-transcript/",
+    ]
+
+
 def test_dedupe_links_normalizes_and_deduplicates() -> None:
     links = _dedupe_links(
         [

@@ -153,6 +153,28 @@ echo "$LOG"
 echo "$HTML"
 ```
 
+Auto-write readable output files (no shell redirection needed):
+
+```bash
+.venv/bin/python scripts/openai_motley_transcript_cli.py AAPL MSFT \
+  --pretty --verbose --scrape --scrape-count 4 \
+  --write-output-dir output
+```
+
+This writes files like:
+
+- `output/2026-04-19__214059.json`
+- `output/2026-04-19__214059.log`
+- `output/2026-04-19__214059.html`
+
+Optional custom stamp:
+
+```bash
+.venv/bin/python scripts/openai_motley_transcript_cli.py AAPL \
+  --pretty --verbose --scrape --write-output-dir output \
+  --write-output-stamp 2026-04-19__run01
+```
+
 Cache controls for scraped transcript JSON:
 
 - `--cache-mode refresh` (default): always fetch + re-run parsing/structuring pipeline, then overwrite cache
@@ -206,6 +228,7 @@ Output shape (per ticker):
 - Candidate cleanup now drops likely off-ticker transcript URLs (for example, unrelated symbols that appear in search-source spillover) and prefers quarter-resolved links for scraping.
 - Transcript start markers are now heading-aware, so inline phrases like "in your prepared remarks" no longer incorrectly reset parsing into mid-call Q&A.
 - When transcript headings are missing, section typing is inferred from call flow (prepared remarks vs Q&A), and participants are backfilled from parsed speaker sections so the output remains usable.
+- Verbose logging now emits phase separators (`DISCOVERY`, `SCRAPE`, `RUN COMPLETE`) and per-item scrape lines for easier troubleshooting.
 
 ## Notes
 
