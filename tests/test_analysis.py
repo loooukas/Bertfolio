@@ -27,8 +27,8 @@ class _StubEngine:
         }
 
 
-def _settings() -> Settings:
-    return Settings(
+def _settings(**overrides) -> Settings:
+    base = Settings(
         alpha_vantage_api_key="x",
         finbert_model_name="stub",
         request_timeout_seconds=1,
@@ -36,6 +36,7 @@ def _settings() -> Settings:
         openai_api_key="",
         openai_normalizer_model="gpt-4o-mini",
     )
+    return base.__class__(**{**base.__dict__, **overrides})
 
 
 def test_build_analysis_returns_new_sections_and_legacy_fields(monkeypatch):
@@ -244,3 +245,74 @@ def test_build_analysis_returns_new_sections_and_legacy_fields(monkeypatch):
     assert result.trader_plan.action == "hold"
     assert result.manager_decision.action == "hold"
     assert result.report_tabs
+
+
+class _SegmentEngine:
+    def score_text(self, text: str):
+        mapping = {
+            "SEG00": -0.9,
+            "SEG01": -0.6,
+            "SEG02": -0.4,
+            "SEG03": -0.2,
+            "SEG04": -0.1,
+            "SEG05": 0.1,
+            "SEG06": 0.2,
+            "SEG07": 0.4,
+            "SEG08": 0.6,
+            "SEG09": 0.9,
+        }
+        directional = 0.0
+        for token, score in mapping.items():
+            if token in text:
+                directional = score
+                break
+        positive = max(0.0, directional)
+        negative = max(0.0, -directional)
+        neutral = max(0.0, 1.0 - positive - negative)
+        return {
+            "positive": positive,
+            "negative": negative,
+            "neutral": neutral,
+            "directional_score": directional,
+            "label": "mixed",
+        }
+
+
+def test_score_text_with_segmentation_trims_tail_segments():
+    settings = _settings(
+        transcript_sentiment_segment_chars=260,
+        transcript_sentiment_segment_max=320,
+        transcript_sentiment_segment_min=180,
+        transcript_sentiment_segment_overlap_sentences=0,
+    )
+    engine = _SegmentEngine()
+
+    sentences: list[str] = []
+    for idx in range(10):
+        token = f"SEG{idx:02d}"
+        sentences.append(
+            f"{token} "
+            + ("Management provided detailed commentary on demand, margin, and guidance trends. " * 3).strip()
+            + "."
+        )
+    block = " ".join(sentences)
+
+    scored = analysis._score_text_with_segmentation(block, engine, settings)
+
+    directional = float(scored["directional_score"])
+    assert abs(directional) < 0.25
+    diagnostics = scored.get("segment_diagnostics")
+    assert isinstance(diagnostics, dict)
+    assert diagnostics["segment_count"] >= 8
+    assert diagnostics["kept_segment_count"] < diagnostics["segment_count"]
+
+
+def test_score_text_with_segmentation_skips_short_blocks():
+    settings = _settings()
+    engine = _SegmentEngine()
+    short_text = "SEG07 Management reiterated confident demand and margin outlook."
+
+    scored = analysis._score_text_with_segmentation(short_text, engine, settings)
+
+    assert float(scored["directional_score"]) == 0.4
+    assert "segment_diagnostics" not in scored

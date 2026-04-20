@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
+import math
 import re
 from statistics import mean
 from typing import Any, Optional
@@ -22,7 +23,6 @@ from .providers import (
     fetch_news_alpha_vantage,
     fetch_price_volume_history,
     fetch_social_reddit,
-    fetch_transcripts_motley_fool,
 )
 from .schemas import (
     AggregateScores,
@@ -65,6 +65,7 @@ from .schemas import (
     WorkflowStage,
 )
 from .settings import Settings
+from .transcript_pipeline import fetch_transcripts_for_analysis as fetch_transcripts_motley_fool
 
 ANALYSIS_VERSION = "2026.04-earnings-signals-v1"
 
@@ -222,6 +223,193 @@ def _score_text(text: str, engine) -> dict[str, float | str]:
         return engine.score_text(text)
     except Exception:
         return _neutral_score()
+
+
+def _split_sentences(text: str) -> list[str]:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+", compact)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _hard_wrap_text(text: str, *, target_chars: int, max_chars: int) -> list[str]:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return []
+    target_chars = max(180, target_chars)
+    max_chars = max(target_chars, max_chars)
+
+    chunks: list[str] = []
+    start = 0
+    text_len = len(compact)
+    while start < text_len:
+        end = min(text_len, start + max_chars)
+        if end < text_len:
+            candidate_break = compact.rfind(" ", start + max(80, target_chars // 2), end)
+            if candidate_break > start:
+                end = candidate_break
+        chunk = compact[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        if end >= text_len:
+            break
+        start = end
+    return chunks
+
+
+def _segment_text_for_finbert(text: str, settings: Settings) -> list[str]:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return []
+    if len(compact) < 700:
+        return [compact]
+
+    target_chars = max(250, settings.transcript_sentiment_segment_chars)
+    max_chars = max(target_chars, settings.transcript_sentiment_segment_max)
+    min_chars = max(120, min(settings.transcript_sentiment_segment_min, target_chars))
+    overlap = max(0, settings.transcript_sentiment_segment_overlap_sentences)
+
+    sentences = _split_sentences(compact)
+    if len(sentences) <= 1 or any(len(sentence) > max_chars for sentence in sentences):
+        wrapped = _hard_wrap_text(compact, target_chars=target_chars, max_chars=max_chars)
+        return wrapped or [compact]
+
+    chunks: list[str] = []
+    index = 0
+    sentence_count = len(sentences)
+    while index < sentence_count:
+        start_index = index
+        chunk_sentences: list[str] = []
+        chunk_chars = 0
+
+        while index < sentence_count:
+            sentence = sentences[index]
+            add_chars = len(sentence) + (1 if chunk_sentences else 0)
+            if chunk_sentences and chunk_chars + add_chars > max_chars:
+                break
+            if chunk_sentences and chunk_chars >= min_chars and chunk_chars + add_chars > target_chars:
+                break
+            chunk_sentences.append(sentence)
+            chunk_chars += add_chars
+            index += 1
+
+        if not chunk_sentences:
+            chunk_sentences.append(sentences[index])
+            index += 1
+
+        chunk = " ".join(chunk_sentences).strip()
+        if chunk:
+            chunks.append(chunk)
+
+        if index < sentence_count and overlap > 0:
+            index = max(start_index + 1, index - overlap)
+
+    return chunks or [compact]
+
+
+def _score_text_with_segmentation(text: str, engine, settings: Settings) -> dict[str, float | str | dict[str, Any]]:
+    segments = _segment_text_for_finbert(text, settings)
+    if not segments:
+        return _neutral_score()
+    if len(segments) == 1:
+        return _score_text(segments[0], engine)
+
+    rows: list[dict[str, Any]] = []
+    for idx, segment in enumerate(segments):
+        score = _score_text(segment, engine)
+        directional = _clamp_unit(float(score.get("directional_score", 0.0)))
+        positive = max(0.0, float(score.get("positive", 0.0)))
+        negative = max(0.0, float(score.get("negative", 0.0)))
+        neutral = max(0.0, float(score.get("neutral", 0.0)))
+        probs_sorted = sorted([positive, negative, neutral], reverse=True)
+        confidence_proxy = probs_sorted[0] - probs_sorted[1] if len(probs_sorted) >= 2 else 0.0
+
+        char_count = len(segment)
+        weight = min(2.5, math.sqrt(max(1.0, char_count / 100.0)))
+        rows.append(
+            {
+                "segment_index": idx,
+                "text": segment,
+                "char_count": char_count,
+                "weight": weight,
+                "directional_score": directional,
+                "positive": positive,
+                "negative": negative,
+                "neutral": neutral,
+                "confidence_proxy": confidence_proxy,
+                "kept": True,
+            }
+        )
+
+    kept_rows = list(rows)
+    if len(rows) >= 8:
+        trim_n = max(1, int(len(rows) * 0.1))
+        sorted_by_direction = sorted(rows, key=lambda item: float(item["directional_score"]))
+        drop_ids = {id(item) for item in sorted_by_direction[:trim_n] + sorted_by_direction[-trim_n:]}
+        kept_rows = [row for row in rows if id(row) not in drop_ids]
+        for row in rows:
+            row["kept"] = id(row) not in drop_ids
+        if not kept_rows:
+            kept_rows = list(rows)
+            for row in rows:
+                row["kept"] = True
+
+    total_weight = sum(float(row["weight"]) for row in kept_rows) or 1.0
+
+    def _wavg(key: str) -> float:
+        return sum(float(row[key]) * float(row["weight"]) for row in kept_rows) / total_weight
+
+    agg_directional = _clamp_unit(_wavg("directional_score"))
+    agg_positive = max(0.0, _wavg("positive"))
+    agg_negative = max(0.0, _wavg("negative"))
+    agg_neutral = max(0.0, _wavg("neutral"))
+    prob_sum = agg_positive + agg_negative + agg_neutral
+    if prob_sum > 0:
+        agg_positive /= prob_sum
+        agg_negative /= prob_sum
+        agg_neutral /= prob_sum
+    else:
+        agg_positive, agg_negative, agg_neutral = 0.0, 0.0, 1.0
+
+    top_positive = max(kept_rows, key=lambda row: float(row["directional_score"]))
+    top_negative = min(kept_rows, key=lambda row: float(row["directional_score"]))
+    top_positive_sentence = _split_sentences(str(top_positive["text"]))
+    top_negative_sentence = _split_sentences(str(top_negative["text"]))
+
+    segment_diagnostics: dict[str, Any] = {
+        "segmented": True,
+        "segment_count": len(rows),
+        "kept_segment_count": len(kept_rows),
+        "aggregation_method": "weighted_trimmed_mean",
+        "trim_fraction": 0.1 if len(rows) >= 8 else 0.0,
+        "target_chars": settings.transcript_sentiment_segment_chars,
+        "max_chars": settings.transcript_sentiment_segment_max,
+        "min_chars": settings.transcript_sentiment_segment_min,
+        "overlap_sentences": settings.transcript_sentiment_segment_overlap_sentences,
+        "top_positive_evidence": top_positive_sentence[0] if top_positive_sentence else str(top_positive["text"])[:180],
+        "top_negative_evidence": top_negative_sentence[0] if top_negative_sentence else str(top_negative["text"])[:180],
+        "segments": [
+            {
+                "segment_index": int(row["segment_index"]),
+                "char_count": int(row["char_count"]),
+                "directional_score": round(float(row["directional_score"]), 4),
+                "confidence_proxy": round(float(row["confidence_proxy"]), 4),
+                "weight": round(float(row["weight"]), 4),
+                "kept": bool(row["kept"]),
+            }
+            for row in rows
+        ],
+    }
+
+    return {
+        "positive": round(agg_positive, 4),
+        "negative": round(agg_negative, 4),
+        "neutral": round(agg_neutral, 4),
+        "directional_score": round(agg_directional, 4),
+        "label": _stance_from_score(agg_directional),
+        "segment_diagnostics": segment_diagnostics,
+    }
 
 
 def _parse_news_datetime(raw: Optional[str]) -> Optional[str]:
@@ -801,7 +989,10 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         normalized_documents.append(normalized.document)
         normalization_warnings.extend(normalized.warnings)
 
-        analysis_rows = build_speaker_analysis(normalized.document.sections, lambda text: _score_text(text, engine))
+        analysis_rows = build_speaker_analysis(
+            normalized.document.sections,
+            lambda text: _score_text_with_segmentation(text, engine, settings),
+        )
         speaker_analysis_by_url[normalized.document.source_url or f"doc-{len(speaker_analysis_by_url)}"] = analysis_rows
         all_speaker_analysis.extend(analysis_rows)
 

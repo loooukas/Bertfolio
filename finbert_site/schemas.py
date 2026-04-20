@@ -270,6 +270,7 @@ class TranscriptSpeakerAnalysis(BaseModel):
     risk_language_intensity: float = Field(ge=0, le=100)
     topic_label: str
     evidence_snippets: list[str]
+    segment_diagnostics: Optional[dict[str, Any]] = None
 
 
 class TranscriptDocument(BaseModel):

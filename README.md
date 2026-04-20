@@ -31,7 +31,9 @@ Execution-role UI language (trader/risk/manager workflows) is removed from the p
 
 ## Transcript Pipeline (Current)
 
-Primary source is Motley Fool transcript surfaces:
+`/api/analyze` now uses the deterministic Motley pipeline by default (`TRANSCRIPT_PIPELINE_MODE=motley_cli`) and falls back to legacy provider retrieval when the deterministic path hard-fails.
+
+Primary sources:
 
 - `https://www.fool.com/sitemap/` (monthly sitemap index + month sitemap URLs)
 - `https://www.fool.com/author/20032/` (+ pagination fallback)
@@ -48,6 +50,47 @@ Flow:
 7. Normalize into strict transcript structure (deterministic parser first, OpenAI when parser confidence is low).
 
 Missing transcript coverage is surfaced in Data Audit with discovery/scrape diagnostics.
+
+### Pipeline Runtime Modes
+
+- `TRANSCRIPT_PIPELINE_MODE=motley_cli` (default): deterministic sitemap-first discovery and section-aware scrape pipeline.
+- `TRANSCRIPT_PIPELINE_MODE=legacy`: legacy in-app provider flow.
+- `TRANSCRIPT_PIPELINE_FALLBACK_TO_LEGACY=1` (default): graceful fallback when `motley_cli` fails.
+
+### Best-Known Settings
+
+Development profile (fast feedback + reliability):
+
+- `MOTLEY_DISCOVERY_MODE=hybrid`
+- `MOTLEY_SITEMAP_LOOKBACK_MONTHS=24`
+- `MOTLEY_AUTHOR_MAX_PAGES=0`
+- `MOTLEY_TIMEOUT_SECONDS=45`
+- `MOTLEY_OPENAI_RETRIES=3`
+- `MOTLEY_SCRAPE_CACHE_MODE=refresh`
+- `MOTLEY_DISCOVERY_CACHE_MODE=refresh`
+- `MOTLEY_SCRAPE_COUNT=4`
+
+Production-like profile (cost/stability):
+
+- `MOTLEY_DISCOVERY_MODE=hybrid`
+- `MOTLEY_SITEMAP_LOOKBACK_MONTHS=24`
+- `MOTLEY_AUTHOR_MAX_PAGES=0`
+- `MOTLEY_TIMEOUT_SECONDS=45`
+- `MOTLEY_OPENAI_RETRIES=2`
+- `MOTLEY_SCRAPE_CACHE_MODE=use`
+- `MOTLEY_DISCOVERY_CACHE_MODE=use`
+- `MOTLEY_SCRAPE_COUNT=4`
+
+### Long Speaker-Block Sentiment Segmentation
+
+Long speaker blocks are now segmented before FinBERT scoring and robustly re-aggregated to preserve block-level compatibility while improving directional signal quality.
+
+Defaults:
+
+- `TRANSCRIPT_SENTIMENT_SEGMENT_CHARS=650`
+- `TRANSCRIPT_SENTIMENT_SEGMENT_MAX=1000`
+- `TRANSCRIPT_SENTIMENT_SEGMENT_MIN=180`
+- `TRANSCRIPT_SENTIMENT_SEGMENT_OVERLAP_SENTENCES=1`
 
 ## API Contract
 
@@ -87,9 +130,13 @@ cp .env.example .env
 Optional keys:
 
 - `ALPHAVANTAGE_API_KEY` for Alpha Vantage news feed
-- `OPENAI_API_KEY` for transcript normalization
+- `OPENAI_API_KEY` for transcript normalization and deterministic Motley pipeline OpenAI fallback
 - `OPENAI_NORMALIZER_MODEL` (default `gpt-4o-mini`)
-- `OPENAI_SEARCH_MODEL` (default `gpt-5-mini`) for OpenAI web-search test script
+- `OPENAI_SEARCH_MODEL` (default `gpt-5-mini`) for deterministic discovery/scrape
+- `TRANSCRIPT_PIPELINE_MODE` (`motley_cli` or `legacy`)
+- `TRANSCRIPT_PIPELINE_FALLBACK_TO_LEGACY` (`1` or `0`)
+- `MOTLEY_*` discovery/scrape controls in `.env.example`
+- `TRANSCRIPT_SENTIMENT_SEGMENT_*` segmentation controls in `.env.example`
 
 4. Start app
 
@@ -190,7 +237,7 @@ Deterministic discovery controls:
 - `--discovery-mode hybrid` (default): `Sitemap -> Author (optional) -> OpenAI fallback`
 - `--discovery-mode sitemap_only`: deterministic sitemap + author-disabled crawl only
 - `--discovery-mode openai_only`: legacy OpenAI web-search-only discovery
-- `--sitemap-lookback-months 18`: number of recent monthly sitemaps to scan
+- `--sitemap-lookback-months 24`: number of recent monthly sitemaps to scan (recommended for current quarter-coverage stability)
 - `--author-max-pages 0` (default): author archive page cap for fallback crawl (`0` disables author fallback)
 - `--discovery-cache-mode refresh|use|off`: discovery-cache behavior (separate from scrape cache)
 - `--discovery-cache-dir output/openai_motley_discovery_cache`: discovery cache location

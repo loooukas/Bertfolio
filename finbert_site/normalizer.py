@@ -345,6 +345,9 @@ def build_speaker_analysis(
     for block in sections:
         score = score_text_fn(block.text)
         directional = float(score.get("directional_score", 0.0))
+        segment_diagnostics = score.get("segment_diagnostics") if isinstance(score, dict) else None
+        if not isinstance(segment_diagnostics, dict):
+            segment_diagnostics = None
 
         sentence_list = _sentences(block.text)
         numeric_density = (
@@ -363,6 +366,14 @@ def build_speaker_analysis(
         risk_intensity = _clamp(20 + risk_density * 90, 0, 100)
 
         evidence = block.evidence_snippets[:2] if block.evidence_snippets else _sentences(block.text)[:2]
+        if segment_diagnostics is not None:
+            top_pos = str(segment_diagnostics.get("top_positive_evidence") or "").strip()
+            top_neg = str(segment_diagnostics.get("top_negative_evidence") or "").strip()
+            merged: list[str] = []
+            for item in [top_pos, top_neg, *evidence]:
+                if item and item not in merged:
+                    merged.append(item)
+            evidence = merged[:2] if merged else evidence
 
         results.append(
             TranscriptSpeakerAnalysis(
@@ -376,6 +387,7 @@ def build_speaker_analysis(
                 risk_language_intensity=round(risk_intensity, 2),
                 topic_label=_topic_label(block.text),
                 evidence_snippets=evidence,
+                segment_diagnostics=segment_diagnostics,
             )
         )
 
