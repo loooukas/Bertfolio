@@ -33,19 +33,21 @@ Execution-role UI language (trader/risk/manager workflows) is removed from the p
 
 Primary source is Motley Fool transcript surfaces:
 
-- `https://www.fool.com/author/20032/` (+ pagination)
-- `https://www.fool.com/search/?q=<ticker>%20earnings%20call%20transcript` (deterministic discovery fallback)
+- `https://www.fool.com/sitemap/` (monthly sitemap index + month sitemap URLs)
+- `https://www.fool.com/author/20032/` (+ pagination fallback)
+- OpenAI web-search fallback only for unresolved quarters
 
 Flow:
 
-1. Discover candidate transcript URLs
-2. Keep only date-slug transcript URLs and deterministically rank by ticker/company match
-3. Attempt a larger fetch window and stop after the first N successfully parsed transcripts
-4. Fetch raw HTML with requests/httpx
-5. Parse transcript body via start/stop markers (with JSON-LD fallback extraction)
-6. Normalize into strict transcript structure (OpenAI default, deterministic fallback)
+1. Discover candidate transcript URLs.
+2. Resolve quarter window with deterministic source priority: `Sitemap -> Author -> OpenAI`.
+3. Keep only date-slug transcript URLs and deterministically rank by ticker/company match.
+4. Attempt a larger fetch window and stop after the first N successfully parsed transcripts.
+5. Fetch raw HTML with requests/httpx.
+6. Parse transcript body via start/stop markers (with JSON-LD and script-payload extraction fallback).
+7. Normalize into strict transcript structure (deterministic parser first, OpenAI when parser confidence is low).
 
-No transcript fallback source is used in this phase. Missing transcript coverage is surfaced in Data Audit.
+Missing transcript coverage is surfaced in Data Audit with discovery/scrape diagnostics.
 
 ## API Contract
 
@@ -105,26 +107,27 @@ pytest -q
 
 ## OpenAI Web-Search Transcript Slug Test
 
-This prototype script now uses a strict 3-step flow per ticker:
+This prototype script now uses a deterministic discovery + scrape flow per ticker:
 
-1. OpenAI `web_search` discovers Motley Fool transcript URLs.
-2. The script fetches page text from each selected URL (browser-render text when available, static text otherwise).
-3. The script builds speaker-by-speaker sections from page text with deterministic parsing first, then optionally applies OpenAI structuring (with deterministic fallback if OpenAI fails).
+1. Discover URLs with `Sitemap -> Author -> OpenAI fallback`.
+2. Resolve most-recent target quarter window and select transcript links.
+3. Fetch page text from selected URLs (browser-render text when available, static text otherwise).
+4. Build speaker-by-speaker sections with deterministic parsing first, then optionally apply OpenAI structuring only when parser confidence is low.
 
 ```bash
-python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty
+.venv/bin/python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty
 ```
 
 Verbose progress logs:
 
 ```bash
-python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty --verbose
+.venv/bin/python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty --verbose
 ```
 
 Discover links and scrape the most recent 4 transcript pages into per-speaker JSON sections:
 
 ```bash
-python scripts/openai_motley_transcript_cli.py AAPL --pretty --verbose --scrape --scrape-count 4
+.venv/bin/python scripts/openai_motley_transcript_cli.py AAPL --pretty --verbose --scrape --scrape-count 4
 ```
 
 Write JSON + verbose logs to files:
@@ -182,6 +185,16 @@ Cache controls for scraped transcript JSON:
 - `--cache-mode off`: disable cache read/write
 - `--cache-dir output/openai_motley_cache`: override cache location
 
+Deterministic discovery controls:
+
+- `--discovery-mode hybrid` (default): `Sitemap -> Author -> OpenAI fallback`
+- `--discovery-mode sitemap_only`: deterministic sitemap + author-disabled crawl only
+- `--discovery-mode openai_only`: legacy OpenAI web-search-only discovery
+- `--sitemap-lookback-months 18`: number of recent monthly sitemaps to scan
+- `--author-max-pages 40`: author archive page cap for fallback crawl
+- `--discovery-cache-mode refresh|use|off`: discovery-cache behavior (separate from scrape cache)
+- `--discovery-cache-dir output/openai_motley_discovery_cache`: discovery cache location
+
 OpenAI I/O inspection options:
 
 - `--debug-openai-io`: print request/response previews for transcript structuring to stderr (best with `--verbose`)
@@ -204,31 +217,33 @@ If you see `NotOpenSSLWarning` (`LibreSSL` on macOS Python), install compatible 
 If OpenAI web-search calls are flaky, increase retries:
 
 ```bash
-python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty --verbose --openai-retries 5
+.venv/bin/python scripts/openai_motley_transcript_cli.py AAPL MSFT --pretty --verbose --openai-retries 5
 ```
 
 Output shape (per ticker):
 
 - `requested_quarters`, `found_quarters`, `missing_quarters`
 - `quarters` with `status`, `title`, and `url`
+- `quarters[].resolution_source` and `quarters[].resolution_attempts`
 - `found_transcript_links` and `links` for copy-ready URL lists in terminal JSON output
 - `candidate_pool` and `search_sources` for debugging slug discovery quality
+- `discovery_methods_used`, `discovery_trace`, and `discovery_cache` for deterministic discovery diagnostics
 - `selected_recent_links`, `scraped_transcripts`, and `scrape_errors` when `--scrape` is enabled
 - `scrape_method`, `line_source`, `marker_detection`, and `line_count` diagnostics on scraped transcript payloads
 - `section_parse_method` (`regex_from_page_text` or `openai_page_text`) and optional `section_parse_reason`
-- Scraping runs OpenAI transcript structuring from extracted page text. If OpenAI fails, it attempts a regex fallback from the same extracted page text.
+- Scraping runs OpenAI transcript structuring only when deterministic parsing is low-confidence.
 - OpenAI HTTP calls use a retrying session and capped read timeout to reduce hangs from intermittent `RemoteDisconnected` transport errors.
 - OpenAI transport-level retries now default to `0` (`OPENAI_TRANSPORT_RETRIES`) so application-level retry logic does not multiply timeout delays.
 - OpenAI transcript-structuring retries are now fail-fast for non-retryable JSON parse failures (for example, malformed/truncated JSON), so scraping quickly falls back to deterministic parsing instead of burning all retries.
 - Transcript structuring also short-circuits after repeated read-timeout failures and on DNS resolution failures, then falls back to deterministic parsing.
 - `llm_input_diagnostics` and `llm_input_preview` show the actual page-derived content passed to OpenAI for transcript structuring.
-- If only low-quality parser output is available, scraping records a `scrape_error` instead of returning misleading single `unknown` speaker sections.
+- If only low-quality parser output is available, output includes `quality_flags` (for example `parser_low_confidence`, reason, and optional OpenAI/browser errors).
 - If you interrupt a long run (`Ctrl+C`), CLI now returns partial JSON results cleanly without a Python traceback.
-- Discovery is source-first: candidates are built from `web_search` source URLs so missing schema output no longer hard-fails discovery.
+- Discovery is deterministic-first: sitemap and author crawling run before OpenAI fallback, and OpenAI candidate extraction is source-first so missing schema output no longer hard-fails discovery.
 - Candidate cleanup now drops likely off-ticker transcript URLs (for example, unrelated symbols that appear in search-source spillover) and prefers quarter-resolved links for scraping.
 - Transcript start markers are now heading-aware, so inline phrases like "in your prepared remarks" no longer incorrectly reset parsing into mid-call Q&A.
 - When transcript headings are missing, section typing is inferred from call flow (prepared remarks vs Q&A), and participants are backfilled from parsed speaker sections so the output remains usable.
-- Verbose logging now emits phase separators (`DISCOVERY`, `SCRAPE`, `RUN COMPLETE`) and per-item scrape lines for easier troubleshooting.
+- Verbose logging now emits phase separators (`DISCOVERY:SITEMAP`, `DISCOVERY:AUTHOR`, `DISCOVERY:OPENAI_FALLBACK`, `SCRAPE`, `RUN COMPLETE`) plus phase timings and failure categories.
 
 ## Notes
 

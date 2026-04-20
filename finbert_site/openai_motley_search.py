@@ -35,6 +35,14 @@ DEFAULT_OPENAI_TRANSPORT_RETRIES = int(os.getenv("OPENAI_TRANSPORT_RETRIES", "0"
 DEFAULT_TRANSCRIPT_SEGMENT_CHARS = int(os.getenv("TRANSCRIPT_SEGMENT_CHARS", "12000"))
 DEFAULT_SCRAPE_CACHE_DIR = os.getenv("MOTLEY_SCRAPE_CACHE_DIR", "output/openai_motley_cache")
 DEFAULT_SCRAPE_CACHE_MODE = os.getenv("MOTLEY_SCRAPE_CACHE_MODE", "refresh")
+DEFAULT_DISCOVERY_MODE = os.getenv("MOTLEY_DISCOVERY_MODE", "hybrid")
+DEFAULT_DISCOVERY_CACHE_DIR = os.getenv("MOTLEY_DISCOVERY_CACHE_DIR", "output/openai_motley_discovery_cache")
+DEFAULT_DISCOVERY_CACHE_MODE = os.getenv("MOTLEY_DISCOVERY_CACHE_MODE", "refresh")
+DEFAULT_SITEMAP_LOOKBACK_MONTHS = int(os.getenv("MOTLEY_SITEMAP_LOOKBACK_MONTHS", "18"))
+DEFAULT_AUTHOR_MAX_PAGES = int(os.getenv("MOTLEY_AUTHOR_MAX_PAGES", "40"))
+DEFAULT_DISCOVERY_HTTP_RETRIES = int(os.getenv("MOTLEY_DISCOVERY_HTTP_RETRIES", "2"))
+DEFAULT_MOTLEY_SITEMAP_INDEX_URL = os.getenv("MOTLEY_SITEMAP_INDEX_URL", "https://www.fool.com/sitemap/")
+DEFAULT_MOTLEY_AUTHOR_ARCHIVE_URL = os.getenv("MOTLEY_AUTHOR_ARCHIVE_URL", "https://www.fool.com/author/20032/")
 
 _TITLE_QUARTER_PATTERNS = (
     re.compile(r"\bQ([1-4])\s+(20\d{2})\b", flags=re.IGNORECASE),
@@ -45,6 +53,10 @@ _URL_DATE_PATTERN = re.compile(r"/earnings/call-transcripts/(\d{4})/(\d{2})/(\d{
 _SPEAKER_LINE_PATTERN = re.compile(r"^([A-Za-z][A-Za-z .,'&()\-/]{1,90}):\s*(.+)$")
 _PLAUSIBLE_PERSON_NAME_PATTERN = re.compile(r"^[A-Z][A-Za-z.'\-]+(?: [A-Z][A-Za-z.'\-]+){0,5}$")
 _URL_EXTRACT_PATTERN = re.compile(r"https?://[^\s<>'\"\\]+", flags=re.IGNORECASE)
+_SITEMAP_MONTH_URL_PATTERN = re.compile(
+    r"^https?://(?:www\.)?fool\.com/sitemap/(20\d{2})/(0[1-9]|1[0-2])/?$",
+    flags=re.IGNORECASE,
+)
 
 _TRANSCRIPT_END_MARKERS = {
     "read next",
@@ -245,6 +257,251 @@ def _write_debug_text(path: Path, content: str) -> None:
 def _write_debug_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _classify_failure_reason(exc: Exception) -> str:
+    text = str(exc).lower()
+    if "nodename nor servname" in text or "name or service not known" in text:
+        return "dns_error"
+    if "timed out" in text or "read timeout" in text:
+        return "timeout"
+    if isinstance(exc, json.JSONDecodeError):
+        return "parse_error"
+    if "no source urls" in text or "no parseable source urls" in text:
+        return "empty_source_set"
+    if isinstance(exc, requests.HTTPError):
+        return "http_error"
+    if isinstance(exc, requests.RequestException):
+        return "request_error"
+    return "unknown_error"
+
+
+def _build_discovery_cache_key(
+    *,
+    ticker: str,
+    target_quarters: int,
+    max_candidates: int,
+    discovery_mode: str,
+    sitemap_lookback_months: int,
+    author_max_pages: int,
+) -> str:
+    basis = "::".join(
+        [
+            _normalize_ticker(ticker),
+            str(target_quarters),
+            str(max_candidates),
+            discovery_mode,
+            str(sitemap_lookback_months),
+            str(author_max_pages),
+        ]
+    )
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:12]
+
+
+def _resolve_discovery_cache_path(
+    *,
+    cache_dir: str,
+    ticker: str,
+    target_quarters: int,
+    max_candidates: int,
+    discovery_mode: str,
+    sitemap_lookback_months: int,
+    author_max_pages: int,
+) -> Path:
+    symbol = _normalize_ticker(ticker) or "UNKNOWN"
+    cache_key = _build_discovery_cache_key(
+        ticker=symbol,
+        target_quarters=target_quarters,
+        max_candidates=max_candidates,
+        discovery_mode=discovery_mode,
+        sitemap_lookback_months=sitemap_lookback_months,
+        author_max_pages=author_max_pages,
+    )
+    filename = (
+        f"{symbol}_q{target_quarters}_mc{max_candidates}_"
+        f"{discovery_mode}_{sitemap_lookback_months}m_{author_max_pages}p_{cache_key}.json"
+    )
+    return Path(cache_dir) / symbol / filename
+
+
+def _month_key(year: int, month: int) -> str:
+    return f"{year:04d}-{month:02d}"
+
+
+def _iter_recent_months(lookback_months: int) -> list[tuple[int, int]]:
+    lookback = max(1, lookback_months)
+    today = date.today()
+    year = today.year
+    month = today.month
+    out: list[tuple[int, int]] = []
+    for _ in range(lookback):
+        out.append((year, month))
+        month -= 1
+        if month < 1:
+            month = 12
+            year -= 1
+    return out
+
+
+def _extract_loc_urls_from_xml(xml_text: str) -> list[str]:
+    urls: list[str] = []
+    try:
+        import xml.etree.ElementTree as ET
+
+        root = ET.fromstring(xml_text)
+        for node in root.iter():
+            tag = str(getattr(node, "tag", "") or "")
+            if "}" in tag:
+                tag = tag.split("}", 1)[1]
+            if tag.lower() != "loc":
+                continue
+            value = str(node.text or "").strip()
+            if value:
+                urls.append(value)
+    except Exception:
+        pass
+    if urls:
+        return urls
+    soup = BeautifulSoup(xml_text, "html.parser")
+    for node in soup.find_all("loc"):
+        value = node.get_text(strip=True)
+        if value:
+            urls.append(value)
+    if urls:
+        return urls
+    return re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", xml_text, flags=re.IGNORECASE)
+
+
+def _extract_month_sitemap_urls_from_index(xml_text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for raw_url in _extract_loc_urls_from_xml(xml_text):
+        normalized = _normalize_url(raw_url)
+        if not normalized:
+            continue
+        match = _SITEMAP_MONTH_URL_PATTERN.match(normalized.rstrip("/"))
+        if not match:
+            continue
+        year = int(match.group(1))
+        month = int(match.group(2))
+        out[_month_key(year, month)] = normalized
+    return out
+
+
+def _fetch_text_with_retries(
+    *,
+    url: str,
+    timeout_seconds: int,
+    retries: int,
+    log_fn: Optional[Callable[[str], None]] = None,
+    log_prefix: str = "",
+) -> str:
+    log = log_fn or (lambda _: None)
+    attempts = max(1, retries)
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.get(url, headers=_REQUEST_HEADERS, timeout=timeout_seconds)
+            response.raise_for_status()
+            return response.text
+        except Exception as exc:
+            last_exc = exc
+            category = _classify_failure_reason(exc)
+            if attempt < attempts:
+                backoff = min(2.0, 0.4 * attempt)
+                log(
+                    f"{log_prefix}request failed (category={category}, attempt={attempt}/{attempts}) "
+                    f"url={url} err={exc}; retrying in {backoff:.1f}s"
+                )
+                time.sleep(backoff)
+                continue
+            log(
+                f"{log_prefix}request failed (category={category}, attempt={attempt}/{attempts}) "
+                f"url={url} err={exc}"
+            )
+    raise RuntimeError(f"{_classify_failure_reason(last_exc or RuntimeError('request failed'))}: {last_exc}")
+
+
+def _candidate_from_discovered_url(*, ticker: str, url: str, source: str) -> Optional[dict[str, str]]:
+    normalized = _normalize_url(url)
+    if not normalized or not _is_motley_transcript_url(normalized):
+        return None
+    return {
+        "title": _candidate_title_from_url(url=normalized, ticker=ticker),
+        "url": normalized,
+        "published_date": _date_from_motley_url(normalized),
+        "source": source,
+    }
+
+
+def _select_candidates_for_ticker(
+    *,
+    ticker: str,
+    urls: list[str],
+    source: str,
+    alias_tokens: set[str],
+) -> tuple[list[dict[str, str]], set[str], dict[str, int]]:
+    selected: list[dict[str, str]] = []
+    pending: list[dict[str, str]] = []
+    local_alias = set(alias_tokens)
+    stats = {
+        "urls_seen": len(urls),
+        "transcript_urls": 0,
+        "explicit_ticker_matches": 0,
+        "alias_matches": 0,
+    }
+
+    for url in urls:
+        candidate = _candidate_from_discovered_url(ticker=ticker, url=url, source=source)
+        if candidate is None:
+            continue
+        stats["transcript_urls"] += 1
+        title = candidate["title"]
+        candidate_url = candidate["url"]
+        if _candidate_has_explicit_ticker(ticker=ticker, title=title, url=candidate_url):
+            selected.append(candidate)
+            stats["explicit_ticker_matches"] += 1
+            local_alias.update(
+                _extract_company_tokens_from_candidate(
+                    ticker=ticker,
+                    title=title,
+                    url=candidate_url,
+                )
+            )
+        else:
+            pending.append(candidate)
+
+    if local_alias:
+        for candidate in pending:
+            if _candidate_matches_company_tokens(
+                title=candidate["title"],
+                url=candidate["url"],
+                company_tokens=local_alias,
+            ):
+                selected.append(candidate)
+                stats["alias_matches"] += 1
+
+    return selected, local_alias, stats
+
+
+def _dedupe_raw_candidates(raw_candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in raw_candidates:
+        if not isinstance(row, dict):
+            continue
+        url = _normalize_url(str(row.get("url") or ""))
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        out.append(
+            {
+                "title": str(row.get("title") or "").strip(),
+                "url": url,
+                "published_date": str(row.get("published_date") or _date_from_motley_url(url)),
+                "source": str(row.get("source") or ""),
+            }
+        )
+    return out
 
 
 def _looks_like_plausible_speaker_label(label: str) -> bool:
@@ -1104,10 +1361,34 @@ def _fetch_transcript_sections(
         f"speaker_lines={source_input.get('input_speaker_line_count')})"
     )
 
+    parsed_from_text = _parse_speaker_sections_from_text(transcript_text)
+    low_quality, low_quality_reason = _is_low_quality_speaker_parse(parsed_from_text)
+    if (
+        low_quality
+        and not openai_api_key
+        and browser_error
+        and "playwright is not installed" in browser_error.lower()
+    ):
+        raise TranscriptExtractionError(
+            "Low-confidence transcript parse requires browser fallback, but Playwright is unavailable. "
+            "Install optional browser fallback with `pip install playwright` and "
+            "`python -m playwright install chromium`.",
+            scrape_method="browser",
+            diagnostics={
+                "line_source": source_label,
+                "llm_input_diagnostics": source_input,
+                "browser_error": browser_error,
+                "low_quality_reason": low_quality_reason,
+            },
+        )
+
     openai_error: Optional[str] = None
-    if openai_api_key:
+    if low_quality and openai_api_key:
         try:
-            log("scrape: structuring page text with OpenAI")
+            log(
+                "scrape: deterministic parser is low confidence; "
+                "structuring page text with OpenAI"
+            )
             structured = _structure_transcript_with_openai(
                 api_key=openai_api_key,
                 model=openai_model,
@@ -1143,39 +1424,37 @@ def _fetch_transcript_sections(
                 "section_parse_reason": "page_text_structured_by_openai",
                 "llm_input_diagnostics": source_input,
                 "llm_input_preview": transcript_text[:2000],
+                "quality_flags": {
+                    "parser_low_confidence": True,
+                    "parser_low_confidence_reason": low_quality_reason,
+                },
             }
         except Exception as exc:
             openai_error = str(exc)
-            log(f"scrape: OpenAI structuring failed ({exc}); trying regex fallback on extracted page text")
-
-    parsed_from_text = _parse_speaker_sections_from_text(transcript_text)
-    low_quality, low_quality_reason = _is_low_quality_speaker_parse(parsed_from_text)
-    if low_quality:
-        diagnostics: dict[str, Any] = {
-            "low_quality_reason": low_quality_reason,
-            "line_source": source_label,
-            "line_count": parsed_from_text.get("line_count"),
-            "marker_detection": parsed_from_text.get("marker_detection"),
-            "llm_input_diagnostics": source_input,
-            "llm_input_preview": transcript_text[:2000],
-        }
-        if openai_error:
-            diagnostics["openai_error"] = openai_error
-        if browser_error:
-            diagnostics["browser_error"] = browser_error
-        message = "Unable to produce high-quality speaker sections from page text."
-        if browser_error:
-            message = f"{message} Browser fallback unavailable: {browser_error}"
-        error_scrape_method = "browser" if browser_error else scrape_method
-        raise TranscriptExtractionError(
-            message,
-            scrape_method=error_scrape_method,
-            diagnostics=diagnostics,
-        )
+            log(
+                "scrape: OpenAI structuring failed "
+                f"({exc}); returning deterministic parser output with quality flags"
+            )
 
     parsed_from_text["section_parse_reason"] = (
-        "openai_unavailable_or_failed" if openai_error else "openai_not_requested"
+        "openai_not_needed"
+        if not low_quality and not openai_api_key
+        else "openai_not_needed_parser_high_confidence"
+        if not low_quality
+        else "openai_failed_low_quality_regex_fallback"
+        if openai_error
+        else "openai_unavailable_low_quality_regex_fallback"
     )
+
+    quality_flags: dict[str, Any] = {
+        "parser_low_confidence": bool(low_quality),
+        "parser_low_confidence_reason": low_quality_reason if low_quality else "",
+    }
+    if openai_error:
+        quality_flags["openai_error"] = openai_error
+    if browser_error:
+        quality_flags["browser_error"] = browser_error
+
     return {
         "quarter": quarter,
         "title": title,
@@ -1190,6 +1469,7 @@ def _fetch_transcript_sections(
         },
         "llm_input_diagnostics": source_input,
         "llm_input_preview": transcript_text[:2000],
+        "quality_flags": quality_flags,
     }
 
 
@@ -1356,6 +1636,7 @@ def _normalize_url(url: str) -> str:
         return ""
 
     path = parsed.path or "/"
+    path = re.sub(r"/{2,}", "/", path)
     if not path.endswith("/"):
         path = f"{path}/"
     sanitized = parsed._replace(query="", fragment="", path=path)
@@ -1761,7 +2042,7 @@ def _fallback_candidates_from_sources(
                 "title": _candidate_title_from_url(url=url, ticker=ticker),
                 "url": url,
                 "published_date": _date_from_motley_url(url),
-                "source": "web_search_source_fallback",
+                "source": "openai_web_search",
             }
         )
         if len(out) >= max_candidates:
@@ -2471,6 +2752,13 @@ def _clean_candidates(
         quality = float(row.get("base_quality") or 0.0)
         if alias_match and not explicit_ticker:
             quality += 6.0
+        source_value = str(row.get("source") or "").strip().lower()
+        if source_value.startswith("sitemap_month:"):
+            quality += 20.0
+        elif source_value.startswith("author_page:"):
+            quality += 14.0
+        elif source_value.startswith("openai_"):
+            quality += 4.0
 
         cleaned.append(
             MotleyTranscriptCandidate(
@@ -2496,137 +2784,11 @@ def _clean_candidates(
     return cleaned, warnings
 
 
-def discover_last_quarter_links(
+def _compute_window_status(
     *,
-    ticker: str,
-    api_key: str,
-    model: str = DEFAULT_OPENAI_SEARCH_MODEL,
-    base_url: str = DEFAULT_OPENAI_BASE_URL,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-    max_candidates: int = 12,
-    target_quarters: int = 4,
-    retry_attempts: int = DEFAULT_OPENAI_RETRY_ATTEMPTS,
-    log_fn: Optional[Callable[[str], None]] = None,
+    cleaned_candidates: list[MotleyTranscriptCandidate],
+    target_quarters: int,
 ) -> dict[str, Any]:
-    log = log_fn or (lambda _: None)
-    symbol = _normalize_ticker(ticker)
-    if not symbol:
-        raise ValueError("Ticker is empty after normalization.")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY is required.")
-    if target_quarters <= 0:
-        raise ValueError("target_quarters must be >= 1.")
-
-    response_payload: dict[str, Any] | None = None
-    selected_tool = ""
-    tool_errors: list[str] = []
-
-    log(
-        f"{symbol}: starting discovery "
-        f"(model={model}, max_candidates={max_candidates}, target_quarters={target_quarters})"
-    )
-
-    retry_attempts = max(1, retry_attempts)
-    for tool_type in ("web_search", "web_search_preview"):
-        payload = _build_request_payload(
-            model=model,
-            ticker=symbol,
-            max_candidates=max_candidates,
-            tool_type=tool_type,
-        )
-        last_exc: Optional[Exception] = None
-        for attempt in range(1, retry_attempts + 1):
-            try:
-                log(f"{symbol}: trying OpenAI tool '{tool_type}' (attempt {attempt}/{retry_attempts})")
-                response = _openai_post_responses(
-                    base_url=base_url,
-                    api_key=api_key,
-                    payload=payload,
-                    timeout_seconds=timeout_seconds,
-                )
-                if response.status_code >= 400:
-                    raise RuntimeError(_extract_error_message(response))
-                response_payload = response.json()
-                selected_tool = tool_type
-                log(f"{symbol}: OpenAI request succeeded with '{tool_type}'")
-                break
-            except Exception as exc:
-                last_exc = exc
-                log(f"{symbol}: tool '{tool_type}' failed on attempt {attempt}: {exc}")
-                if not _is_retryable_openai_request_error(exc):
-                    log(
-                        f"{symbol}: tool '{tool_type}' error is non-retryable; "
-                        f"aborting retries for this tool"
-                    )
-                    break
-                if attempt < retry_attempts:
-                    backoff_seconds = min(4.0, 1.2 * attempt)
-                    log(f"{symbol}: retrying '{tool_type}' after {backoff_seconds:.1f}s")
-                    time.sleep(backoff_seconds)
-
-        if response_payload is not None:
-            break
-        if last_exc is not None:
-            tool_errors.append(f"{tool_type}: {last_exc}")
-
-    if response_payload is None:
-        raise RuntimeError("OpenAI web-search request failed. " + " | ".join(tool_errors))
-
-    output_items = response_payload.get("output")
-    output_item_types: list[str] = []
-    if isinstance(output_items, list):
-        for item in output_items:
-            if isinstance(item, dict):
-                output_item_types.append(str(item.get("type") or "unknown"))
-    output_text_chars = len(str(response_payload.get("output_text") or ""))
-
-    search_sources = _extract_sources(response_payload)
-    if not search_sources:
-        log(
-            f"{symbol}: no source URLs extracted from OpenAI response "
-            f"(tool={selected_tool}, output_types={output_item_types}, output_text_chars={output_text_chars})"
-        )
-    raw_candidates = _fallback_candidates_from_sources(
-        ticker=symbol,
-        response_payload=response_payload,
-        max_candidates=max_candidates,
-    )
-    structured_notes = (
-        "Candidates derived from OpenAI web_search sources "
-        f"(sources={len(search_sources)}, candidates={len(raw_candidates)})."
-    )
-    if raw_candidates:
-        log(f"{symbol}: built {len(raw_candidates)} raw candidates from web-search sources")
-    else:
-        # Last-resort fallback: try to parse any structured output if sources were empty.
-        try:
-            structured = _extract_structured_output(response_payload)
-            structured_candidates = structured.get("candidates")
-            if isinstance(structured_candidates, list):
-                raw_candidates = [item for item in structured_candidates if isinstance(item, dict)]
-                structured_notes = (
-                    "No web_search source URLs were returned; "
-                    f"used {len(raw_candidates)} candidates from structured model output."
-                )
-                log(f"{symbol}: source URLs were empty; used structured candidates={len(raw_candidates)}")
-        except Exception as exc:
-            structured_notes = (
-                "No web_search source URLs were returned and structured candidate parsing failed "
-                f"({exc}). response_shape=tool:{selected_tool}, output_types:{output_item_types}, "
-                f"output_text_chars:{output_text_chars}"
-            )
-            log(f"{symbol}: discovery produced no parseable source URLs or structured candidates")
-
-    cleaned_candidates, clean_warnings = _clean_candidates(
-        ticker=symbol,
-        raw_candidates=[item for item in raw_candidates if isinstance(item, dict)],
-    )
-    if not search_sources:
-        clean_warnings.append("No web_search source URLs returned by OpenAI for discovery.")
-    log(
-        f"{symbol}: accepted {len(cleaned_candidates)} candidate URLs after Motley filter "
-        f"(warnings={len(clean_warnings)})"
-    )
     quarter_map = _pick_best_candidate_by_quarter(cleaned_candidates)
 
     if quarter_map:
@@ -2638,16 +2800,626 @@ def discover_last_quarter_links(
 
     window = _quarter_window(anchor_year=anchor_year, anchor_quarter=anchor_quarter, count=target_quarters)
     requested = [_quarter_label(year, quarter) for year, quarter in window]
-
-    quarter_rows: list[dict[str, Any]] = []
     found: list[str] = []
     missing: list[str] = []
-
     for year, quarter in window:
+        label = _quarter_label(year, quarter)
+        if (year, quarter) in quarter_map:
+            found.append(label)
+        else:
+            missing.append(label)
+    return {
+        "anchor_year": anchor_year,
+        "anchor_quarter": anchor_quarter,
+        "window": window,
+        "requested": requested,
+        "found": found,
+        "missing": missing,
+        "quarter_map": quarter_map,
+    }
+
+
+def _discover_candidates_from_sitemaps(
+    *,
+    ticker: str,
+    timeout_seconds: int,
+    lookback_months: int,
+    target_quarters: int,
+    alias_tokens: set[str],
+    http_retries: int,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> tuple[list[dict[str, str]], set[str], dict[str, Any]]:
+    log = log_fn or (lambda _: None)
+    started = time.monotonic()
+    phase_trace: dict[str, Any] = {
+        "phase": "sitemap",
+        "status": "empty",
+        "duration_ms": 0,
+        "months_attempted": 0,
+        "months_scanned": 0,
+        "urls_scanned": 0,
+        "transcript_urls": 0,
+        "explicit_ticker_matches": 0,
+        "alias_matches": 0,
+        "candidates_added": 0,
+        "sitemap_index_url": DEFAULT_MOTLEY_SITEMAP_INDEX_URL,
+        "sitemap_index_used": False,
+        "failures": [],
+        "early_stop": False,
+    }
+    discovered: list[dict[str, str]] = []
+    seen: set[str] = set()
+    local_alias = set(alias_tokens)
+    month_url_map: dict[str, str] = {}
+
+    try:
+        index_xml = _fetch_text_with_retries(
+            url=DEFAULT_MOTLEY_SITEMAP_INDEX_URL,
+            timeout_seconds=timeout_seconds,
+            retries=http_retries,
+            log_fn=log_fn,
+            log_prefix=f"{ticker}: DISCOVERY:SITEMAP ",
+        )
+        month_url_map = _extract_month_sitemap_urls_from_index(index_xml)
+        phase_trace["sitemap_index_used"] = bool(month_url_map)
+    except Exception as exc:
+        phase_trace["failures"].append(
+            {
+                "scope": "sitemap_index",
+                "category": _classify_failure_reason(exc),
+                "error": str(exc),
+            }
+        )
+        log(f"{ticker}: DISCOVERY:SITEMAP index unavailable ({exc}); continuing with synthesized month URLs")
+
+    for year, month in _iter_recent_months(lookback_months):
+        phase_trace["months_attempted"] += 1
+        month_key = _month_key(year, month)
+        sitemap_url = month_url_map.get(month_key) or f"https://www.fool.com/sitemap/{year:04d}/{month:02d}/"
+        try:
+            xml_text = _fetch_text_with_retries(
+                url=sitemap_url,
+                timeout_seconds=timeout_seconds,
+                retries=http_retries,
+                log_fn=log_fn,
+                log_prefix=f"{ticker}: DISCOVERY:SITEMAP ",
+            )
+            loc_urls = _extract_loc_urls_from_xml(xml_text)
+            phase_trace["months_scanned"] += 1
+            phase_trace["urls_scanned"] += len(loc_urls)
+            selected, local_alias, stats = _select_candidates_for_ticker(
+                ticker=ticker,
+                urls=loc_urls,
+                source=f"sitemap_month:{month_key}",
+                alias_tokens=local_alias,
+            )
+            phase_trace["transcript_urls"] += stats["transcript_urls"]
+            phase_trace["explicit_ticker_matches"] += stats["explicit_ticker_matches"]
+            phase_trace["alias_matches"] += stats["alias_matches"]
+            for row in selected:
+                normalized = _normalize_url(row.get("url", ""))
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                discovered.append(row)
+            if target_quarters > 0 and discovered:
+                deduped = _dedupe_raw_candidates(discovered)
+                cleaned, _ = _clean_candidates(ticker=ticker, raw_candidates=deduped)
+                coverage = _compute_window_status(cleaned_candidates=cleaned, target_quarters=target_quarters)
+                if not coverage["missing"]:
+                    phase_trace["early_stop"] = True
+                    log(
+                        f"{ticker}: DISCOVERY:SITEMAP early stop after {phase_trace['months_scanned']} month(s) "
+                        f"once {target_quarters} quarter(s) were resolved"
+                    )
+                    break
+        except Exception as exc:
+            phase_trace["failures"].append(
+                {
+                    "scope": f"sitemap_month:{month_key}",
+                    "url": sitemap_url,
+                    "category": _classify_failure_reason(exc),
+                    "error": str(exc),
+                }
+            )
+
+    phase_trace["candidates_added"] = len(discovered)
+    if discovered and phase_trace["failures"]:
+        phase_trace["status"] = "partial"
+    elif discovered:
+        phase_trace["status"] = "ok"
+    elif phase_trace["failures"]:
+        phase_trace["status"] = "failed"
+    phase_trace["duration_ms"] = int((time.monotonic() - started) * 1000)
+    return discovered, local_alias, phase_trace
+
+
+def _discover_candidates_from_author_pages(
+    *,
+    ticker: str,
+    timeout_seconds: int,
+    max_pages: int,
+    target_quarters: int,
+    alias_tokens: set[str],
+    http_retries: int,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> tuple[list[dict[str, str]], set[str], dict[str, Any]]:
+    log = log_fn or (lambda _: None)
+    started = time.monotonic()
+    phase_trace: dict[str, Any] = {
+        "phase": "author",
+        "status": "empty",
+        "duration_ms": 0,
+        "pages_attempted": 0,
+        "pages_scanned": 0,
+        "pages_with_links": 0,
+        "urls_scanned": 0,
+        "transcript_urls": 0,
+        "explicit_ticker_matches": 0,
+        "alias_matches": 0,
+        "candidates_added": 0,
+        "author_base_url": DEFAULT_MOTLEY_AUTHOR_ARCHIVE_URL,
+        "failures": [],
+        "early_stop": False,
+    }
+    discovered: list[dict[str, str]] = []
+    seen: set[str] = set()
+    local_alias = set(alias_tokens)
+    base_url = _normalize_url(DEFAULT_MOTLEY_AUTHOR_ARCHIVE_URL) or DEFAULT_MOTLEY_AUTHOR_ARCHIVE_URL
+    if not base_url.endswith("/"):
+        base_url = f"{base_url}/"
+    consecutive_empty_pages = 0
+
+    for page in range(1, max(1, max_pages) + 1):
+        phase_trace["pages_attempted"] += 1
+        page_url = base_url if page == 1 else f"{base_url}page/{page}/"
+        try:
+            html_text = _fetch_text_with_retries(
+                url=page_url,
+                timeout_seconds=timeout_seconds,
+                retries=http_retries,
+                log_fn=log_fn,
+                log_prefix=f"{ticker}: DISCOVERY:AUTHOR ",
+            )
+            soup = BeautifulSoup(html_text, "html.parser")
+            links: list[str] = []
+            for node in soup.select("a[href*='/earnings/call-transcripts/']"):
+                href = str(node.get("href") or "").strip()
+                normalized = _normalize_url(href)
+                if normalized:
+                    links.append(normalized)
+            deduped_links = list(dict.fromkeys(links))
+            phase_trace["pages_scanned"] += 1
+            phase_trace["urls_scanned"] += len(deduped_links)
+
+            if deduped_links:
+                phase_trace["pages_with_links"] += 1
+                consecutive_empty_pages = 0
+            else:
+                consecutive_empty_pages += 1
+
+            selected, local_alias, stats = _select_candidates_for_ticker(
+                ticker=ticker,
+                urls=deduped_links,
+                source=f"author_page:{page}",
+                alias_tokens=local_alias,
+            )
+            phase_trace["transcript_urls"] += stats["transcript_urls"]
+            phase_trace["explicit_ticker_matches"] += stats["explicit_ticker_matches"]
+            phase_trace["alias_matches"] += stats["alias_matches"]
+            for row in selected:
+                normalized = _normalize_url(row.get("url", ""))
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                discovered.append(row)
+            if target_quarters > 0 and discovered:
+                deduped = _dedupe_raw_candidates(discovered)
+                cleaned, _ = _clean_candidates(ticker=ticker, raw_candidates=deduped)
+                coverage = _compute_window_status(cleaned_candidates=cleaned, target_quarters=target_quarters)
+                if not coverage["missing"]:
+                    phase_trace["early_stop"] = True
+                    log(
+                        f"{ticker}: DISCOVERY:AUTHOR early stop after {phase_trace['pages_scanned']} page(s) "
+                        f"once {target_quarters} quarter(s) were resolved"
+                    )
+                    break
+
+            if page >= 3 and consecutive_empty_pages >= 2:
+                log(
+                    f"{ticker}: DISCOVERY:AUTHOR stopping early after {consecutive_empty_pages} consecutive "
+                    "pages without transcript links"
+                )
+                break
+        except Exception as exc:
+            phase_trace["failures"].append(
+                {
+                    "scope": f"author_page:{page}",
+                    "url": page_url,
+                    "category": _classify_failure_reason(exc),
+                    "error": str(exc),
+                }
+            )
+            if page >= 3:
+                break
+
+    phase_trace["candidates_added"] = len(discovered)
+    if discovered and phase_trace["failures"]:
+        phase_trace["status"] = "partial"
+    elif discovered:
+        phase_trace["status"] = "ok"
+    elif phase_trace["failures"]:
+        phase_trace["status"] = "failed"
+    phase_trace["duration_ms"] = int((time.monotonic() - started) * 1000)
+    return discovered, local_alias, phase_trace
+
+
+def _discover_candidates_with_openai(
+    *,
+    ticker: str,
+    api_key: str,
+    model: str,
+    base_url: str,
+    timeout_seconds: int,
+    max_candidates: int,
+    retry_attempts: int,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    log = log_fn or (lambda _: None)
+    started = time.monotonic()
+    response_payload: dict[str, Any] | None = None
+    selected_tool = ""
+    tool_errors: list[str] = []
+    phase_trace: dict[str, Any] = {
+        "phase": "openai_fallback",
+        "status": "empty",
+        "duration_ms": 0,
+        "tool": "",
+        "tool_errors": [],
+        "output_types": [],
+        "output_text_chars": 0,
+        "search_sources_count": 0,
+        "raw_candidates_count": 0,
+        "failures": [],
+    }
+
+    retry_attempts = max(1, retry_attempts)
+    for tool_type in ("web_search", "web_search_preview"):
+        payload = _build_request_payload(
+            model=model,
+            ticker=ticker,
+            max_candidates=max_candidates,
+            tool_type=tool_type,
+        )
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, retry_attempts + 1):
+            try:
+                log(f"{ticker}: trying OpenAI tool '{tool_type}' (attempt {attempt}/{retry_attempts})")
+                response = _openai_post_responses(
+                    base_url=base_url,
+                    api_key=api_key,
+                    payload=payload,
+                    timeout_seconds=timeout_seconds,
+                )
+                if response.status_code >= 400:
+                    raise RuntimeError(_extract_error_message(response))
+                response_payload = response.json()
+                selected_tool = tool_type
+                log(f"{ticker}: OpenAI request succeeded with '{tool_type}'")
+                break
+            except Exception as exc:
+                last_exc = exc
+                category = _classify_failure_reason(exc)
+                log(f"{ticker}: tool '{tool_type}' failed on attempt {attempt}: {exc}")
+                if not _is_retryable_openai_request_error(exc):
+                    log(
+                        f"{ticker}: tool '{tool_type}' error is non-retryable "
+                        f"(category={category}); aborting retries for this tool"
+                    )
+                    break
+                if attempt < retry_attempts:
+                    backoff_seconds = min(4.0, 1.2 * attempt)
+                    log(f"{ticker}: retrying '{tool_type}' after {backoff_seconds:.1f}s")
+                    time.sleep(backoff_seconds)
+        if response_payload is not None:
+            break
+        if last_exc is not None:
+            tool_errors.append(f"{tool_type}: {last_exc}")
+            phase_trace["failures"].append(
+                {
+                    "scope": tool_type,
+                    "category": _classify_failure_reason(last_exc),
+                    "error": str(last_exc),
+                }
+            )
+
+    if response_payload is None:
+        phase_trace["status"] = "failed"
+        phase_trace["tool_errors"] = tool_errors
+        phase_trace["duration_ms"] = int((time.monotonic() - started) * 1000)
+        raise RuntimeError("OpenAI web-search request failed. " + " | ".join(tool_errors))
+
+    output_items = response_payload.get("output")
+    output_item_types: list[str] = []
+    if isinstance(output_items, list):
+        for item in output_items:
+            if isinstance(item, dict):
+                output_item_types.append(str(item.get("type") or "unknown"))
+    output_text_chars = len(str(response_payload.get("output_text") or ""))
+
+    search_sources = _extract_sources(response_payload)
+    raw_candidates = _fallback_candidates_from_sources(
+        ticker=ticker,
+        response_payload=response_payload,
+        max_candidates=max_candidates,
+    )
+    if raw_candidates:
+        log(f"{ticker}: built {len(raw_candidates)} raw candidates from OpenAI web-search sources")
+    else:
+        try:
+            structured = _extract_structured_output(response_payload)
+            structured_candidates = structured.get("candidates")
+            if isinstance(structured_candidates, list):
+                raw_candidates = []
+                for item in structured_candidates:
+                    if not isinstance(item, dict):
+                        continue
+                    candidate = {
+                        "title": str(item.get("title") or "").strip(),
+                        "url": str(item.get("url") or "").strip(),
+                        "published_date": str(item.get("published_date") or "").strip(),
+                        "source": "openai_structured_output",
+                    }
+                    raw_candidates.append(candidate)
+                log(f"{ticker}: used structured OpenAI candidates={len(raw_candidates)}")
+        except Exception as exc:
+            phase_trace["failures"].append(
+                {
+                    "scope": "structured_output",
+                    "category": _classify_failure_reason(exc),
+                    "error": str(exc),
+                }
+            )
+            log(f"{ticker}: discovery produced no parseable OpenAI candidates ({exc})")
+
+    deduped = _dedupe_raw_candidates(raw_candidates)
+    phase_trace.update(
+        {
+            "status": "ok" if deduped else "empty",
+            "tool": selected_tool,
+            "tool_errors": tool_errors,
+            "output_types": output_item_types,
+            "output_text_chars": output_text_chars,
+            "search_sources_count": len(search_sources),
+            "raw_candidates_count": len(deduped),
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        }
+    )
+
+    meta = {
+        "selected_tool": selected_tool,
+        "search_sources": search_sources,
+        "notes": (
+            "Candidates derived from OpenAI web_search sources "
+            f"(sources={len(search_sources)}, candidates={len(deduped)})."
+        ),
+        "trace": phase_trace,
+    }
+    return deduped, meta
+
+
+def discover_last_quarter_links(
+    *,
+    ticker: str,
+    api_key: str,
+    model: str = DEFAULT_OPENAI_SEARCH_MODEL,
+    base_url: str = DEFAULT_OPENAI_BASE_URL,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    max_candidates: int = 12,
+    target_quarters: int = 4,
+    retry_attempts: int = DEFAULT_OPENAI_RETRY_ATTEMPTS,
+    discovery_mode: str = DEFAULT_DISCOVERY_MODE,
+    sitemap_lookback_months: int = DEFAULT_SITEMAP_LOOKBACK_MONTHS,
+    author_max_pages: int = DEFAULT_AUTHOR_MAX_PAGES,
+    discovery_cache_mode: str = DEFAULT_DISCOVERY_CACHE_MODE,
+    discovery_cache_dir: str = DEFAULT_DISCOVERY_CACHE_DIR,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> dict[str, Any]:
+    log = log_fn or (lambda _: None)
+    symbol = _normalize_ticker(ticker)
+    if not symbol:
+        raise ValueError("Ticker is empty after normalization.")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is required.")
+    if target_quarters <= 0:
+        raise ValueError("target_quarters must be >= 1.")
+    mode = (discovery_mode or DEFAULT_DISCOVERY_MODE).strip().lower()
+    if mode not in {"hybrid", "sitemap_only", "openai_only"}:
+        mode = "hybrid"
+    cache_mode = (discovery_cache_mode or DEFAULT_DISCOVERY_CACHE_MODE).strip().lower()
+    if cache_mode not in {"refresh", "use", "off"}:
+        cache_mode = "refresh"
+    sitemap_lookback_months = max(1, sitemap_lookback_months)
+    author_max_pages = max(1, author_max_pages)
+    retry_attempts = max(1, retry_attempts)
+    http_retries = max(1, DEFAULT_DISCOVERY_HTTP_RETRIES)
+    cache_path = _resolve_discovery_cache_path(
+        cache_dir=discovery_cache_dir,
+        ticker=symbol,
+        target_quarters=target_quarters,
+        max_candidates=max_candidates,
+        discovery_mode=mode,
+        sitemap_lookback_months=sitemap_lookback_months,
+        author_max_pages=author_max_pages,
+    )
+    cache_meta = {
+        "mode": cache_mode,
+        "path": str(cache_path),
+        "hit": False,
+        "written": False,
+    }
+
+    log(
+        f"{symbol}: starting discovery "
+        f"(model={model}, max_candidates={max_candidates}, target_quarters={target_quarters}, "
+        f"mode={mode}, sitemap_lookback_months={sitemap_lookback_months}, author_max_pages={author_max_pages})"
+    )
+
+    if cache_mode == "use" and cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if isinstance(cached, dict):
+                cache_meta["hit"] = True
+                cached["discovery_cache"] = cache_meta
+                cached.setdefault("discovery_methods_used", [])
+                cached.setdefault("discovery_trace", {"mode": mode, "phases": []})
+                log(f"{symbol}: loaded discovery result from cache {cache_path}")
+                return cached
+        except Exception as exc:
+            log(f"{symbol}: failed to read discovery cache ({exc}); running fresh discovery")
+
+    raw_candidates: list[dict[str, Any]] = []
+    alias_tokens: set[str] = {symbol.lower()}
+    methods_used: list[str] = []
+    discovery_trace: dict[str, Any] = {
+        "mode": mode,
+        "phases": [],
+        "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "finished_at": "",
+    }
+    selected_tool = "not_used"
+    search_sources: list[str] = []
+    clean_warnings: list[str] = []
+    structured_notes = ""
+
+    def _refresh_status() -> dict[str, Any]:
+        deduped_raw = _dedupe_raw_candidates(raw_candidates)
+        cleaned, warnings = _clean_candidates(
+            ticker=symbol,
+            raw_candidates=deduped_raw,
+        )
+        status = _compute_window_status(cleaned_candidates=cleaned, target_quarters=target_quarters)
+        return {
+            "raw_candidates": deduped_raw,
+            "cleaned_candidates": cleaned,
+            "warnings": warnings,
+            "window_status": status,
+        }
+
+    # Phase 1: sitemap
+    if mode in {"hybrid", "sitemap_only"}:
+        _log_phase(log_fn, "DISCOVERY:SITEMAP", ticker=symbol)
+        sitemap_candidates, alias_tokens, sitemap_phase = _discover_candidates_from_sitemaps(
+            ticker=symbol,
+            timeout_seconds=timeout_seconds,
+            lookback_months=sitemap_lookback_months,
+            target_quarters=target_quarters,
+            alias_tokens=alias_tokens,
+            http_retries=http_retries,
+            log_fn=log_fn,
+        )
+        discovery_trace["phases"].append(sitemap_phase)
+        if sitemap_candidates:
+            methods_used.append("sitemap")
+            raw_candidates.extend(sitemap_candidates)
+        log(
+            f"{symbol}: DISCOVERY:SITEMAP status={sitemap_phase.get('status')} "
+            f"duration_ms={sitemap_phase.get('duration_ms')} months_scanned={sitemap_phase.get('months_scanned')} "
+            f"urls_scanned={sitemap_phase.get('urls_scanned')} candidates_added={sitemap_phase.get('candidates_added')}"
+        )
+
+    status_payload = _refresh_status()
+    current_missing = list(status_payload["window_status"]["missing"])
+    clean_warnings.extend(status_payload["warnings"])
+
+    # Phase 2: author fallback
+    if mode == "hybrid" and current_missing:
+        _log_phase(log_fn, "DISCOVERY:AUTHOR", ticker=symbol)
+        author_candidates, alias_tokens, author_phase = _discover_candidates_from_author_pages(
+            ticker=symbol,
+            timeout_seconds=timeout_seconds,
+            max_pages=author_max_pages,
+            target_quarters=target_quarters,
+            alias_tokens=alias_tokens,
+            http_retries=http_retries,
+            log_fn=log_fn,
+        )
+        discovery_trace["phases"].append(author_phase)
+        if author_candidates:
+            methods_used.append("author")
+            raw_candidates.extend(author_candidates)
+        log(
+            f"{symbol}: DISCOVERY:AUTHOR status={author_phase.get('status')} "
+            f"duration_ms={author_phase.get('duration_ms')} pages_scanned={author_phase.get('pages_scanned')} "
+            f"urls_scanned={author_phase.get('urls_scanned')} candidates_added={author_phase.get('candidates_added')}"
+        )
+        status_payload = _refresh_status()
+        current_missing = list(status_payload["window_status"]["missing"])
+        clean_warnings.extend(status_payload["warnings"])
+
+    # Phase 3: OpenAI fallback for unresolved quarters
+    if mode in {"hybrid", "openai_only"} and (mode == "openai_only" or current_missing):
+        _log_phase(log_fn, "DISCOVERY:OPENAI_FALLBACK", ticker=symbol)
+        try:
+            openai_candidates, openai_meta = _discover_candidates_with_openai(
+                ticker=symbol,
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
+                max_candidates=max_candidates,
+                retry_attempts=retry_attempts,
+                log_fn=log_fn,
+            )
+            if openai_candidates:
+                methods_used.append("openai_web_search")
+                raw_candidates.extend(openai_candidates)
+            selected_tool = str(openai_meta.get("selected_tool") or "not_used")
+            search_sources = [str(url) for url in openai_meta.get("search_sources") or [] if isinstance(url, str)]
+            structured_notes = str(openai_meta.get("notes") or "")
+            discovery_trace["phases"].append(openai_meta.get("trace") or {"phase": "openai_fallback", "status": "empty"})
+            openai_trace = openai_meta.get("trace") or {}
+            log(
+                f"{symbol}: DISCOVERY:OPENAI_FALLBACK status={openai_trace.get('status')} "
+                f"duration_ms={openai_trace.get('duration_ms')} search_sources={openai_trace.get('search_sources_count')} "
+                f"candidates_added={openai_trace.get('raw_candidates_count')}"
+            )
+        except Exception as exc:
+            reason = _classify_failure_reason(exc)
+            failure_phase = {
+                "phase": "openai_fallback",
+                "status": "failed",
+                "duration_ms": 0,
+                "failures": [
+                    {
+                        "scope": "openai_fallback",
+                        "category": reason,
+                        "error": str(exc),
+                    }
+                ],
+            }
+            discovery_trace["phases"].append(failure_phase)
+            if mode == "openai_only":
+                raise
+            clean_warnings.append(f"OpenAI fallback failed ({reason}): {exc}")
+            log(f"{symbol}: DISCOVERY:OPENAI_FALLBACK failed (category={reason}): {exc}")
+        status_payload = _refresh_status()
+        current_missing = list(status_payload["window_status"]["missing"])
+        clean_warnings.extend(status_payload["warnings"])
+
+    raw_candidates = status_payload["raw_candidates"]
+    cleaned_candidates = status_payload["cleaned_candidates"]
+    quarter_status = status_payload["window_status"]
+    requested = list(quarter_status["requested"])
+    found = list(quarter_status["found"])
+    missing = list(quarter_status["missing"])
+    quarter_map: dict[tuple[int, int], MotleyTranscriptCandidate] = dict(quarter_status["quarter_map"])
+
+    quarter_rows: list[dict[str, Any]] = []
+    for year, quarter in quarter_status["window"]:
         label = _quarter_label(year, quarter)
         candidate = quarter_map.get((year, quarter))
         if candidate is None:
-            missing.append(label)
             quarter_rows.append(
                 {
                     "quarter": label,
@@ -2656,11 +3428,11 @@ def discover_last_quarter_links(
                     "url": "",
                     "published_date": "",
                     "source": "",
+                    "resolution_source": "",
+                    "resolution_attempts": list(methods_used),
                 }
             )
             continue
-
-        found.append(label)
         quarter_rows.append(
             {
                 "quarter": label,
@@ -2669,6 +3441,8 @@ def discover_last_quarter_links(
                 "url": candidate.url,
                 "published_date": candidate.published_date,
                 "source": candidate.source,
+                "resolution_source": candidate.source,
+                "resolution_attempts": list(methods_used),
             }
         )
 
@@ -2683,12 +3457,26 @@ def discover_last_quarter_links(
     ]
     found_links = [item["url"] for item in found_transcript_links]
     all_links = _dedupe_links(found_links + [c.url for c in cleaned_candidates] + search_sources)
+
+    if not structured_notes:
+        structured_notes = (
+            f"Deterministic discovery mode '{mode}' yielded "
+            f"{len(raw_candidates)} raw candidates ({len(cleaned_candidates)} accepted)."
+        )
+
+    discovery_trace["finished_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    discovery_trace["totals"] = {
+        "raw_candidates": len(raw_candidates),
+        "accepted_candidates": len(cleaned_candidates),
+        "search_sources": len(search_sources),
+    }
+
     log(
         f"{symbol}: quarter results found={len(found)} missing={len(missing)} "
         f"links={len(all_links)} search_sources={len(search_sources)}"
     )
 
-    return {
+    report = {
         "ticker": symbol,
         "as_of_date": date.today().isoformat(),
         "openai_model": model,
@@ -2708,13 +3496,32 @@ def discover_last_quarter_links(
                 "url": c.url,
                 "published_date": c.published_date,
                 "quality_score": round(c.quality_score, 3),
+                "source": c.source,
+                "discovery_source": c.source,
             }
             for c in cleaned_candidates
         ],
         "search_sources": search_sources,
-        "warnings": clean_warnings,
+        "warnings": sorted(set(clean_warnings)),
         "notes": structured_notes,
+        "discovery_methods_used": methods_used,
+        "discovery_trace": discovery_trace,
+        "discovery_cache": cache_meta,
     }
+
+    if cache_mode in {"refresh", "use"}:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+            cache_meta["written"] = True
+            report["discovery_cache"] = cache_meta
+            log(f"{symbol}: cached discovery -> {cache_path}")
+        except Exception as exc:
+            cache_meta["written"] = False
+            report["discovery_cache"] = cache_meta
+            report.setdefault("warnings", []).append(f"Failed writing discovery cache: {exc}")
+
+    return report
 
 
 def scrape_recent_transcripts_for_report(
@@ -2812,10 +3619,12 @@ def scrape_recent_transcripts_for_report(
                 f"(sections={payload['section_count']}, speakers={payload['speaker_count']})"
             )
         except Exception as exc:
+            reason = _classify_failure_reason(exc)
             error_payload: dict[str, Any] = {
                 "quarter": quarter,
                 "url": url,
                 "error": str(exc),
+                "error_category": reason,
                 "cache_key": cache_key,
                 "cache_file": str(cache_path),
             }
@@ -2978,6 +3787,47 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         default=4,
         help="How many consecutive quarters to return",
     )
+    parser.add_argument(
+        "--discovery-mode",
+        choices=["hybrid", "sitemap_only", "openai_only"],
+        default=DEFAULT_DISCOVERY_MODE if DEFAULT_DISCOVERY_MODE in {"hybrid", "sitemap_only", "openai_only"} else "hybrid",
+        help=(
+            "Discovery mode: 'hybrid' (sitemap -> author -> OpenAI fallback), "
+            "'sitemap_only' (deterministic sitemap crawl only), "
+            "'openai_only' (OpenAI web-search only)."
+        ),
+    )
+    parser.add_argument(
+        "--sitemap-lookback-months",
+        type=int,
+        default=DEFAULT_SITEMAP_LOOKBACK_MONTHS,
+        help="How many recent monthly Motley sitemaps to scan in deterministic discovery.",
+    )
+    parser.add_argument(
+        "--author-max-pages",
+        type=int,
+        default=DEFAULT_AUTHOR_MAX_PAGES,
+        help="Maximum Motley author archive pages to scan when author fallback is used.",
+    )
+    parser.add_argument(
+        "--discovery-cache-mode",
+        choices=["refresh", "use", "off"],
+        default=(
+            DEFAULT_DISCOVERY_CACHE_MODE
+            if DEFAULT_DISCOVERY_CACHE_MODE in {"refresh", "use", "off"}
+            else "refresh"
+        ),
+        help=(
+            "Cache behavior for discovery results: "
+            "'refresh' (default) always run discovery and overwrite cache, "
+            "'use' read cache when available, 'off' disable discovery cache."
+        ),
+    )
+    parser.add_argument(
+        "--discovery-cache-dir",
+        default=DEFAULT_DISCOVERY_CACHE_DIR,
+        help="Directory for discovery cache files.",
+    )
     parser.add_argument("--api-key", default=os.getenv("OPENAI_API_KEY", ""), help="OpenAI API key override")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
     parser.add_argument("--verbose", action="store_true", help="Print progress logs to stderr")
@@ -3083,7 +3933,8 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         log_fn(
             f"Starting run for {len(args.tickers)} ticker(s): {', '.join(args.tickers)} "
             f"(model={args.model}, timeout={args.timeout}s, retries={max(args.openai_retries, 1)}, "
-            f"cache_mode={args.cache_mode})"
+            f"cache_mode={args.cache_mode}, discovery_mode={args.discovery_mode}, "
+            f"discovery_cache_mode={args.discovery_cache_mode})"
         )
 
     for ticker in args.tickers:
@@ -3100,6 +3951,11 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
                 max_candidates=args.max_candidates,
                 target_quarters=args.quarters,
                 retry_attempts=max(args.openai_retries, 1),
+                discovery_mode=args.discovery_mode,
+                sitemap_lookback_months=max(args.sitemap_lookback_months, 1),
+                author_max_pages=max(args.author_max_pages, 1),
+                discovery_cache_mode=args.discovery_cache_mode,
+                discovery_cache_dir=args.discovery_cache_dir,
                 log_fn=log_fn,
             )
             if args.scrape and "error" not in report:
