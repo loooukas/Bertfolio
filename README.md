@@ -243,6 +243,7 @@ Output shape (per ticker):
 - Candidate cleanup now drops likely off-ticker transcript URLs (for example, unrelated symbols that appear in search-source spillover) and prefers quarter-resolved links for scraping.
 - Transcript start markers are now heading-aware, so inline phrases like "in your prepared remarks" no longer incorrectly reset parsing into mid-call Q&A.
 - When transcript headings are missing, section typing is inferred from call flow (prepared remarks vs Q&A), and participants are backfilled from parsed speaker sections so the output remains usable.
+- Q&A transitions now detect moderator handoff phrases (for example, "Operator, may we have the first question") even when spoken by investor-relations speakers, reducing delayed `prepared_remarks` -> `qa` switching.
 - Verbose logging now emits phase separators (`DISCOVERY:SITEMAP`, `DISCOVERY:AUTHOR`, `DISCOVERY:OPENAI_FALLBACK`, `SCRAPE`, `RUN COMPLETE`) plus phase timings and failure categories.
 
 ## Notes
