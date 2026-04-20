@@ -23,16 +23,20 @@
         </nav>
         <div class="top-actions" aria-label="Secondary actions">
           <a href="/docs" class="docs-link">Docs</a>
-          <button class="icon-btn" type="button" aria-label="Settings">⚙</button>
+          <button class="icon-btn" type="button" aria-label="Settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M10.3 2.5h3.4l.5 2.1a7.9 7.9 0 0 1 1.8.8l2-1 2.4 2.4-1 2a7.9 7.9 0 0 1 .8 1.8l2.1.5v3.4l-2.1.5a7.9 7.9 0 0 1-.8 1.8l1 2-2.4 2.4-2-1a7.9 7.9 0 0 1-1.8.8l-.5 2.1h-3.4l-.5-2.1a7.9 7.9 0 0 1-1.8-.8l-2 1L3.4 19l1-2a7.9 7.9 0 0 1-.8-1.8l-2.1-.5v-3.4l2.1-.5a7.9 7.9 0 0 1 .8-1.8l-1-2 2.4-2.4 2 1a7.9 7.9 0 0 1 1.8-.8zM12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z" />
+            </svg>
+          </button>
           <span class="api-status"><span class="dot"></span>API Online</span>
         </div>
       </header>
 
       <section class="query-card" aria-labelledby="ticker-label">
         <div class="query-copy">
-          <h2 id="hero-subtitle">Transcript-first earnings intelligence with audit-ready diagnostics.</h2>
+          <h2 id="hero-subtitle">Transcript Earnings Intelligence.</h2>
           <p id="query-note">
-            Enter a ticker, run the full pipeline, and review transcript, market, fundamentals, and quality controls in one report.
+            Enter a ticker and run the full pipeline for one complete report.
           </p>
         </div>
         <div class="query-input-wrap">
@@ -136,7 +140,7 @@
               <div id="transcript-quotes" class="quote-list"></div>
             </article>
 
-            <article class="surface">
+            <article class="surface" id="qa-pressure-surface">
               <h3>Q&amp;A Pressure Points</h3>
               <div class="table-shell">
                 <table id="qa-pressure-table">
@@ -186,6 +190,14 @@
                     Min Confidence
                     <input id="filter-confidence-min" type="number" value="0" min="0" max="100" step="1" />
                   </label>
+                  <label>
+                    Min Evasiveness
+                    <input id="filter-evasiveness-min" type="number" value="0" min="0" max="100" step="1" />
+                  </label>
+                  <label>
+                    Min Specificity
+                    <input id="filter-specificity-min" type="number" value="0" min="0" max="100" step="1" />
+                  </label>
                   <button id="filter-reset" type="button" class="ghost-btn">Reset</button>
                 </div>
               </div>
@@ -193,12 +205,14 @@
                 <table id="speaker-analysis-table">
                   <thead>
                     <tr>
-                      <th><button type="button" data-sort="speaker">Speaker</button></th>
-                      <th><button type="button" data-sort="role">Role</button></th>
-                      <th><button type="button" data-sort="statements">Statements</button></th>
-                      <th><button type="button" data-sort="sentiment">Avg Sentiment</button></th>
-                      <th><button type="button" data-sort="hedging">Hedging %</button></th>
-                      <th>Key Phrase</th>
+                      <th><button type="button" data-sort="speaker"><span>Speaker</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" data-sort="role"><span>Role</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" data-sort="statements"><span>Statements</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" data-sort="sentiment"><span>Avg Sentiment</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" data-sort="confidence"><span>Confidence</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" data-sort="evasiveness"><span>Evasiveness</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" data-sort="specificity"><span>Specificity</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                      <th><button type="button" data-sort="topic"><span>Topic</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                     </tr>
                   </thead>
                   <tbody></tbody>
@@ -232,17 +246,7 @@
           <section id="section-fundamentals" class="tab-panel" aria-labelledby="tab-fundamentals">
             <article class="surface">
               <h2>Fundamentals</h2>
-              <p id="fundamentals-context" class="summary-copy"></p>
-            </article>
-
-            <article class="surface">
-              <h3>Key Metrics</h3>
               <div id="fundamentals-metrics" class="metric-grid-six"></div>
-            </article>
-
-            <article class="surface">
-              <h3>Quarterly Highlights</h3>
-              <ul id="fundamentals-highlights" class="compact-list"></ul>
             </article>
 
             <div class="fundamentals-chart-grid">
@@ -281,6 +285,12 @@
                   <tbody></tbody>
                 </table>
               </div>
+            </article>
+
+            <article class="surface">
+              <h3>Fundamentals Report</h3>
+              <p id="fundamentals-context" class="summary-copy"></p>
+              <ul id="fundamentals-highlights" class="compact-list"></ul>
             </article>
           </section>
 
@@ -415,12 +425,15 @@
         fundamentals: "Fundamentals",
         data_audit: "Data Audit",
       };
+      const ICON_SIZE = "0 0 24 24";
+      const svgIcon = (path) =>
+        `<svg viewBox="${ICON_SIZE}" aria-hidden="true" focusable="false"><path d="${path}"></path></svg>`;
       const TAB_ICONS = {
-        overview: "◷",
-        transcript: "📄",
-        market_reaction: "↗",
-        fundamentals: "▦",
-        data_audit: "🛡",
+        overview: svgIcon("M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm1 5v5.6l4.2 2.2-.9 1.7L11 13V7Z"),
+        transcript: svgIcon("M7 3h7l5 5v13H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm6 1.5V9h4.5"),
+        market_reaction: svgIcon("M4 18V6m8 12V10m8 8V4M3 18h18"),
+        fundamentals: svgIcon("M4 4h16v16H4Zm2 2v4h4V6Zm6 0v4h6V6Zm-6 6v6h4v-6Zm6 0v6h6v-6Z"),
+        data_audit: svgIcon("M12 2 4 5v6c0 5.1 3.4 9.8 8 11 4.6-1.2 8-5.9 8-11V5Zm0 5a4 4 0 1 1-4 4 4 4 0 0 1 4-4Z"),
       };
 
       const state = {
@@ -470,6 +483,7 @@
         transcriptPreparedQa: document.getElementById("transcript-prepared-qa"),
         transcriptQuarterActions: document.getElementById("transcript-quarter-actions"),
         transcriptQuotes: document.getElementById("transcript-quotes"),
+        qaPressureSurface: document.getElementById("qa-pressure-surface"),
         qaPressureBody: document.querySelector("#qa-pressure-table tbody"),
         speakerRollupCards: document.getElementById("speaker-rollup-cards"),
 
@@ -479,6 +493,8 @@
         filterTopic: document.getElementById("filter-topic"),
         filterSentiment: document.getElementById("filter-sentiment"),
         filterConfidenceMin: document.getElementById("filter-confidence-min"),
+        filterEvasivenessMin: document.getElementById("filter-evasiveness-min"),
+        filterSpecificityMin: document.getElementById("filter-specificity-min"),
         filterReset: document.getElementById("filter-reset"),
         speakerTableBody: document.querySelector("#speaker-analysis-table tbody"),
 
@@ -543,6 +559,28 @@
       function fmtPct(value, digits = 1) {
         if (value === null || value === undefined || Number.isNaN(value)) return "n/a";
         return `${fmtNum(value, digits)}%`;
+      }
+
+      function fmtSignedUnitPct(value, digits = 1) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return "n/a";
+        const clamped = Math.max(-1, Math.min(1, numeric));
+        const asPct = clamped * 100;
+        return `${asPct >= 0 ? "+" : ""}${fmtNum(asPct, digits)}%`;
+      }
+
+      function fmtUnitPct(value, digits = 1) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return "n/a";
+        const clamped = Math.max(-1, Math.min(1, numeric));
+        return `${fmtNum(clamped * 100, digits)}%`;
+      }
+
+      function fmtPercentScore(value, digits = 1) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return "n/a";
+        const scaled = Math.abs(numeric) <= 1 ? numeric * 100 : numeric;
+        return `${fmtNum(scaled, digits)}%`;
       }
 
       function fmtDate(utcSeconds) {
@@ -701,6 +739,33 @@
         return cleaned.length <= maxChars ? cleaned : `${cleaned.slice(0, maxChars - 1).trimEnd()}…`;
       }
 
+      function isLowInformationText(text, minChars = 35) {
+        const cleaned = String(text || "").replace(/\s+/g, " ").trim();
+        if (!cleaned) return true;
+        if (cleaned.length < minChars) return true;
+        const normalized = cleaned.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+        const filler = new Set([
+          "yes",
+          "yeah",
+          "sure",
+          "ok",
+          "okay",
+          "thank you",
+          "thanks",
+          "hi",
+          "hello",
+          "good morning",
+          "good afternoon",
+          "absolutely",
+          "you bet",
+          "got it",
+        ]);
+        if (filler.has(normalized)) return true;
+        const words = normalized.split(" ").filter(Boolean);
+        if (words.length < 5) return true;
+        return false;
+      }
+
       function buildSpeakerRoleMap(transcriptDocs) {
         const roleMap = {};
         (transcriptDocs || []).forEach((doc) => {
@@ -737,7 +802,7 @@
               </div>
               <div class="report-score">
                 <p>Score</p>
-                <strong class="mono">${scoreInt >= 0 ? "+" : ""}${scoreInt}</strong>
+                <strong class="mono">${scoreInt >= 0 ? "+" : ""}${scoreInt}%</strong>
               </div>
             </div>
           </div>
@@ -841,18 +906,33 @@
       function topQuoteRows(transcript) {
         const rows = transcript?.speaker_analysis || [];
         const quoteRows = [];
+        const seen = new Set();
         rows.forEach((row) => {
-          const snippet = (row.evidence_snippets || [])[0];
-          if (!snippet) return;
-          quoteRows.push({
-            speaker: row.speaker,
-            role: state.speakerRoleMap[row.speaker] || "n/a",
-            text: snippet,
-            sentiment: row.sentiment_direction,
-            topic: row.topic_label,
+          const snippets = Array.isArray(row.evidence_snippets) ? row.evidence_snippets : [];
+          snippets.forEach((snippet) => {
+            const text = compactText(snippet, 280);
+            if (isLowInformationText(text, 45)) return;
+            const dedupeKey = String(text).toLowerCase();
+            if (seen.has(dedupeKey)) return;
+            seen.add(dedupeKey);
+            const score =
+              Math.abs(Number(row.sentiment_direction || 0)) * 32 +
+              Number(row.confidence || 0) * 0.28 +
+              Number(row.evasiveness || 0) * 0.24 +
+              Number(row.specificity || 0) * 0.2 +
+              Number(row.forward_looking_strength || 0) * 0.16 +
+              Math.min(18, text.length / 8);
+            quoteRows.push({
+              speaker: row.speaker,
+              role: state.speakerRoleMap[row.speaker] || "n/a",
+              text,
+              sentiment: row.sentiment_direction,
+              topic: row.topic_label,
+              score,
+            });
           });
         });
-        quoteRows.sort((a, b) => Math.abs(Number(b.sentiment || 0)) - Math.abs(Number(a.sentiment || 0)));
+        quoteRows.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
         return quoteRows.slice(0, 8);
       }
 
@@ -862,10 +942,10 @@
           const fallback = (transcript?.key_quotes || []).slice(0, 8).map((quote) => ({
             speaker: "Unknown",
             role: "n/a",
-            text: quote,
+            text: compactText(quote, 280),
             sentiment: 0,
             topic: "general",
-          }));
+          })).filter((row) => !isLowInformationText(row.text, 45));
           derived.push(...fallback);
         }
 
@@ -897,37 +977,37 @@
           .filter((row) => String(row.section_type || "") === "qa")
           .sort((a, b) => Number(b.evasiveness || 0) - Number(a.evasiveness || 0));
 
-        if (rows.length) {
-          return rows.slice(0, 8).map((row) => ({
-            analyst: row.speaker,
-            summary: humanizeToken(row.topic_label || "general"),
-            evasiveness: Number(row.evasiveness || 0),
-            quality: Math.max(0, 100 - Number(row.evasiveness || 0)),
-          }));
-        }
-
-        return (transcript?.qa_pressure_points || []).slice(0, 8).map((item) => ({
-          analyst: "n/a",
-          summary: String(item || ""),
-          evasiveness: null,
-          quality: null,
-        }));
+        return rows
+          .map((row) => {
+            const snippets = Array.isArray(row.evidence_snippets) ? row.evidence_snippets : [];
+            const evidence = snippets.find((snippet) => !isLowInformationText(snippet, 45));
+            if (!evidence) return null;
+            return {
+              analyst: row.speaker,
+              summary: `${compactText(evidence, 180)} (${humanizeToken(row.topic_label || "general")})`,
+              evasiveness: Number(row.evasiveness || 0),
+              quality: Math.max(0, 100 - Number(row.evasiveness || 0)),
+            };
+          })
+          .filter(Boolean)
+          .slice(0, 8);
       }
 
       function renderQaTable(transcript) {
         const rows = buildQaRows(transcript);
         elements.qaPressureBody.innerHTML = "";
         if (!rows.length) {
-          elements.qaPressureBody.innerHTML = `<tr><td colspan="4">No pressure points identified.</td></tr>`;
+          elements.qaPressureSurface.classList.add("hidden");
           return;
         }
+        elements.qaPressureSurface.classList.remove("hidden");
         rows.forEach((row) => {
           const tr = document.createElement("tr");
           tr.innerHTML = `
             <td>${row.analyst}</td>
             <td>${compactText(row.summary, 120)}</td>
-            <td class="mono">${row.evasiveness === null ? "n/a" : fmtNum(row.evasiveness, 1)}</td>
-            <td class="mono">${row.quality === null ? "n/a" : fmtNum(row.quality, 1)}</td>
+            <td class="mono">${row.evasiveness === null ? "n/a" : fmtPct(row.evasiveness, 1)}</td>
+            <td class="mono">${row.quality === null ? "n/a" : fmtPct(row.quality, 1)}</td>
           `;
           elements.qaPressureBody.appendChild(tr);
         });
@@ -1017,10 +1097,10 @@
       }
 
       function populateTranscriptFilters(rows) {
-        const roles = Array.from(new Set(rows.map((row) => state.speakerRoleMap[row.speaker] || "n/a"))).sort();
+        const roles = Array.from(new Set(rows.map((row) => row.role || "n/a"))).sort();
         const speakers = Array.from(new Set(rows.map((row) => row.speaker))).sort();
-        const sections = Array.from(new Set(rows.map((row) => row.section_type))).sort();
-        const topics = Array.from(new Set(rows.map((row) => row.topic_label))).sort();
+        const sections = Array.from(new Set(rows.flatMap((row) => Array.from(row.sections || [])))).sort();
+        const topics = Array.from(new Set(rows.flatMap((row) => Array.from(row.topics || [])))).sort();
 
         const options = (list, humanize = true) => ["<option value=\"all\">All</option>", ...list.map((value) => `<option value=\"${value}\">${humanize ? humanizeToken(value) : value}</option>`)].join("");
 
@@ -1037,24 +1117,68 @@
       }
 
       function derivedSpeakerRows() {
-        const statementCount = {};
+        const MIN_SEGMENT_CHARS = 40;
+        const grouped = new Map();
+
         state.speakerRows.forEach((row) => {
-          statementCount[row.speaker] = (statementCount[row.speaker] || 0) + 1;
+          const speaker = String(row.speaker || "").trim();
+          if (!speaker || speaker.toLowerCase().startsWith("operator")) return;
+
+          const evidenceText = compactText((row.evidence_snippets || [])[0] || "", 400);
+          const segmentChars = Number(row.segment_char_count || evidenceText.length || 0);
+          if (segmentChars < MIN_SEGMENT_CHARS) return;
+
+          const weight = Math.max(1, segmentChars);
+          if (!grouped.has(speaker)) {
+            grouped.set(speaker, {
+              speaker,
+              role: state.speakerRoleMap[speaker] || "n/a",
+              statements: 0,
+              sentimentWeighted: 0,
+              confidenceWeighted: 0,
+              evasivenessWeighted: 0,
+              specificityWeighted: 0,
+              totalWeight: 0,
+              topics: new Set(),
+              sections: new Set(),
+              topicCounts: {},
+              sectionCounts: {},
+            });
+          }
+          const agg = grouped.get(speaker);
+          agg.statements += 1;
+          agg.sentimentWeighted += Number(row.sentiment_direction || 0) * weight;
+          agg.confidenceWeighted += Number(row.confidence || 0) * weight;
+          agg.evasivenessWeighted += Number(row.evasiveness || 0) * weight;
+          agg.specificityWeighted += Number(row.specificity || 0) * weight;
+          agg.totalWeight += weight;
+          const topicLabel = String(row.topic_label || "general");
+          const sectionLabel = String(row.section_type || "other");
+          agg.topics.add(topicLabel);
+          agg.sections.add(sectionLabel);
+          agg.topicCounts[topicLabel] = (agg.topicCounts[topicLabel] || 0) + 1;
+          agg.sectionCounts[sectionLabel] = (agg.sectionCounts[sectionLabel] || 0) + 1;
         });
 
-        return state.speakerRows
-          .filter((row) => !String(row.speaker || "").toLowerCase().startsWith("operator"))
-          .map((row) => ({
-            speaker: row.speaker,
-            role: state.speakerRoleMap[row.speaker] || "n/a",
-            section: row.section_type,
-            topic: row.topic_label,
-            statements: statementCount[row.speaker] || 0,
-            sentiment: Number(row.sentiment_direction || 0),
-            hedging: Number(row.risk_language_intensity || 0),
-            confidence: Number(row.confidence || 0),
-            keyPhrase: compactText((row.evidence_snippets || [])[0] || "n/a", 120),
-          }));
+        const rows = Array.from(grouped.values()).map((agg) => {
+          const totalWeight = Math.max(1, Number(agg.totalWeight || 1));
+          const dominantTopic = Object.entries(agg.topicCounts)
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || "general";
+          return {
+            speaker: agg.speaker,
+            role: agg.role,
+            statements: agg.statements,
+            sentiment: agg.sentimentWeighted / totalWeight,
+            confidence: agg.confidenceWeighted / totalWeight,
+            evasiveness: agg.evasivenessWeighted / totalWeight,
+            specificity: agg.specificityWeighted / totalWeight,
+            topic: dominantTopic,
+            topics: agg.topics,
+            sections: agg.sections,
+          };
+        });
+        rows.sort((a, b) => b.statements - a.statements || a.speaker.localeCompare(b.speaker));
+        return rows;
       }
 
       function filterSpeakerRows(rows) {
@@ -1064,14 +1188,18 @@
         const topic = elements.filterTopic.value;
         const sentiment = elements.filterSentiment.value;
         const minConfidence = Number(elements.filterConfidenceMin.value || 0);
+        const minEvasiveness = Number(elements.filterEvasivenessMin.value || 0);
+        const minSpecificity = Number(elements.filterSpecificityMin.value || 0);
 
         return rows.filter((row) => {
           if (role !== "all" && row.role !== role) return false;
           if (speaker !== "all" && row.speaker !== speaker) return false;
-          if (section !== "all" && row.section !== section) return false;
-          if (topic !== "all" && row.topic !== topic) return false;
+          if (section !== "all" && !row.sections.has(section)) return false;
+          if (topic !== "all" && !row.topics.has(topic)) return false;
           if (sentiment !== "all" && sentimentLabelFromScore(row.sentiment).toLowerCase() !== sentiment) return false;
           if (row.confidence < minConfidence) return false;
+          if (row.evasiveness < minEvasiveness) return false;
+          if (row.specificity < minSpecificity) return false;
           return true;
         });
       }
@@ -1081,16 +1209,38 @@
         const multiplier = direction === "asc" ? 1 : -1;
         const list = [...rows];
         list.sort((a, b) => {
-          if (key === "speaker" || key === "role") return a[key].localeCompare(b[key]) * multiplier;
+          if (key === "speaker" || key === "role" || key === "topic") return a[key].localeCompare(b[key]) * multiplier;
           if (key === "statements") {
             if (a.statements === b.statements) return a.speaker.localeCompare(b.speaker);
             return (a.statements - b.statements) * multiplier;
           }
           if (key === "sentiment") return (a.sentiment - b.sentiment) * multiplier;
-          if (key === "hedging") return (a.hedging - b.hedging) * multiplier;
+          if (key === "confidence") return (a.confidence - b.confidence) * multiplier;
+          if (key === "evasiveness") return (a.evasiveness - b.evasiveness) * multiplier;
+          if (key === "specificity") return (a.specificity - b.specificity) * multiplier;
           return 0;
         });
         return list;
+      }
+
+      function updateSpeakerSortIndicators() {
+        document.querySelectorAll("#speaker-analysis-table thead button[data-sort]").forEach((button) => {
+          const key = button.dataset.sort || "";
+          const indicator = button.querySelector(".sort-indicator");
+          if (!indicator) return;
+          if (state.speakerSort.key !== key) {
+            indicator.textContent = "↕";
+            button.setAttribute("aria-sort", "none");
+            return;
+          }
+          if (state.speakerSort.direction === "asc") {
+            indicator.textContent = "▲";
+            button.setAttribute("aria-sort", "ascending");
+          } else {
+            indicator.textContent = "▼";
+            button.setAttribute("aria-sort", "descending");
+          }
+        });
       }
 
       function renderSpeakerTable() {
@@ -1098,7 +1248,8 @@
         clearNode(elements.speakerTableBody);
 
         if (!rows.length) {
-          elements.speakerTableBody.innerHTML = `<tr><td colspan="6">No rows match current filters.</td></tr>`;
+          elements.speakerTableBody.innerHTML = `<tr><td colspan="8">No rows match current filters.</td></tr>`;
+          updateSpeakerSortIndicators();
           return;
         }
 
@@ -1108,12 +1259,15 @@
             <td>${row.speaker}</td>
             <td>${row.role}</td>
             <td class="mono">${row.statements}</td>
-            <td class="mono">${row.sentiment >= 0 ? "+" : ""}${fmtNum(row.sentiment, 3)}</td>
-            <td class="mono">${fmtNum(row.hedging, 1)}</td>
-            <td>${row.keyPhrase}</td>
+            <td class="mono">${fmtSignedUnitPct(row.sentiment, 1)}</td>
+            <td class="mono">${fmtPct(row.confidence, 1)}</td>
+            <td class="mono">${fmtPct(row.evasiveness, 1)}</td>
+            <td class="mono">${fmtPct(row.specificity, 1)}</td>
+            <td>${humanizeToken(row.topic)}</td>
           `;
           elements.speakerTableBody.appendChild(tr);
         });
+        updateSpeakerSortIndicators();
       }
 
       function renderTranscript(payload) {
@@ -1129,7 +1283,7 @@
         renderTranscriptQuotes(transcript);
         renderQaTable(transcript);
         renderSpeakerRollups(transcript);
-        populateTranscriptFilters(state.speakerRows);
+        populateTranscriptFilters(derivedSpeakerRows());
         renderSpeakerTable();
       }
 
@@ -1154,7 +1308,7 @@
                 <p>${item.summary || "No summary provided."}</p>
                 <div class="social-meta mono">
                   <span>${fmtExternalDate(item.time_published)}</span>
-                  <span>Score ${fmtNum(item.sentiment_score, 3)}</span>
+                  <span>Sentiment ${fmtSignedUnitPct(item.sentiment_score, 1)}</span>
                 </div>
               </article>
             `
@@ -1164,7 +1318,7 @@
 
       function openSocialModal(item) {
         elements.modalTitle.textContent = item.title || "Social Post";
-        elements.modalMeta.textContent = `${item.subreddit ? `r/${item.subreddit}` : item.source || "social"} · ${fmtDate(item.created_utc)} · relevance ${fmtNum(item.relevance_score, 2)} · ${humanizeToken(item.sentiment_label)} ${fmtNum(item.sentiment_score, 3)}`;
+        elements.modalMeta.textContent = `${item.subreddit ? `r/${item.subreddit}` : item.source || "social"} · ${fmtDate(item.created_utc)} · relevance ${fmtPercentScore(item.relevance_score, 1)} · ${humanizeToken(item.sentiment_label)} ${fmtSignedUnitPct(item.sentiment_score, 1)}`;
         elements.modalBody.textContent = item.body || "No body text available.";
         elements.modalLink.href = item.url || "#";
         elements.modal.showModal();
@@ -1189,7 +1343,7 @@
                 <p>${compactText(item.excerpt || item.body || "No preview.", 160)}</p>
                 <div class="social-meta mono">
                   <span>${fmtDate(item.created_utc)}</span>
-                  <span>Relevance ${fmtNum(item.relevance_score, 2)}</span>
+                  <span>Relevance ${fmtPercentScore(item.relevance_score, 1)}</span>
                 </div>
               </article>
             `
@@ -1660,7 +1814,7 @@
           if (payload.status === "failed") {
             throw new Error(payload.error || "Analysis run failed.");
           }
-          await sleep(1800);
+          await sleep(3600);
         }
       }
 
@@ -1679,7 +1833,7 @@
 
         elements.analyzeBtn.disabled = true;
         elements.status.className = "status-line";
-        elements.status.textContent = `Queued analysis for ${ticker}...`;
+        elements.status.textContent = "";
         setLoadingOverlay(true, "Bootstrapping analysis", "Waiting for backend job start");
 
         try {
@@ -1697,8 +1851,8 @@
           const result = await pollJob(startPayload.job_id);
           renderAll(result);
           setLoadingOverlay(false);
-          elements.status.className = "status-line ok";
-          elements.status.textContent = `${result.ticker} · ${humanizeToken(result.overall_sentiment_label)} (${fmtNum(result.overall_sentiment_score, 3)}) · transcripts ${result.transcript.transcript_count_found}/${result.transcript.transcript_count_requested}`;
+          elements.status.className = "status-line";
+          elements.status.textContent = "";
         } catch (error) {
           setLoadingOverlay(false);
           elements.status.className = "status-line error";
@@ -1730,6 +1884,8 @@
       elements.filterTopic.addEventListener("change", renderSpeakerTable);
       elements.filterSentiment.addEventListener("change", renderSpeakerTable);
       elements.filterConfidenceMin.addEventListener("input", renderSpeakerTable);
+      elements.filterEvasivenessMin.addEventListener("input", renderSpeakerTable);
+      elements.filterSpecificityMin.addEventListener("input", renderSpeakerTable);
 
       elements.filterReset.addEventListener("click", () => {
         elements.filterRole.value = "all";
@@ -1738,6 +1894,8 @@
         elements.filterTopic.value = "all";
         elements.filterSentiment.value = "all";
         elements.filterConfidenceMin.value = "0";
+        elements.filterEvasivenessMin.value = "0";
+        elements.filterSpecificityMin.value = "0";
         renderSpeakerTable();
       });
 
@@ -1748,7 +1906,7 @@
           if (state.speakerSort.key === key) {
             state.speakerSort.direction = state.speakerSort.direction === "asc" ? "desc" : "asc";
           } else {
-            state.speakerSort = { key, direction: key === "speaker" || key === "role" ? "asc" : "desc" };
+            state.speakerSort = { key, direction: key === "speaker" || key === "role" || key === "topic" ? "asc" : "desc" };
           }
           renderSpeakerTable();
         });

@@ -380,6 +380,7 @@ def build_speaker_analysis(
                 speaker=block.speaker,
                 section_type=block.section_type,
                 sentiment_direction=_clamp(directional, -1.0, 1.0),
+                segment_char_count=len(block.text.strip()),
                 confidence=round(confidence, 2),
                 evasiveness=round(evasiveness, 2),
                 specificity=round(specificity, 2),

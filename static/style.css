@@ -1347,6 +1347,15 @@ body {
   background: var(--fb-surface-2);
   color: var(--fb-muted);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn svg {
+  width: 1rem;
+  height: 1rem;
+  fill: currentColor;
 }
 
 .icon-btn:hover,
@@ -1424,8 +1433,14 @@ body {
 }
 
 .status-line {
-  font-size: 1.05rem;
+  display: none;
+  font-size: 0.95rem;
   color: #7af6b2;
+}
+
+.status-line.error {
+  display: block;
+  color: #f28a96;
 }
 
 .empty-state {
@@ -1556,8 +1571,18 @@ body {
 
 .tab-icon {
   width: 1.05rem;
+  height: 1.05rem;
   text-align: center;
   opacity: 0.92;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
 }
 
 .tab-panel {
@@ -1766,6 +1791,28 @@ th {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #9fb0c6;
+}
+
+thead button {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.sort-indicator {
+  color: #6f8098;
+  font-size: 0.74rem;
+  line-height: 1;
+  min-width: 1.05rem;
+  text-align: right;
 }
 
 .market-feed-tabs {

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
+import json
 import math
 import re
 from statistics import mean
 import time
 from typing import Any, Optional
+
+import requests
 
 from .finbert_model import get_engine
 from .normalizer import (
@@ -96,6 +99,20 @@ RISK_LANGUAGE_MARKERS = {
     "challenging",
     "softness",
     "downturn",
+}
+
+LOW_INFORMATION_QUOTES = {
+    "yes",
+    "yeah",
+    "sure",
+    "okay",
+    "ok",
+    "thank you",
+    "thanks",
+    "hi",
+    "hello",
+    "good morning",
+    "good afternoon",
 }
 
 UI_COPY = CopyDictionary(
@@ -224,6 +241,167 @@ def _format_decimal_pct(value: Optional[float]) -> str:
     if value is None:
         return "n/a"
     return f"{value * 100:.1f}%"
+
+
+def _format_signed_unit_pct(value: Optional[float], digits: int = 1) -> str:
+    if value is None:
+        return "n/a"
+    clamped = _clamp_unit(float(value))
+    return f"{clamped * 100:+.{digits}f}%"
+
+
+def _normalize_quote_key(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", text.lower())).strip()
+
+
+def _quote_is_low_information(text: str, *, min_chars: int = 45) -> bool:
+    compact = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not compact:
+        return True
+    if len(compact) < min_chars:
+        return True
+    normalized = _normalize_quote_key(compact)
+    if normalized in LOW_INFORMATION_QUOTES:
+        return True
+    words = [token for token in normalized.split(" ") if token]
+    return len(words) < 6
+
+
+def _deterministic_rank_quote_candidates(
+    *,
+    speaker_rows: list[TranscriptSpeakerAnalysis],
+    docs: list[TranscriptDocument],
+    limit: int = 10,
+) -> list[str]:
+    candidates: list[tuple[float, str]] = []
+    seen_keys: set[str] = set()
+
+    for row in speaker_rows:
+        snippets = row.evidence_snippets or []
+        for snippet in snippets:
+            text = re.sub(r"\s+", " ", str(snippet or "")).strip()
+            if _quote_is_low_information(text):
+                continue
+            quote_key = _normalize_quote_key(text)
+            if not quote_key or quote_key in seen_keys:
+                continue
+            seen_keys.add(quote_key)
+            score = (
+                abs(float(row.sentiment_direction)) * 34
+                + float(row.confidence) * 0.28
+                + float(row.evasiveness) * 0.24
+                + float(row.specificity) * 0.2
+                + float(row.forward_looking_strength) * 0.18
+                + min(18.0, len(text) / 8)
+            )
+            candidates.append((score, text))
+
+    for doc in docs:
+        for quote in doc.key_quotes:
+            text = re.sub(r"\s+", " ", str(quote or "")).strip()
+            if _quote_is_low_information(text):
+                continue
+            quote_key = _normalize_quote_key(text)
+            if not quote_key or quote_key in seen_keys:
+                continue
+            seen_keys.add(quote_key)
+            score = 22 + min(14.0, len(text) / 10)
+            candidates.append((score, text))
+
+    candidates.sort(key=lambda item: (item[0], len(item[1])), reverse=True)
+    ranked_quotes = [text for _, text in candidates[: max(limit * 2, limit)]]
+    return ranked_quotes[:limit]
+
+
+def _rerank_quotes_with_openai(
+    *,
+    candidates: list[str],
+    settings: Settings,
+    limit: int = 10,
+) -> list[str]:
+    if not settings.openai_api_key or len(candidates) < 3:
+        return candidates[:limit]
+
+    payload = {
+        "model": settings.openai_normalizer_model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You rank candidate earnings-call quotes for analyst usefulness. "
+                    "Prefer quotes with concrete information, decisions, outlook, risk, or financial detail. "
+                    "Avoid filler or greetings. Return strict JSON: {\"quotes\": [\"...\"]}."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "limit": limit,
+                        "quotes": candidates[: min(len(candidates), 24)],
+                    }
+                ),
+            },
+        ],
+    }
+
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.openai_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=settings.request_timeout_seconds,
+        )
+        response.raise_for_status()
+        body = response.json()
+        choices = body.get("choices") or []
+        if not choices:
+            return candidates[:limit]
+        raw_content = str(choices[0].get("message", {}).get("content") or "").strip()
+        if not raw_content:
+            return candidates[:limit]
+        normalized_content = raw_content
+        if normalized_content.startswith("```"):
+            normalized_content = re.sub(r"^```(?:json)?", "", normalized_content).strip()
+            normalized_content = re.sub(r"```$", "", normalized_content).strip()
+        parsed = json.loads(normalized_content)
+        requested = [str(item).strip() for item in parsed.get("quotes") or [] if str(item).strip()]
+        if not requested:
+            return candidates[:limit]
+        candidate_map = {_normalize_quote_key(text): text for text in candidates}
+        ranked: list[str] = []
+        for item in requested:
+            matched = candidate_map.get(_normalize_quote_key(item))
+            if matched and matched not in ranked:
+                ranked.append(matched)
+        if not ranked:
+            return candidates[:limit]
+        for item in candidates:
+            if len(ranked) >= limit:
+                break
+            if item not in ranked:
+                ranked.append(item)
+        return ranked[:limit]
+    except Exception:
+        return candidates[:limit]
+
+
+def _select_key_quotes(
+    *,
+    speaker_rows: list[TranscriptSpeakerAnalysis],
+    docs: list[TranscriptDocument],
+    settings: Settings,
+    limit: int = 10,
+) -> list[str]:
+    ranked = _deterministic_rank_quote_candidates(speaker_rows=speaker_rows, docs=docs, limit=max(limit, 12))
+    if not ranked:
+        return []
+    return _rerank_quotes_with_openai(candidates=ranked, settings=settings, limit=limit)
 
 
 def _format_market_cap(value: Optional[float]) -> str:
@@ -644,7 +822,7 @@ def _build_report_tabs(
             [
                 s.speaker,
                 s.section_type,
-                f"{s.sentiment_direction:+.3f}",
+                _format_signed_unit_pct(s.sentiment_direction),
                 f"{s.confidence:.1f}",
                 f"{s.evasiveness:.1f}",
                 s.topic_label,
@@ -1018,27 +1196,28 @@ def build_sentiment_snapshot(ticker: str, settings: Settings) -> dict[str, Any]:
         stance_label=_stance_from_score(overall_score),
         executive_summary=(
             f"Initial sentiment snapshot for {company_name}: "
-            f"news reads {_stance_from_score(news_avg)} ({news_avg:+.3f}), "
-            f"social reads {_stance_from_score(social_avg)} ({social_avg:+.3f}). "
+            f"news reads {_stance_from_score(news_avg)} ({_format_signed_unit_pct(news_avg)}), "
+            f"social reads {_stance_from_score(social_avg)} ({_format_signed_unit_pct(social_avg)}). "
             "Transcript-driven adjustments continue loading."
         ),
         key_takeaways=[
             f"Snapshot captured {len(news)} news items and {len(social)} social posts.",
-            f"Fundamentals momentum signal: {fundamentals_signal:+.3f}.",
+            f"Fundamentals momentum signal: {_format_signed_unit_pct(fundamentals_signal)}.",
             "Full transcript normalization and speaker analysis are still processing.",
         ],
         metrics=[
-            CompactMetric(key="overall_sentiment", label="Snapshot Sentiment", value=f"{overall_score:+.3f}"),
+            CompactMetric(key="overall_sentiment", label="Snapshot Sentiment", value=_format_signed_unit_pct(overall_score)),
             CompactMetric(key="news_count", label="News Items", value=str(len(news))),
             CompactMetric(key="social_count", label="Social Posts", value=str(len(social))),
-            CompactMetric(key="fundamentals_signal", label="Fundamentals Signal", value=f"{fundamentals_signal:+.3f}"),
+            CompactMetric(key="fundamentals_signal", label="Fundamentals Signal", value=_format_signed_unit_pct(fundamentals_signal)),
         ],
     )
 
     market_reaction = MarketReactionSection(
         balance_summary=(
             f"Snapshot market reaction skews {_stance_from_score(news_avg)} in news "
-            f"({news_avg:+.3f}) and {_stance_from_score(social_avg)} in social ({social_avg:+.3f})."
+            f"({_format_signed_unit_pct(news_avg)}) and {_stance_from_score(social_avg)} in social "
+            f"({_format_signed_unit_pct(social_avg)})."
         ),
         news_count=len(news),
         social_count=len(social),
@@ -1311,7 +1490,12 @@ def build_analysis(
         latest_summary=transcript_summary,
         prepared_vs_qa_note=prepared_vs_qa_note,
         speaker_analysis=all_speaker_analysis,
-        key_quotes=[quote for doc in normalized_documents for quote in doc.key_quotes][:10],
+        key_quotes=_select_key_quotes(
+            speaker_rows=all_speaker_analysis,
+            docs=normalized_documents,
+            settings=settings,
+            limit=10,
+        ),
         qa_pressure_points=pressure_points,
         transcripts=normalized_documents,
         speaker_confidence_profile=speaker_confidence_profile,
@@ -1391,8 +1575,8 @@ def build_analysis(
     sentiment_timeline: list[SentimentTimelinePoint] = []
     market_reaction = MarketReactionSection(
         balance_summary=(
-            f"Recent coverage skews {_stance_from_score(news_avg)} in news ({news_avg:+.3f}) and "
-            f"{_stance_from_score(social_avg)} in social ({social_avg:+.3f})."
+            f"Recent coverage skews {_stance_from_score(news_avg)} in news ({_format_signed_unit_pct(news_avg)}) and "
+            f"{_stance_from_score(social_avg)} in social ({_format_signed_unit_pct(social_avg)})."
         ),
         news_count=len(news),
         social_count=len(social),
