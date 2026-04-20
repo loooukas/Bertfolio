@@ -15,6 +15,7 @@ from finbert_site.openai_motley_search import (
     _extract_text_lines_relaxed,
     _extract_transcript_lines,
     _extract_transcript_lines_with_diagnostics,
+    _fetch_text_with_retries,
     _fetch_transcript_sections,
     _is_low_quality_structured_sections,
     _parse_speaker_sections_from_text,
@@ -150,16 +151,57 @@ def test_dedupe_links_normalizes_and_deduplicates() -> None:
 def test_extract_month_sitemap_urls_from_index_parses_month_entries() -> None:
     xml_text = """
     <sitemapindex>
-      <sitemap><loc>https://www.fool.com/sitemap/2026/04/</loc></sitemap>
+      <sitemap><loc>https://www.fool.com/sitemap/2026/04</loc></sitemap>
       <sitemap><loc>https://www.fool.com/sitemap/2026/03/</loc></sitemap>
       <sitemap><loc>https://www.fool.com/sitemap/authors/</loc></sitemap>
     </sitemapindex>
     """
     month_urls = _extract_month_sitemap_urls_from_index(xml_text)
     assert month_urls == {
-        "2026-04": "https://www.fool.com/sitemap/2026/04/",
-        "2026-03": "https://www.fool.com/sitemap/2026/03/",
+        "2026-04": "https://www.fool.com/sitemap/2026/04",
+        "2026-03": "https://www.fool.com/sitemap/2026/03",
     }
+
+
+def test_extract_month_sitemap_urls_from_index_supports_query_and_relative_urls() -> None:
+    xml_text = """
+    <sitemapindex>
+      <sitemap><loc>/sitemap/2026/01?</loc></sitemap>
+      <sitemap><loc>//www.fool.com/sitemap/2026/02?x=1</loc></sitemap>
+      <sitemap><loc>https://example.com/sitemap/2026/03</loc></sitemap>
+    </sitemapindex>
+    """
+    month_urls = _extract_month_sitemap_urls_from_index(xml_text)
+    assert month_urls == {
+        "2026-01": "https://www.fool.com/sitemap/2026/01",
+        "2026-02": "https://www.fool.com/sitemap/2026/02",
+    }
+
+
+def test_fetch_text_with_retries_does_not_retry_404(monkeypatch) -> None:
+    class _Resp404:
+        status_code = 404
+
+        def raise_for_status(self) -> None:
+            import requests
+
+            raise requests.HTTPError("404 Client Error", response=self)
+
+    calls = {"count": 0, "sleep": 0}
+
+    def _fake_get(*args, **kwargs):
+        calls["count"] += 1
+        return _Resp404()
+
+    monkeypatch.setattr("finbert_site.openai_motley_search.requests.get", _fake_get)
+    monkeypatch.setattr("finbert_site.openai_motley_search.time.sleep", lambda *_args, **_kwargs: calls.__setitem__("sleep", calls["sleep"] + 1))
+
+    with pytest.raises(RuntimeError) as exc:
+        _fetch_text_with_retries(url="https://www.fool.com/sitemap/2026/04", timeout_seconds=5, retries=3)
+
+    assert "http_error" in str(exc.value)
+    assert calls["count"] == 1
+    assert calls["sleep"] == 0
 
 
 def test_extract_participants_from_lines_role_first_format() -> None:

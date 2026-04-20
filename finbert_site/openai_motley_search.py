@@ -53,10 +53,7 @@ _URL_DATE_PATTERN = re.compile(r"/earnings/call-transcripts/(\d{4})/(\d{2})/(\d{
 _SPEAKER_LINE_PATTERN = re.compile(r"^([A-Za-z][A-Za-z .,'&()\-/]{1,90}):\s*(.+)$")
 _PLAUSIBLE_PERSON_NAME_PATTERN = re.compile(r"^[A-Z][A-Za-z.'\-]+(?: [A-Z][A-Za-z.'\-]+){0,5}$")
 _URL_EXTRACT_PATTERN = re.compile(r"https?://[^\s<>'\"\\]+", flags=re.IGNORECASE)
-_SITEMAP_MONTH_URL_PATTERN = re.compile(
-    r"^https?://(?:www\.)?fool\.com/sitemap/(20\d{2})/(0[1-9]|1[0-2])/?$",
-    flags=re.IGNORECASE,
-)
+_SITEMAP_MONTH_PATH_PATTERN = re.compile(r"^/sitemap/(20\d{2})/(0[1-9]|1[0-2])/?$", flags=re.IGNORECASE)
 
 _TRANSCRIPT_END_MARKERS = {
     "read next",
@@ -375,15 +372,28 @@ def _extract_loc_urls_from_xml(xml_text: str) -> list[str]:
 def _extract_month_sitemap_urls_from_index(xml_text: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for raw_url in _extract_loc_urls_from_xml(xml_text):
-        normalized = _normalize_url(raw_url)
-        if not normalized:
+        candidate = str(raw_url or "").strip()
+        if not candidate:
             continue
-        match = _SITEMAP_MONTH_URL_PATTERN.match(normalized.rstrip("/"))
+        if candidate.startswith("//"):
+            candidate = f"https:{candidate}"
+        elif candidate.startswith("/"):
+            candidate = f"https://www.fool.com{candidate}"
+        elif candidate.startswith("http://"):
+            candidate = "https://" + candidate[len("http://") :]
+        parsed = urlparse(candidate)
+        host = parsed.netloc.lower().strip()
+        if host.startswith("www."):
+            host = host[4:]
+        if host != "fool.com":
+            continue
+        match = _SITEMAP_MONTH_PATH_PATTERN.match(parsed.path or "")
         if not match:
             continue
         year = int(match.group(1))
         month = int(match.group(2))
-        out[_month_key(year, month)] = normalized
+        # Motley month sitemap endpoints resolve as /sitemap/YYYY/MM (no trailing slash).
+        out[_month_key(year, month)] = f"https://www.fool.com/sitemap/{year:04d}/{month:02d}"
     return out
 
 
@@ -406,7 +416,14 @@ def _fetch_text_with_retries(
         except Exception as exc:
             last_exc = exc
             category = _classify_failure_reason(exc)
-            if attempt < attempts:
+            retryable = True
+            if isinstance(exc, requests.HTTPError):
+                status_code = int(getattr(getattr(exc, "response", None), "status_code", 0) or 0)
+                # Retry only transient HTTP failures.
+                retryable = status_code in {408, 425, 429, 500, 502, 503, 504}
+            elif category in {"dns_error", "parse_error", "empty_source_set"}:
+                retryable = False
+            if attempt < attempts and retryable:
                 backoff = min(2.0, 0.4 * attempt)
                 log(
                     f"{log_prefix}request failed (category={category}, attempt={attempt}/{attempts}) "
@@ -418,6 +435,8 @@ def _fetch_text_with_retries(
                 f"{log_prefix}request failed (category={category}, attempt={attempt}/{attempts}) "
                 f"url={url} err={exc}"
             )
+            if not retryable:
+                break
     raise RuntimeError(f"{_classify_failure_reason(last_exc or RuntimeError('request failed'))}: {last_exc}")
 
 
@@ -2875,7 +2894,7 @@ def _discover_candidates_from_sitemaps(
     for year, month in _iter_recent_months(lookback_months):
         phase_trace["months_attempted"] += 1
         month_key = _month_key(year, month)
-        sitemap_url = month_url_map.get(month_key) or f"https://www.fool.com/sitemap/{year:04d}/{month:02d}/"
+        sitemap_url = month_url_map.get(month_key) or f"https://www.fool.com/sitemap/{year:04d}/{month:02d}"
         try:
             xml_text = _fetch_text_with_retries(
                 url=sitemap_url,
