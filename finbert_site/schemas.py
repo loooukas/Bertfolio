@@ -44,6 +44,15 @@ class FundamentalsSummary(BaseModel):
     trailing_pe: Optional[float] = None
     forward_pe: Optional[float] = None
     debt_to_equity: Optional[float] = None
+    beta: Optional[float] = None
+    enterprise_value: Optional[float] = None
+    total_debt: Optional[float] = None
+    total_cash: Optional[float] = None
+    current_ratio: Optional[float] = None
+    quick_ratio: Optional[float] = None
+    return_on_equity: Optional[float] = None
+    operating_margin: Optional[float] = None
+    free_cashflow: Optional[float] = None
     quarterly: list[FundamentalsSnapshot]
     revenue_qoq_growth_pct: Optional[float] = None
     eps_qoq_growth_pct: Optional[float] = None

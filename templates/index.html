@@ -25,7 +25,7 @@
             <button id="analyze-btn">Run Analysis</button>
           </div>
           <p id="query-note" class="query-note">
-            Snapshot loads first, then full transcript analysis. News: Alpha Vantage + Yahoo Finance. Social: Reddit + Stocktwits.
+            Full report loads once all sections complete. News: Alpha Vantage + Yahoo Finance. Social: Reddit + Stocktwits.
           </p>
         </section>
 
@@ -40,10 +40,14 @@
             <span class="ring ring-c"></span>
           </div>
           <p class="loading-kicker">Booting Analysis</p>
-          <h2 id="loading-title">Building sentiment snapshot…</h2>
+          <h2 id="loading-title">Starting full analysis…</h2>
           <p id="loading-subtitle" class="loading-subtitle">
             Pulling high-volume news and social signals first.
           </p>
+          <div class="loading-progress-track" aria-hidden="true">
+            <div id="loading-progress-bar" class="loading-progress-bar"></div>
+          </div>
+          <div id="loading-progress-list" class="loading-progress-list"></div>
         </div>
       </section>
 
@@ -242,6 +246,8 @@
         loadingOverlay: document.getElementById("loading-overlay"),
         loadingTitle: document.getElementById("loading-title"),
         loadingSubtitle: document.getElementById("loading-subtitle"),
+        loadingProgressBar: document.getElementById("loading-progress-bar"),
+        loadingProgressList: document.getElementById("loading-progress-list"),
         tickerInput: document.getElementById("ticker"),
         analyzeBtn: document.getElementById("analyze-btn"),
         sectionNav: document.getElementById("section-nav"),
@@ -431,6 +437,69 @@
             }).join("")}
           </div>
         `;
+        renderLoadingProgress();
+      }
+
+      function renderLoadingProgress() {
+        const labels = state.uiCopy?.section_labels || {
+          overview: "Overview",
+          transcript: "Transcript",
+          market_reaction: "Market Reaction",
+          fundamentals: "Fundamentals",
+          data_audit: "Data Audit",
+        };
+        const textFor = (status) => {
+          if (status === "done") return "Ready";
+          if (status === "loading") return "Loading";
+          if (status === "error") return "Error";
+          return "Queued";
+        };
+
+        const doneCount = SECTION_ORDER.filter((key) => state.sectionProgress[key] === "done").length;
+        const total = SECTION_ORDER.length || 1;
+        const pct = Math.max(0, Math.min(100, Math.round((doneCount / total) * 100)));
+        elements.loadingProgressBar.style.width = `${pct}%`;
+        elements.loadingProgressList.innerHTML = SECTION_ORDER.map((key) => {
+          const status = state.sectionProgress[key] || "pending";
+          return `
+            <div class="loading-progress-row">
+              <span class="name">${labels[key] || key}</span>
+              <span class="state ${status}">${textFor(status)}</span>
+            </div>
+          `;
+        }).join("");
+      }
+
+      function startProgressTicker() {
+        const stageOrder = ["overview", "market_reaction", "transcript", "fundamentals", "data_audit"];
+        const titles = {
+          overview: "Running sentiment + reaction pipeline…",
+          market_reaction: "Scoring news and social feeds…",
+          transcript: "Parsing transcript pipeline…",
+          fundamentals: "Computing fundamentals metrics…",
+          data_audit: "Finalizing data audit and report…",
+        };
+        let idx = 0;
+        markSection(stageOrder[idx], "loading");
+        setLoadingOverlay(true, titles[stageOrder[idx]], "Preparing the complete report.");
+
+        const timer = setInterval(() => {
+          if (idx >= stageOrder.length - 1) {
+            return;
+          }
+          const current = stageOrder[idx];
+          if (state.sectionProgress[current] === "loading") {
+            markSection(current, "done");
+          }
+          idx += 1;
+          const next = stageOrder[idx];
+          if (state.sectionProgress[next] !== "done") {
+            markSection(next, "loading");
+          }
+          setLoadingOverlay(true, titles[next], "Preparing the complete report.");
+        }, 1400);
+
+        return () => clearInterval(timer);
       }
 
       function clearList(listEl) {
@@ -523,6 +592,7 @@
       }
 
       function renderOverview(payload) {
+        const transcript = payload.transcript || {};
         elements.overviewSummary.textContent = payload.overview.executive_summary;
 
         clearList(elements.overviewTakeaways);
@@ -542,8 +612,8 @@
           .join("");
 
         destroyChart(state.charts.speaker);
-        const profile = payload.transcript.speaker_confidence_profile || [];
-        const canChart = Boolean(payload.transcript.chart_enabled && profile.length >= 2);
+        const profile = transcript.speaker_confidence_profile || [];
+        const canChart = Boolean(transcript.chart_enabled && profile.length >= 2);
         setChartVisibility(elements.speakerChartSurface, elements.speakerChartEmpty, canChart);
 
         if (canChart) {
@@ -883,16 +953,6 @@
         switchSection("overview");
       }
 
-      function renderSnapshot(snapshot) {
-        state.payload = snapshot;
-        elements.workspace.classList.remove("hidden");
-        applyCopy(snapshot.ui_copy);
-        renderRunContext(snapshot);
-        renderOverview(snapshot);
-        renderMarketReaction(snapshot);
-        switchSection("overview");
-      }
-
       async function renderFullWithProgress(payload) {
         state.payload = payload;
         applyCopy(payload.ui_copy);
@@ -935,48 +995,34 @@
         elements.status.className = "status-line";
         elements.status.textContent = `Analyzing ${ticker}...`;
         initSectionProgress();
-        markSection("overview", "loading");
+        elements.workspace.classList.add("hidden");
         setLoadingOverlay(
           true,
-          "Building sentiment snapshot…",
-          "Pulling high-volume news and social signals first."
+          "Starting full analysis…",
+          "Preparing the complete report."
         );
+        const stopTicker = startProgressTicker();
 
         try {
-          const snapshotResp = await fetch(`/api/analyze/snapshot?ticker=${encodeURIComponent(ticker)}`);
-          const snapshot = await snapshotResp.json();
-          if (!snapshotResp.ok) {
-            throw new Error(snapshot.detail || "Snapshot analysis failed.");
-          }
-
-          renderSnapshot(snapshot);
-          resetDeferredSections();
-          markSection("overview", "done");
-          markSection("market_reaction", "loading");
-          markSection("transcript", "loading");
-          markSection("fundamentals", "loading");
-          markSection("data_audit", "loading");
-
-          setLoadingOverlay(
-            false,
-            "Building sentiment snapshot…",
-            "Pulling high-volume news and social signals first."
-          );
-          elements.status.className = "status-line";
-          elements.status.textContent = `${ticker} snapshot ready. Transcript and remaining sections are still processing…`;
-
           const response = await fetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}`);
           const payload = await response.json();
           if (!response.ok) {
             throw new Error(payload.detail || "Analysis failed.");
           }
 
+          stopTicker();
+          SECTION_ORDER.forEach((key) => markSection(key, "done"));
+          setLoadingOverlay(true, "Finalizing report…", "All sections computed. Rendering workspace.");
+          await sleep(220);
           await renderFullWithProgress(payload);
+          elements.workspace.classList.remove("hidden");
+          setLoadingOverlay(false, "", "");
           elements.status.className = "status-line ok";
           const overall = (payload.overall_sentiment_label || "mixed").replaceAll("_", " ");
           elements.status.textContent =
             `${payload.ticker} · ${overall} (${fmtNum(payload.overall_sentiment_score, 3)}) · transcripts ${payload.transcript.transcript_count_found}/${payload.transcript.transcript_count_requested}`;
         } catch (error) {
+          stopTicker();
           elements.status.className = "status-line error";
           elements.status.textContent = `Error: ${error.message}`;
           SECTION_ORDER.forEach((key) => {

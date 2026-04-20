@@ -14,6 +14,8 @@ The app is organized into exactly 5 primary sections:
 
 Execution-role UI language (trader/risk/manager workflows) is removed from the primary interface. Legacy API fields remain for one migration window.
 
+The UI now keeps a full-screen progress experience until every section finishes, then reveals the full report in one pass.
+
 ## Quick Start
 
 ```bash
@@ -121,6 +123,21 @@ Volume controls:
 
 - `NEWS_LIMIT`, `NEWS_POOL_SIZE`, `NEWS_LOOKBACK_DAYS`
 - `SOCIAL_LIMIT`, `SOCIAL_POOL_SIZE`, `SOCIAL_LOOKBACK_DAYS`
+
+### Expanded Fundamentals Metrics
+
+Fundamentals now include additional metrics such as:
+
+- `beta`
+- `debt_to_equity`
+- `current_ratio`
+- `quick_ratio`
+- `return_on_equity`
+- `operating_margin`
+- `enterprise_value`
+- `total_debt`
+- `total_cash`
+- `free_cashflow`
 
 ## API Contract
 

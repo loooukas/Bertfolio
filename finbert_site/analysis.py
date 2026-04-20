@@ -140,7 +140,7 @@ UI_COPY = CopyDictionary(
     },
     microcopy={
         "query_note": (
-            "Snapshot loads first, then full transcript analysis. "
+            "Full report loads after all sections finish. "
             "Transcripts: Motley Fool. News: Alpha Vantage + Yahoo Finance. "
             "Social: Reddit + Stocktwits (recency-weighted)."
         ),
@@ -205,6 +205,18 @@ def _format_float(value: Optional[float]) -> str:
     if value is None:
         return "n/a"
     return f"{value:.2f}"
+
+
+def _format_ratio(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}x"
+
+
+def _format_decimal_pct(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value * 100:.1f}%"
 
 
 def _format_market_cap(value: Optional[float]) -> str:
@@ -1040,6 +1052,15 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         trailing_pe=fundamentals_dict.get("trailing_pe"),
         forward_pe=fundamentals_dict.get("forward_pe"),
         debt_to_equity=fundamentals_dict.get("debt_to_equity"),
+        beta=fundamentals_dict.get("beta"),
+        enterprise_value=fundamentals_dict.get("enterprise_value"),
+        total_debt=fundamentals_dict.get("total_debt"),
+        total_cash=fundamentals_dict.get("total_cash"),
+        current_ratio=fundamentals_dict.get("current_ratio"),
+        quick_ratio=fundamentals_dict.get("quick_ratio"),
+        return_on_equity=fundamentals_dict.get("return_on_equity"),
+        operating_margin=fundamentals_dict.get("operating_margin"),
+        free_cashflow=fundamentals_dict.get("free_cashflow"),
         quarterly=[FundamentalsSnapshot(**q) for q in fundamentals_dict.get("quarterly", [])],
         revenue_qoq_growth_pct=fundamentals_dict.get("revenue_qoq_growth_pct"),
         eps_qoq_growth_pct=fundamentals_dict.get("eps_qoq_growth_pct"),
@@ -1220,13 +1241,25 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         operating_context=(
             f"Operating context combines valuation and quarterly momentum. Market cap is {_format_market_cap(fundamentals.market_cap)}. "
             f"Trailing PE is {_format_float(fundamentals.trailing_pe)}, "
-            f"forward PE is {_format_float(fundamentals.forward_pe)}, and revenue QoQ growth is {_format_pct(fundamentals.revenue_qoq_growth_pct)}."
+            f"forward PE is {_format_float(fundamentals.forward_pe)}, beta is {_format_float(fundamentals.beta)}, "
+            f"and debt/equity is {_format_float(fundamentals.debt_to_equity)}. "
+            f"Revenue QoQ growth is {_format_pct(fundamentals.revenue_qoq_growth_pct)} and EPS QoQ is {_format_pct(fundamentals.eps_qoq_growth_pct)}."
         ),
         metrics=[
             CompactMetric(key="market_cap", label="Market Cap", value=_format_market_cap(fundamentals.market_cap)),
             CompactMetric(key="trailing_pe", label="Trailing PE", value=_format_float(fundamentals.trailing_pe)),
             CompactMetric(key="forward_pe", label="Forward PE", value=_format_float(fundamentals.forward_pe)),
+            CompactMetric(key="beta", label="Beta", value=_format_float(fundamentals.beta)),
+            CompactMetric(key="debt_to_equity", label="Debt / Equity", value=_format_float(fundamentals.debt_to_equity)),
+            CompactMetric(key="current_ratio", label="Current Ratio", value=_format_ratio(fundamentals.current_ratio)),
+            CompactMetric(key="quick_ratio", label="Quick Ratio", value=_format_ratio(fundamentals.quick_ratio)),
+            CompactMetric(key="roe", label="Return on Equity", value=_format_decimal_pct(fundamentals.return_on_equity)),
+            CompactMetric(key="operating_margin", label="Operating Margin", value=_format_decimal_pct(fundamentals.operating_margin)),
+            CompactMetric(key="enterprise_value", label="Enterprise Value", value=_format_market_cap(fundamentals.enterprise_value)),
+            CompactMetric(key="total_debt", label="Total Debt", value=_format_market_cap(fundamentals.total_debt)),
+            CompactMetric(key="total_cash", label="Total Cash", value=_format_market_cap(fundamentals.total_cash)),
             CompactMetric(key="revenue_qoq", label="Revenue QoQ", value=_format_pct(fundamentals.revenue_qoq_growth_pct)),
+            CompactMetric(key="eps_qoq", label="EPS QoQ", value=_format_pct(fundamentals.eps_qoq_growth_pct)),
         ],
         table=fundamentals.quarterly,
         trend_series=fundamentals_trend,
