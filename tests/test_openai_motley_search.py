@@ -20,6 +20,7 @@ from finbert_site.openai_motley_search import (
     _parse_transcript_from_html,
     _pick_best_candidate_by_quarter,
     _quarter_window,
+    _is_retryable_openai_structuring_error,
     _select_most_recent_candidates,
     discover_last_quarter_links,
     infer_year_quarter,
@@ -224,6 +225,18 @@ def test_low_quality_structured_sections_can_allow_single_section_per_segment() 
     assert default_reason == "too_few_sections"
     segment_low, _ = _is_low_quality_structured_sections(sections, min_sections=1)
     assert segment_low is False
+
+
+def test_retryable_openai_structuring_error_marks_json_decode_as_non_retryable() -> None:
+    import json
+
+    exc = json.JSONDecodeError("Unterminated string", doc='{"a":"x', pos=5)
+    assert _is_retryable_openai_structuring_error(exc) is False
+
+
+def test_retryable_openai_structuring_error_marks_connection_reset_as_retryable() -> None:
+    exc = RuntimeError("HTTPSConnectionPool(host='api.openai.com', port=443): Read timed out.")
+    assert _is_retryable_openai_structuring_error(exc) is True
 
 
 def test_select_most_recent_candidates_from_candidate_pool() -> None:

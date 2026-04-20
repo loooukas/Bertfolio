@@ -1662,6 +1662,24 @@ def _extract_structured_output(response_payload: dict[str, Any]) -> dict[str, An
     raise RuntimeError("OpenAI response did not include parseable structured JSON output.")
 
 
+def _is_retryable_openai_structuring_error(exc: Exception) -> bool:
+    if isinstance(exc, json.JSONDecodeError):
+        return False
+
+    message = str(exc).lower()
+    non_retry_markers = (
+        "unterminated string",
+        "expecting value",
+        "expecting property name enclosed in double quotes",
+        "extra data",
+        "parseable structured json output",
+    )
+    if any(marker in message for marker in non_retry_markers):
+        return False
+
+    return True
+
+
 def _candidate_title_from_url(url: str, ticker: str) -> str:
     parsed = urlparse(url)
     slug = parsed.path.rstrip("/").split("/")[-1]
@@ -2191,6 +2209,12 @@ def _structure_transcript_with_openai(
                     "scrape: OpenAI structuring failed "
                     f"(segment {segment_index + 1}/{len(segments)}, attempt {attempt}): {exc}"
                 )
+                if not _is_retryable_openai_structuring_error(exc):
+                    log(
+                        "scrape: OpenAI structuring error is non-retryable; "
+                        f"aborting retries for segment {segment_index + 1}"
+                    )
+                    break
                 if attempt < retry_attempts:
                     backoff_seconds = min(4.0, 1.2 * attempt)
                     time.sleep(backoff_seconds)
@@ -2926,6 +2950,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
 
     reports: list[dict[str, Any]] = []
     had_error = False
+    interrupted = False
     log_fn = _default_logger if args.verbose else None
 
     if args.verbose:
@@ -2975,6 +3000,18 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
                     f"{ticker}: done (found={len(report.get('found_quarters', []))}, "
                     f"links={len(report.get('links', []))})"
                 )
+        except KeyboardInterrupt:
+            interrupted = True
+            had_error = True
+            if args.verbose:
+                _default_logger(f"{ticker}: interrupted by user; returning partial results")
+            reports.append(
+                {
+                    "ticker": _normalize_ticker(ticker),
+                    "error": "Interrupted by user.",
+                }
+            )
+            break
         except Exception as exc:
             had_error = True
             if args.verbose:
@@ -2991,6 +3028,8 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         "model": args.model,
         "results": reports,
     }
+    if interrupted:
+        output["interrupted"] = True
 
     if args.pretty:
         print(json.dumps(output, indent=2))
@@ -3007,6 +3046,8 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
     if args.verbose:
         _default_logger(f"Run complete (had_error={had_error})")
 
+    if interrupted:
+        return 130
     return 1 if had_error else 0
 
 
