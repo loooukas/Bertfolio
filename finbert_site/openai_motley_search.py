@@ -1548,6 +1548,11 @@ def _select_most_recent_candidates(report: dict[str, Any], count: int) -> list[d
             if len(selected) >= target_count:
                 return selected
 
+    # Keep scrape selection strict to the requested quarter window when those rows exist.
+    # If fewer than requested quarters were resolved, do not backfill with older quarters.
+    if selected:
+        return selected
+
     pool = report.get("candidate_pool")
     if not isinstance(pool, list):
         return selected
@@ -1943,6 +1948,14 @@ def _build_request_payload(
             max_candidates=max_candidates,
             missing_quarters=missing_quarters,
         ),
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "motley_discovery_candidates",
+                "strict": True,
+                "schema": _build_response_schema(),
+            }
+        },
         "tools": [_build_tool(tool_type)],
         "include": ["web_search_call.action.sources"],
     }
@@ -2086,21 +2099,70 @@ def _candidate_title_from_url(url: str, ticker: str) -> str:
     return title
 
 
+def _parse_quarter_label(label: str) -> Optional[tuple[int, int]]:
+    match = re.fullmatch(r"\s*(20\d{2})-q([1-4])\s*", str(label or ""), flags=re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _quarter_targets_from_labels(labels: Optional[list[str]]) -> set[tuple[int, int]]:
+    out: set[tuple[int, int]] = set()
+    for label in labels or []:
+        parsed = _parse_quarter_label(str(label))
+        if parsed is not None:
+            out.add(parsed)
+    return out
+
+
+def _candidate_matches_quarter_targets(
+    *,
+    title: str,
+    url: str,
+    published_date: str,
+    quarter_targets: set[tuple[int, int]],
+) -> bool:
+    if not quarter_targets:
+        return True
+    year, quarter = infer_year_quarter(title=title, url=url, published_date=published_date)
+    if year is None or quarter is None:
+        return False
+    return (year, quarter) in quarter_targets
+
+
 def _fallback_candidates_from_sources(
     *,
     ticker: str,
     response_payload: dict[str, Any],
     max_candidates: int,
+    missing_quarters: Optional[list[str]] = None,
+    company_tokens: Optional[set[str]] = None,
 ) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
+    quarter_targets = _quarter_targets_from_labels(missing_quarters)
+    company_tokens = set(company_tokens or set())
     for url in _extract_sources(response_payload):
         if not _is_motley_transcript_url(url):
             continue
+        title = _candidate_title_from_url(url=url, ticker=ticker)
+        published_date = _date_from_motley_url(url)
+        if quarter_targets:
+            explicit_match = _candidate_has_explicit_ticker(ticker=ticker, title=title, url=url)
+            alias_match = _candidate_matches_company_tokens(title=title, url=url, company_tokens=company_tokens)
+            if not explicit_match and not alias_match:
+                continue
+            if not _candidate_matches_quarter_targets(
+                title=title,
+                url=url,
+                published_date=published_date,
+                quarter_targets=quarter_targets,
+            ):
+                continue
         out.append(
             {
-                "title": _candidate_title_from_url(url=url, ticker=ticker),
+                "title": title,
                 "url": url,
-                "published_date": _date_from_motley_url(url),
+                "published_date": published_date,
                 "source": "openai_web_search",
             }
         )
@@ -3127,6 +3189,7 @@ def _discover_candidates_with_openai(
     timeout_seconds: int,
     max_candidates: int,
     missing_quarters: Optional[list[str]],
+    company_tokens: Optional[set[str]] = None,
     retry_attempts: int,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> tuple[list[dict[str, str]], dict[str, Any]]:
@@ -3212,12 +3275,16 @@ def _discover_candidates_with_openai(
             if isinstance(item, dict):
                 output_item_types.append(str(item.get("type") or "unknown"))
     output_text_chars = len(str(response_payload.get("output_text") or ""))
+    quarter_targets = _quarter_targets_from_labels(missing_quarters)
+    company_tokens = set(company_tokens or set())
 
     search_sources = _extract_sources(response_payload)
     raw_candidates = _fallback_candidates_from_sources(
         ticker=ticker,
         response_payload=response_payload,
         max_candidates=max_candidates,
+        missing_quarters=missing_quarters,
+        company_tokens=company_tokens,
     )
     if raw_candidates:
         log(f"{ticker}: built {len(raw_candidates)} raw candidates from OpenAI web-search sources")
@@ -3236,6 +3303,25 @@ def _discover_candidates_with_openai(
                         "published_date": str(item.get("published_date") or "").strip(),
                         "source": "openai_structured_output",
                     }
+                    if quarter_targets:
+                        c_title = candidate["title"]
+                        c_url = candidate["url"]
+                        c_date = candidate["published_date"]
+                        explicit_match = _candidate_has_explicit_ticker(ticker=ticker, title=c_title, url=c_url)
+                        alias_match = _candidate_matches_company_tokens(
+                            title=c_title,
+                            url=c_url,
+                            company_tokens=company_tokens,
+                        )
+                        if not explicit_match and not alias_match:
+                            continue
+                        if not _candidate_matches_quarter_targets(
+                            title=c_title,
+                            url=c_url,
+                            published_date=c_date,
+                            quarter_targets=quarter_targets,
+                        ):
+                            continue
                     raw_candidates.append(candidate)
                 log(f"{ticker}: used structured OpenAI candidates={len(raw_candidates)}")
         except Exception as exc:
@@ -3453,10 +3539,11 @@ def discover_last_quarter_links(
     if mode in {"hybrid", "openai_only"} and (mode == "openai_only" or current_missing):
         _log_phase(log_fn, "DISCOVERY:OPENAI_FALLBACK", ticker=symbol)
         try:
-            unresolved_for_openai = list(current_missing) if mode == "hybrid" else list(
-                status_payload["window_status"]["missing"]
-            )
-            openai_candidate_budget = min(max_candidates, max(4, len(unresolved_for_openai) * 4))
+            unresolved_for_openai = list(current_missing) if mode == "hybrid" else []
+            if unresolved_for_openai:
+                openai_candidate_budget = min(max_candidates, max(4, len(unresolved_for_openai) * 4))
+            else:
+                openai_candidate_budget = max_candidates
             log(
                 f"{symbol}: DISCOVERY:OPENAI_FALLBACK unresolved_quarters="
                 f"{','.join(unresolved_for_openai) if unresolved_for_openai else 'all'} "
@@ -3470,6 +3557,7 @@ def discover_last_quarter_links(
                 timeout_seconds=timeout_seconds,
                 max_candidates=openai_candidate_budget,
                 missing_quarters=unresolved_for_openai,
+                company_tokens=alias_tokens,
                 retry_attempts=retry_attempts,
                 log_fn=log_fn,
             )

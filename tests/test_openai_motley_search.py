@@ -16,6 +16,7 @@ from finbert_site.openai_motley_search import (
     _extract_transcript_lines,
     _extract_transcript_lines_with_diagnostics,
     _fetch_text_with_retries,
+    _fallback_candidates_from_sources,
     _fetch_transcript_sections,
     _is_low_quality_structured_sections,
     _parse_speaker_sections_from_text,
@@ -146,6 +147,38 @@ def test_extract_sources_parses_urls_from_output_text_fallback() -> None:
         "https://www.fool.com/earnings/call-transcripts/2026/01/28/microsoft-msft-q2-2026-earnings-call-transcript/",
         "https://www.fool.com/earnings/call-transcripts/2025/10/29/microsoft-msft-q1-2026-earnings-call-transcript/",
     ]
+
+
+def test_fallback_candidates_from_sources_filters_to_missing_quarter_and_ticker() -> None:
+    payload = {
+        "output": [
+            {
+                "type": "web_search_call",
+                "action": {
+                    "sources": [
+                        {
+                            "url": "https://www.fool.com/earnings/call-transcripts/2025/04/30/microsoft-msft-q3-2025-earnings-call-transcript/"
+                        },
+                        {
+                            "url": "https://www.fool.com/earnings/call-transcripts/2025/10/30/insight-nsit-q3-2025-earnings-call-transcript/"
+                        },
+                        {
+                            "url": "https://www.fool.com/earnings/call-transcripts/2025/01/29/microsoft-msft-q2-2025-earnings-call-transcript/"
+                        },
+                    ]
+                },
+            }
+        ]
+    }
+    candidates = _fallback_candidates_from_sources(
+        ticker="MSFT",
+        response_payload=payload,
+        max_candidates=10,
+        missing_quarters=["2025-Q3"],
+        company_tokens={"microsoft", "msft"},
+    )
+    assert len(candidates) == 1
+    assert "microsoft-msft-q3-2025" in candidates[0]["url"]
 
 
 def test_dedupe_links_normalizes_and_deduplicates() -> None:
@@ -426,7 +459,7 @@ def test_select_most_recent_candidates_from_candidate_pool() -> None:
     assert [item["quarter"] for item in selected] == ["2026-Q1", "2025-Q4"]
 
 
-def test_select_most_recent_candidates_tops_up_from_pool_when_found_links_are_short() -> None:
+def test_select_most_recent_candidates_does_not_top_up_when_found_links_are_short() -> None:
     report = {
         "found_transcript_links": [
             {
@@ -456,7 +489,7 @@ def test_select_most_recent_candidates_tops_up_from_pool_when_found_links_are_sh
         ],
     }
     selected = _select_most_recent_candidates(report, 4)
-    assert [item["quarter"] for item in selected] == ["2026-Q1", "2025-Q4", "2025-Q3", "2025-Q2"]
+    assert [item["quarter"] for item in selected] == ["2026-Q1", "2025-Q4", "2025-Q3"]
 
 
 def test_scrape_recent_transcripts_for_report_uses_selected_links(monkeypatch) -> None:
