@@ -86,7 +86,7 @@ def test_build_analysis_returns_new_sections_and_legacy_fields(monkeypatch):
 
     monkeypatch.setattr(
         analysis,
-        "fetch_news_alpha_vantage",
+        "fetch_news_multi_source",
         lambda symbol, settings, limit=16, pool_size=80, company_name=None, lookback_days=14: (
             [
                 NewsRecord(
@@ -106,7 +106,7 @@ def test_build_analysis_returns_new_sections_and_legacy_fields(monkeypatch):
 
     monkeypatch.setattr(
         analysis,
-        "fetch_social_reddit",
+        "fetch_social_multi_source",
         lambda symbol, settings, limit=16, pool_size=120, company_name=None, lookback_days=14: (
             [
                 SocialRecord(

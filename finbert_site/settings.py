@@ -51,5 +51,13 @@ class Settings:
         os.getenv("TRANSCRIPT_SENTIMENT_SEGMENT_OVERLAP_SENTENCES", "1")
     )
 
+    news_limit: int = int(os.getenv("NEWS_LIMIT", "36"))
+    news_pool_size: int = int(os.getenv("NEWS_POOL_SIZE", "220"))
+    news_lookback_days: int = int(os.getenv("NEWS_LOOKBACK_DAYS", "21"))
+
+    social_limit: int = int(os.getenv("SOCIAL_LIMIT", "36"))
+    social_pool_size: int = int(os.getenv("SOCIAL_POOL_SIZE", "260"))
+    social_lookback_days: int = int(os.getenv("SOCIAL_LOOKBACK_DAYS", "21"))
+
 
 settings = Settings()

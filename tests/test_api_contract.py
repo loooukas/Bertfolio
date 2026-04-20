@@ -201,3 +201,44 @@ def test_api_contract_includes_new_sections_and_legacy_fields(monkeypatch):
         "manager_decision",
     ]:
         assert key in payload
+
+
+def test_snapshot_endpoint_returns_preview_payload(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "build_sentiment_snapshot",
+        lambda ticker, settings: {
+            "ticker": "AAPL",
+            "company_name": "Apple Inc",
+            "overall_sentiment_score": 0.12,
+            "overall_sentiment_label": "cautiously_bullish",
+            "overview": {
+                "ticker": "AAPL",
+                "company_name": "Apple Inc",
+                "stance_label": "bullish",
+                "executive_summary": "snapshot summary",
+                "key_takeaways": ["takeaway"],
+                "metrics": [],
+            },
+            "market_reaction": {
+                "balance_summary": "snapshot market",
+                "news_count": 4,
+                "social_count": 3,
+                "news_items": [],
+                "social_items": [],
+                "chart_enabled": False,
+                "sparse_note": None,
+            },
+            "warnings": [],
+            "ui_copy": {"section_labels": {"overview": "Overview"}},
+        },
+    )
+
+    client = TestClient(app)
+    response = client.get("/api/analyze/snapshot", params={"ticker": "AAPL"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ticker"] == "AAPL"
+    assert "overview" in payload
+    assert "market_reaction" in payload

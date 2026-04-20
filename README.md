@@ -14,6 +14,19 @@ The app is organized into exactly 5 primary sections:
 
 Execution-role UI language (trader/risk/manager workflows) is removed from the primary interface. Legacy API fields remain for one migration window.
 
+## Quick Start
+
+```bash
+cd <local-repo-path>
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+uvicorn finbert_site.main:app --reload
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
+
 ## What This Refactor Implements
 
 - Transcript-first workspace IA with left-rail section navigation
@@ -92,6 +105,23 @@ Defaults:
 - `TRANSCRIPT_SENTIMENT_SEGMENT_MIN=180`
 - `TRANSCRIPT_SENTIMENT_SEGMENT_OVERLAP_SENTENCES=1`
 
+### Expanded News + Social Coverage
+
+News is now combined from:
+
+- Alpha Vantage (`NEWS_SENTIMENT`)
+- Yahoo Finance (`yfinance` news feed)
+
+Social is now combined from:
+
+- Reddit
+- Stocktwits
+
+Volume controls:
+
+- `NEWS_LIMIT`, `NEWS_POOL_SIZE`, `NEWS_LOOKBACK_DAYS`
+- `SOCIAL_LIMIT`, `SOCIAL_POOL_SIZE`, `SOCIAL_LOOKBACK_DAYS`
+
 ## API Contract
 
 `GET /api/analyze?ticker=AAPL`
@@ -137,6 +167,7 @@ Optional keys:
 - `TRANSCRIPT_PIPELINE_FALLBACK_TO_LEGACY` (`1` or `0`)
 - `MOTLEY_*` discovery/scrape controls in `.env.example`
 - `TRANSCRIPT_SENTIMENT_SEGMENT_*` segmentation controls in `.env.example`
+- `NEWS_*` and `SOCIAL_*` controls in `.env.example` for higher feed volume
 
 4. Start app
 

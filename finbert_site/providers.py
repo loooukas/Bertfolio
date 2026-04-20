@@ -853,6 +853,152 @@ def fetch_news_alpha_vantage(
     return shown, warnings, FeedFetchAudit(fetched_pool=len(records), deduped_pool=len(deduped), displayed_count=len(shown))
 
 
+def fetch_news_yahoo_finance(
+    symbol: str,
+    settings: Settings,
+    limit: int = 12,
+    pool_size: int = 50,
+    company_name: Optional[str] = None,
+    lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+) -> Tuple[list[NewsRecord], list[str], FeedFetchAudit]:
+    warnings: list[str] = []
+    now_utc = datetime.now(timezone.utc)
+    lookback_floor = now_utc - timedelta(days=max(lookback_days, 1))
+
+    try:
+        ticker = yf.Ticker(symbol)
+        raw_news = ticker.news
+    except Exception as exc:
+        return [], [f"Yahoo Finance news error for {symbol}: {exc}"], FeedFetchAudit(0, 0, 0)
+
+    if not isinstance(raw_news, list):
+        return [], [f"No Yahoo Finance news feed available for {symbol}"], FeedFetchAudit(0, 0, 0)
+
+    scored_records: list[tuple[float, NewsRecord]] = []
+    for item in raw_news[: max(pool_size, limit)]:
+        if not isinstance(item, dict):
+            continue
+
+        title = str(item.get("title") or item.get("shortTitle") or "").strip()
+        summary = str(item.get("summary") or "").strip()
+        url = str(item.get("link") or item.get("url") or "").strip()
+        if not title or not url:
+            continue
+
+        published_dt: Optional[datetime] = None
+        publish_epoch = item.get("providerPublishTime")
+        if publish_epoch is not None:
+            try:
+                published_dt = datetime.fromtimestamp(int(publish_epoch), tz=timezone.utc)
+            except Exception:
+                published_dt = None
+        if published_dt and published_dt < lookback_floor:
+            continue
+
+        relevance = _news_relevance(
+            symbol=symbol,
+            company_name=company_name,
+            item=item,
+            title=title,
+            summary=summary,
+        )
+        if relevance <= 0:
+            continue
+
+        recency = _recency_weight(published_dt, lookback_days)
+        rank_score = round(relevance * 0.72 + recency * 1.28, 4)
+
+        scored_records.append(
+            (
+                rank_score,
+                NewsRecord(
+                    title=title,
+                    summary=summary,
+                    url=url,
+                    source=str(item.get("publisher") or "Yahoo Finance"),
+                    time_published=published_dt.strftime("%Y%m%dT%H%M%S") if published_dt else None,
+                    sentiment_score=0.0,
+                    sentiment_label="neutral",
+                ),
+            )
+        )
+
+    scored_records.sort(key=lambda row: row[0], reverse=True)
+    strict = [record for score, record in scored_records if score >= _MIN_NEWS_RELEVANCE]
+    if len(strict) < max(4, limit // 2):
+        strict = [record for score, record in scored_records if score >= 0.75]
+    if len(strict) < max(3, limit // 3):
+        strict = [record for _, record in scored_records]
+
+    deduped = _dedupe_news(strict)
+    shown = deduped[:limit]
+
+    if not shown:
+        warnings.append(f"No Yahoo Finance news items returned for {symbol}")
+
+    return shown, warnings, FeedFetchAudit(fetched_pool=len(strict), deduped_pool=len(deduped), displayed_count=len(shown))
+
+
+def fetch_news_multi_source(
+    symbol: str,
+    settings: Settings,
+    limit: int = 24,
+    pool_size: int = 120,
+    company_name: Optional[str] = None,
+    lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+) -> Tuple[list[NewsRecord], list[str], FeedFetchAudit]:
+    source_limit = max(limit, 1)
+    source_pool = max(pool_size, source_limit)
+
+    alpha_records, alpha_warnings, alpha_audit = fetch_news_alpha_vantage(
+        symbol=symbol,
+        settings=settings,
+        limit=source_limit,
+        pool_size=source_pool,
+        company_name=company_name,
+        lookback_days=lookback_days,
+    )
+    yahoo_records, yahoo_warnings, yahoo_audit = fetch_news_yahoo_finance(
+        symbol=symbol,
+        settings=settings,
+        limit=source_limit,
+        pool_size=source_pool,
+        company_name=company_name,
+        lookback_days=lookback_days,
+    )
+
+    combined = alpha_records + yahoo_records
+    deduped = _dedupe_news(combined)
+
+    # Keep the most recent items after dedupe.
+    def _news_sort_key(record: NewsRecord) -> datetime:
+        parsed = _safe_parse_date(record.time_published)
+        if parsed is None:
+            return datetime(1970, 1, 1, tzinfo=timezone.utc)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    deduped.sort(key=_news_sort_key, reverse=True)
+    shown = deduped[:limit]
+
+    warnings: list[str] = []
+    warnings.extend(alpha_warnings)
+    warnings.extend(yahoo_warnings)
+    if not shown:
+        warnings.append(f"No combined news items were available for {symbol}.")
+
+    return (
+        shown,
+        warnings,
+        FeedFetchAudit(
+            fetched_pool=alpha_audit.fetched_pool + yahoo_audit.fetched_pool,
+            deduped_pool=len(deduped),
+            displayed_count=len(shown),
+        ),
+    )
+
+
 def _finance_relevance_score(
     symbol: str,
     title: str,
@@ -1031,6 +1177,156 @@ def fetch_social_reddit(
         return shown, warnings, FeedFetchAudit(fetched_pool=len(records), deduped_pool=len(deduped), displayed_count=len(shown))
     except Exception as exc:
         return [], [f"Reddit social feed error for {symbol}: {exc}"], FeedFetchAudit(0, 0, 0)
+
+
+def fetch_social_stocktwits(
+    symbol: str,
+    settings: Settings,
+    limit: int = 12,
+    pool_size: int = 80,
+    company_name: Optional[str] = None,
+    lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+) -> Tuple[list[SocialRecord], list[str], FeedFetchAudit]:
+    warnings: list[str] = []
+    endpoint = f"https://api.stocktwits.com/api/2/streams/symbol/{symbol}.json"
+    now = datetime.now(timezone.utc)
+    lookback_floor = now - timedelta(days=max(lookback_days, 1))
+
+    try:
+        response = requests.get(
+            endpoint,
+            headers={"User-Agent": "finbert-earnings-signals/1.0"},
+            timeout=settings.request_timeout_seconds,
+        )
+        if response.status_code != 200:
+            return [], [f"Stocktwits social feed error for {symbol}: HTTP {response.status_code}"], FeedFetchAudit(0, 0, 0)
+
+        payload = response.json()
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            return [], [f"No Stocktwits social posts available for {symbol}"], FeedFetchAudit(0, 0, 0)
+
+        records: list[SocialRecord] = []
+        for message in messages[: max(pool_size, limit * 2)]:
+            if not isinstance(message, dict):
+                continue
+            body = str(message.get("body") or "").strip()
+            if not body:
+                continue
+
+            created_raw = str(message.get("created_at") or "").strip()
+            created_dt: Optional[datetime] = None
+            if created_raw:
+                try:
+                    created_dt = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                    if created_dt.tzinfo is None:
+                        created_dt = created_dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    created_dt = None
+            if created_dt and created_dt < lookback_floor:
+                continue
+
+            title = _excerpt(body, max_chars=96)
+            if not _is_social_related(
+                symbol=symbol,
+                company_name=company_name,
+                title=title,
+                body=body,
+            ):
+                continue
+
+            msg_id = message.get("id")
+            if msg_id:
+                url = f"https://stocktwits.com/message/{msg_id}"
+            else:
+                url = f"https://stocktwits.com/symbol/{symbol}"
+
+            relevance = _finance_relevance_score(symbol, title, body, "stocktwits")
+            recency = _recency_weight(created_dt, lookback_days)
+            relevance = round(relevance + (recency * 1.8), 3)
+
+            created_utc: Optional[int] = None
+            if created_dt is not None:
+                created_utc = int(created_dt.timestamp())
+
+            records.append(
+                SocialRecord(
+                    source="stocktwits",
+                    title=title,
+                    body=body,
+                    excerpt=_excerpt(body),
+                    url=url,
+                    subreddit=None,
+                    created_utc=created_utc,
+                    relevance_score=relevance,
+                )
+            )
+
+        records.sort(key=lambda r: (r.relevance_score, r.created_utc or 0), reverse=True)
+        deduped = _dedupe_social(records)
+        ranked = [record for record in deduped if record.relevance_score >= max(_MIN_SOCIAL_RELEVANCE, 1.9)]
+        if len(ranked) < max(3, min(limit, 5)):
+            ranked = [record for record in deduped if record.relevance_score >= _MIN_SOCIAL_RELEVANCE]
+        if len(ranked) < max(2, limit // 3):
+            ranked = deduped
+
+        shown = ranked[:limit]
+        if not shown:
+            warnings.append(f"No Stocktwits posts found for {symbol} in the recent window.")
+
+        return shown, warnings, FeedFetchAudit(fetched_pool=len(records), deduped_pool=len(deduped), displayed_count=len(shown))
+    except Exception as exc:
+        return [], [f"Stocktwits social feed error for {symbol}: {exc}"], FeedFetchAudit(0, 0, 0)
+
+
+def fetch_social_multi_source(
+    symbol: str,
+    settings: Settings,
+    limit: int = 24,
+    pool_size: int = 160,
+    company_name: Optional[str] = None,
+    lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+) -> Tuple[list[SocialRecord], list[str], FeedFetchAudit]:
+    source_limit = max(limit, 1)
+    source_pool = max(pool_size, source_limit)
+
+    reddit_records, reddit_warnings, reddit_audit = fetch_social_reddit(
+        symbol=symbol,
+        settings=settings,
+        limit=source_limit,
+        pool_size=source_pool,
+        company_name=company_name,
+        lookback_days=lookback_days,
+    )
+    stocktwits_records, stocktwits_warnings, stocktwits_audit = fetch_social_stocktwits(
+        symbol=symbol,
+        settings=settings,
+        limit=source_limit,
+        pool_size=source_pool,
+        company_name=company_name,
+        lookback_days=lookback_days,
+    )
+
+    combined = reddit_records + stocktwits_records
+    deduped = _dedupe_social(combined)
+    deduped.sort(key=lambda record: (record.created_utc or 0, record.relevance_score), reverse=True)
+    shown = deduped[:limit]
+
+    warnings: list[str] = []
+    warnings.extend(reddit_warnings)
+    warnings.extend(stocktwits_warnings)
+    if not shown:
+        warnings.append(f"No combined social posts were available for {symbol}.")
+
+    return (
+        shown,
+        warnings,
+        FeedFetchAudit(
+            fetched_pool=reddit_audit.fetched_pool + stocktwits_audit.fetched_pool,
+            deduped_pool=len(deduped),
+            displayed_count=len(shown),
+        ),
+    )
 
 
 def fetch_price_volume_history(symbol: str, period: str = "3mo") -> list[PriceVolumeRecord]:

@@ -20,9 +20,9 @@ from .providers import (
     TranscriptDiscoveryAudit as ProviderTranscriptDiscoveryAudit,
     TranscriptRecord,
     fetch_fundamentals,
-    fetch_news_alpha_vantage,
+    fetch_news_multi_source,
     fetch_price_volume_history,
-    fetch_social_reddit,
+    fetch_social_multi_source,
 )
 from .schemas import (
     AggregateScores,
@@ -139,7 +139,11 @@ UI_COPY = CopyDictionary(
         "audit_parsing": "Parsing Warnings",
     },
     microcopy={
-        "query_note": "Transcripts: Motley Fool. News: Alpha Vantage. Social: Reddit (14-day window, recency-weighted).",
+        "query_note": (
+            "Snapshot loads first, then full transcript analysis. "
+            "Transcripts: Motley Fool. News: Alpha Vantage + Yahoo Finance. "
+            "Social: Reddit + Stocktwits (recency-weighted)."
+        ),
         "modal_open_action": "Open in new tab",
         "modal_close_action": "Close",
     },
@@ -464,6 +468,47 @@ def _build_sentiment_timeline(news: list[NewsArticle], social: list[SocialPost])
         )
 
     return timeline
+
+
+def _score_news_records(news_records: list, engine) -> list[NewsArticle]:
+    news: list[NewsArticle] = []
+    for item in news_records:
+        score = _score_text(f"{item.title}. {item.summary}", engine)
+        directional = float(score.get("directional_score", 0.0))
+        news.append(
+            NewsArticle(
+                title=item.title,
+                summary=item.summary,
+                url=item.url,
+                source=item.source,
+                time_published=item.time_published,
+                sentiment_score=round(directional, 4),
+                sentiment_label=_stance_from_score(directional),
+            )
+        )
+    return news
+
+
+def _score_social_records(social_records: list, engine) -> list[SocialPost]:
+    social: list[SocialPost] = []
+    for item in social_records:
+        score = _score_text(f"{item.title}. {item.body}", engine)
+        directional = float(score.get("directional_score", 0.0))
+        social.append(
+            SocialPost(
+                source=item.source,
+                title=item.title,
+                body=item.body,
+                excerpt=item.excerpt,
+                url=item.url,
+                subreddit=item.subreddit,
+                created_utc=item.created_utc,
+                relevance_score=round(item.relevance_score, 3),
+                sentiment_score=round(directional, 4),
+                sentiment_label=_stance_from_score(directional),
+            )
+        )
+    return social
 
 
 def _build_transcript_quarter_status(raw_records: list[TranscriptRecord]) -> list[str]:
@@ -873,6 +918,90 @@ def _build_legacy_fields(
     return analyst_team, research_team, trader_plan, risk_management, manager_decision
 
 
+def build_sentiment_snapshot(ticker: str, settings: Settings) -> dict[str, Any]:
+    symbol = _normalize_ticker(ticker)
+    fundamentals_dict = fetch_fundamentals(symbol)
+    company_name = str(fundamentals_dict.get("company_name") or symbol)
+
+    news_records, news_warnings, _news_audit = fetch_news_multi_source(
+        symbol,
+        settings,
+        limit=max(1, settings.news_limit),
+        pool_size=max(settings.news_pool_size, settings.news_limit),
+        company_name=company_name,
+        lookback_days=settings.news_lookback_days,
+    )
+    social_records, social_warnings, _social_audit = fetch_social_multi_source(
+        symbol,
+        settings,
+        limit=max(1, settings.social_limit),
+        pool_size=max(settings.social_pool_size, settings.social_limit),
+        company_name=company_name,
+        lookback_days=settings.social_lookback_days,
+    )
+
+    warnings = news_warnings + social_warnings
+    engine = get_engine(settings.finbert_model_name)
+    news = _score_news_records(news_records, engine)
+    social = _score_social_records(social_records, engine)
+
+    news_avg = mean(n.sentiment_score for n in news) if news else 0.0
+    social_avg = mean(s.sentiment_score for s in social) if social else 0.0
+
+    rev_growth = float(fundamentals_dict.get("revenue_qoq_growth_pct") or 0.0)
+    eps_growth = float(fundamentals_dict.get("eps_qoq_growth_pct") or 0.0)
+    fundamentals_signal = _clamp_unit((rev_growth * 0.55 + eps_growth * 0.45) / 50.0)
+    overall_score = _clamp_unit(news_avg * 0.45 + social_avg * 0.2 + fundamentals_signal * 0.35)
+    overall_label = _label_from_sentiment_score(overall_score)
+
+    overview = OverviewSection(
+        ticker=symbol,
+        company_name=company_name,
+        stance_label=_stance_from_score(overall_score),
+        executive_summary=(
+            f"Initial sentiment snapshot for {company_name}: "
+            f"news reads {_stance_from_score(news_avg)} ({news_avg:+.3f}), "
+            f"social reads {_stance_from_score(social_avg)} ({social_avg:+.3f}). "
+            "Transcript-driven adjustments continue loading."
+        ),
+        key_takeaways=[
+            f"Snapshot captured {len(news)} news items and {len(social)} social posts.",
+            f"Fundamentals momentum signal: {fundamentals_signal:+.3f}.",
+            "Full transcript normalization and speaker analysis are still processing.",
+        ],
+        metrics=[
+            CompactMetric(key="overall_sentiment", label="Snapshot Sentiment", value=f"{overall_score:+.3f}"),
+            CompactMetric(key="news_count", label="News Items", value=str(len(news))),
+            CompactMetric(key="social_count", label="Social Posts", value=str(len(social))),
+            CompactMetric(key="fundamentals_signal", label="Fundamentals Signal", value=f"{fundamentals_signal:+.3f}"),
+        ],
+    )
+
+    market_reaction = MarketReactionSection(
+        balance_summary=(
+            f"Snapshot market reaction skews {_stance_from_score(news_avg)} in news "
+            f"({news_avg:+.3f}) and {_stance_from_score(social_avg)} in social ({social_avg:+.3f})."
+        ),
+        news_count=len(news),
+        social_count=len(social),
+        news_items=news,
+        social_items=social,
+        chart_enabled=False,
+        sparse_note="Full timeline rendering waits for complete analysis.",
+    )
+
+    return {
+        "ticker": symbol,
+        "company_name": company_name,
+        "overall_sentiment_score": round(overall_score, 4),
+        "overall_sentiment_label": overall_label,
+        "overview": overview.model_dump(),
+        "market_reaction": market_reaction.model_dump(),
+        "warnings": warnings,
+        "ui_copy": UI_COPY.model_dump(),
+    }
+
+
 def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
     symbol = _normalize_ticker(ticker)
 
@@ -886,21 +1015,21 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         target_count=settings.transcript_target_count,
     )
 
-    news_records, news_warnings, news_audit = fetch_news_alpha_vantage(
+    news_records, news_warnings, news_audit = fetch_news_multi_source(
         symbol,
         settings,
-        limit=16,
-        pool_size=80,
+        limit=max(1, settings.news_limit),
+        pool_size=max(settings.news_pool_size, settings.news_limit),
         company_name=company_name,
-        lookback_days=14,
+        lookback_days=settings.news_lookback_days,
     )
-    social_records, social_warnings, social_audit = fetch_social_reddit(
+    social_records, social_warnings, social_audit = fetch_social_multi_source(
         symbol,
         settings,
-        limit=16,
-        pool_size=120,
+        limit=max(1, settings.social_limit),
+        pool_size=max(settings.social_pool_size, settings.social_limit),
         company_name=company_name,
-        lookback_days=14,
+        lookback_days=settings.social_lookback_days,
     )
 
     warnings = transcript_warnings + news_warnings + social_warnings
@@ -918,40 +1047,8 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
 
     engine = get_engine(settings.finbert_model_name)
 
-    news: list[NewsArticle] = []
-    for item in news_records:
-        score = _score_text(f"{item.title}. {item.summary}", engine)
-        directional = float(score.get("directional_score", 0.0))
-        news.append(
-            NewsArticle(
-                title=item.title,
-                summary=item.summary,
-                url=item.url,
-                source=item.source,
-                time_published=item.time_published,
-                sentiment_score=round(directional, 4),
-                sentiment_label=_stance_from_score(directional),
-            )
-        )
-
-    social: list[SocialPost] = []
-    for item in social_records:
-        score = _score_text(f"{item.title}. {item.body}", engine)
-        directional = float(score.get("directional_score", 0.0))
-        social.append(
-            SocialPost(
-                source=item.source,
-                title=item.title,
-                body=item.body,
-                excerpt=item.excerpt,
-                url=item.url,
-                subreddit=item.subreddit,
-                created_utc=item.created_utc,
-                relevance_score=round(item.relevance_score, 3),
-                sentiment_score=round(directional, 4),
-                sentiment_label=_stance_from_score(directional),
-            )
-        )
+    news = _score_news_records(news_records, engine)
+    social = _score_social_records(social_records, engine)
 
     news_avg = mean(n.sentiment_score for n in news) if news else 0.0
     social_avg = mean(s.sentiment_score for s in social) if social else 0.0

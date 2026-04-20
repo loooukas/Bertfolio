@@ -25,16 +25,32 @@
             <button id="analyze-btn">Run Analysis</button>
           </div>
           <p id="query-note" class="query-note">
-            Primary transcript source: Motley Fool deterministic discovery and parsing.
+            Snapshot loads first, then full transcript analysis. News: Alpha Vantage + Yahoo Finance. Social: Reddit + Stocktwits.
           </p>
         </section>
 
         <p id="status" class="status-line"></p>
       </header>
 
+      <section id="loading-overlay" class="loading-overlay hidden" aria-live="polite" aria-busy="true">
+        <div class="loading-stage">
+          <div class="loading-orbit" aria-hidden="true">
+            <span class="ring ring-a"></span>
+            <span class="ring ring-b"></span>
+            <span class="ring ring-c"></span>
+          </div>
+          <p class="loading-kicker">Booting Analysis</p>
+          <h2 id="loading-title">Building sentiment snapshot…</h2>
+          <p id="loading-subtitle" class="loading-subtitle">
+            Pulling high-volume news and social signals first.
+          </p>
+        </div>
+      </section>
+
       <section id="workspace" class="workspace hidden">
         <aside class="left-rail">
           <article class="rail-card" id="run-context"></article>
+          <article class="rail-card" id="pipeline-status"></article>
           <nav class="rail-nav" id="section-nav"></nav>
         </aside>
 
@@ -213,6 +229,7 @@
       const state = {
         payload: null,
         uiCopy: null,
+        sectionProgress: {},
         charts: {
           speaker: null,
           fundamentals: null,
@@ -222,10 +239,14 @@
       const elements = {
         workspace: document.getElementById("workspace"),
         status: document.getElementById("status"),
+        loadingOverlay: document.getElementById("loading-overlay"),
+        loadingTitle: document.getElementById("loading-title"),
+        loadingSubtitle: document.getElementById("loading-subtitle"),
         tickerInput: document.getElementById("ticker"),
         analyzeBtn: document.getElementById("analyze-btn"),
         sectionNav: document.getElementById("section-nav"),
         runContext: document.getElementById("run-context"),
+        pipelineStatus: document.getElementById("pipeline-status"),
         heroTitle: document.getElementById("hero-title"),
         heroSubtitle: document.getElementById("hero-subtitle"),
         tickerLabel: document.getElementById("ticker-label"),
@@ -351,6 +372,67 @@
         `;
       }
 
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      function setLoadingOverlay(visible, title, subtitle) {
+        elements.loadingOverlay.classList.toggle("hidden", !visible);
+        document.body.classList.toggle("loading-active", visible);
+        if (title) elements.loadingTitle.textContent = title;
+        if (subtitle) elements.loadingSubtitle.textContent = subtitle;
+      }
+
+      function initSectionProgress() {
+        state.sectionProgress = {
+          overview: "pending",
+          transcript: "pending",
+          market_reaction: "pending",
+          fundamentals: "pending",
+          data_audit: "pending",
+        };
+      }
+
+      function markSection(sectionKey, status) {
+        if (!state.sectionProgress[sectionKey] && sectionKey !== "overview") return;
+        state.sectionProgress[sectionKey] = status;
+        renderPipelineStatus();
+      }
+
+      function renderPipelineStatus() {
+        const labels = state.uiCopy?.section_labels || {
+          overview: "Overview",
+          transcript: "Transcript",
+          market_reaction: "Market Reaction",
+          fundamentals: "Fundamentals",
+          data_audit: "Data Audit",
+        };
+        const toText = (status) => {
+          if (status === "done") return "Ready";
+          if (status === "loading") return "Loading";
+          if (status === "error") return "Error";
+          return "Queued";
+        };
+
+        elements.pipelineStatus.innerHTML = `
+          <h3>Section Progress</h3>
+          <div class="pipeline-list">
+            ${SECTION_ORDER.map((key) => {
+              const status = state.sectionProgress[key] || "pending";
+              const statusClass = status === "done" ? "is-done" : status === "loading" ? "is-loading" : status === "error" ? "is-error" : "is-pending";
+              return `
+                <div class="pipeline-row">
+                  <span class="pipeline-label">${labels[key] || key}</span>
+                  <span class="pipeline-badge ${statusClass}">
+                    <span class="dot"></span>${toText(status)}
+                  </span>
+                </div>
+              `;
+            }).join("")}
+          </div>
+        `;
+      }
+
       function clearList(listEl) {
         listEl.innerHTML = "";
       }
@@ -363,6 +445,30 @@
           li.textContent = text;
           listEl.appendChild(li);
         });
+      }
+
+      function resetDeferredSections() {
+        elements.transcriptAvailability.textContent = "Availability: loading…";
+        elements.transcriptSummary.textContent = "Transcript normalization and speaker analysis are in progress.";
+        elements.transcriptPreparedQa.textContent = "";
+        elements.speakerTableBody.innerHTML = "";
+        renderList(elements.transcriptQuotes, [], "Loading transcript quotes…");
+        renderList(elements.transcriptPressure, [], "Loading Q&A pressure points…");
+
+        elements.fundamentalsContext.textContent = "Fundamentals trend processing…";
+        elements.fundamentalsMetrics.innerHTML = "";
+        elements.fundamentalsTableBody.innerHTML = "";
+        setChartVisibility(elements.fundamentalsChartSurface, elements.fundamentalsChartEmpty, false);
+        elements.fundamentalsChartEmpty.textContent = "Fundamentals section is still loading.";
+
+        elements.auditConfidence.textContent = "Audit diagnostics are still loading.";
+        elements.auditTableBody.innerHTML = "";
+        renderList(elements.auditWarnings, [], "Loading warnings…");
+        renderList(elements.auditMissing, [], "Loading sparse-source flags…");
+        renderList(elements.auditDedupe, [], "Loading dedupe stats…");
+        renderList(elements.auditFailures, [], "Loading discovery failures…");
+        renderList(elements.auditDiscarded, [], "Loading discarded near-matches…");
+        renderList(elements.auditParsing, [], "Loading parsing warnings…");
       }
 
       function destroyChart(chart) {
@@ -399,14 +505,19 @@
 
       function renderRunContext(payload) {
         const overview = payload.overview;
-        const transcript = payload.transcript;
+        const transcript = payload.transcript || { transcript_count_found: "-", transcript_count_requested: "-" };
+        const market = payload.market_reaction || { news_count: 0, social_count: 0 };
         const stance = (overview.stance_label || "mixed").replaceAll("_", " ");
         const overall = (payload.overall_sentiment_label || "mixed").replaceAll("_", " ");
-        const normalization = payload.data_audit.normalization_mode === "openai" ? "OpenAI normalized" : "Deterministic fallback";
+        const normalization = payload.data_audit
+          ? payload.data_audit.normalization_mode === "openai"
+            ? "OpenAI normalized"
+            : "Deterministic fallback"
+          : "Snapshot mode";
         elements.runContext.innerHTML = `
           <h3>${overview.ticker}</h3>
           <p class="summary">Stance: ${stance} · Overall: ${overall} (${fmtNum(payload.overall_sentiment_score, 3)})</p>
-          <p class="meta-line">Coverage T:${transcript.transcript_count_found}/${transcript.transcript_count_requested} · N:${payload.market_reaction.news_count} · S:${payload.market_reaction.social_count}</p>
+          <p class="meta-line">Coverage T:${transcript.transcript_count_found}/${transcript.transcript_count_requested} · N:${market.news_count} · S:${market.social_count}</p>
           <p class="meta-line">${normalization}</p>
         `;
       }
@@ -756,6 +867,7 @@
         elements.modalClose.textContent = copy.microcopy?.modal_close_action || elements.modalClose.textContent;
         elements.modalLink.textContent = copy.microcopy?.modal_open_action || elements.modalLink.textContent;
         buildSectionNav(copy.section_labels || {});
+        renderPipelineStatus();
       }
 
       function renderAll(payload) {
@@ -771,6 +883,47 @@
         switchSection("overview");
       }
 
+      function renderSnapshot(snapshot) {
+        state.payload = snapshot;
+        elements.workspace.classList.remove("hidden");
+        applyCopy(snapshot.ui_copy);
+        renderRunContext(snapshot);
+        renderOverview(snapshot);
+        renderMarketReaction(snapshot);
+        switchSection("overview");
+      }
+
+      async function renderFullWithProgress(payload) {
+        state.payload = payload;
+        applyCopy(payload.ui_copy);
+        renderRunContext(payload);
+
+        markSection("overview", "loading");
+        renderOverview(payload);
+        await sleep(120);
+        markSection("overview", "done");
+
+        markSection("transcript", "loading");
+        renderTranscript(payload);
+        await sleep(120);
+        markSection("transcript", "done");
+
+        markSection("market_reaction", "loading");
+        renderMarketReaction(payload);
+        await sleep(120);
+        markSection("market_reaction", "done");
+
+        markSection("fundamentals", "loading");
+        renderFundamentals(payload);
+        await sleep(120);
+        markSection("fundamentals", "done");
+
+        markSection("data_audit", "loading");
+        renderDataAudit(payload);
+        await sleep(120);
+        markSection("data_audit", "done");
+      }
+
       async function runAnalysis() {
         const ticker = elements.tickerInput.value.trim().toUpperCase();
         if (!ticker) {
@@ -781,15 +934,44 @@
         elements.analyzeBtn.disabled = true;
         elements.status.className = "status-line";
         elements.status.textContent = `Analyzing ${ticker}...`;
+        initSectionProgress();
+        markSection("overview", "loading");
+        setLoadingOverlay(
+          true,
+          "Building sentiment snapshot…",
+          "Pulling high-volume news and social signals first."
+        );
 
         try {
+          const snapshotResp = await fetch(`/api/analyze/snapshot?ticker=${encodeURIComponent(ticker)}`);
+          const snapshot = await snapshotResp.json();
+          if (!snapshotResp.ok) {
+            throw new Error(snapshot.detail || "Snapshot analysis failed.");
+          }
+
+          renderSnapshot(snapshot);
+          resetDeferredSections();
+          markSection("overview", "done");
+          markSection("market_reaction", "loading");
+          markSection("transcript", "loading");
+          markSection("fundamentals", "loading");
+          markSection("data_audit", "loading");
+
+          setLoadingOverlay(
+            false,
+            "Building sentiment snapshot…",
+            "Pulling high-volume news and social signals first."
+          );
+          elements.status.className = "status-line";
+          elements.status.textContent = `${ticker} snapshot ready. Transcript and remaining sections are still processing…`;
+
           const response = await fetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}`);
           const payload = await response.json();
           if (!response.ok) {
             throw new Error(payload.detail || "Analysis failed.");
           }
 
-          renderAll(payload);
+          await renderFullWithProgress(payload);
           elements.status.className = "status-line ok";
           const overall = (payload.overall_sentiment_label || "mixed").replaceAll("_", " ");
           elements.status.textContent =
@@ -797,6 +979,10 @@
         } catch (error) {
           elements.status.className = "status-line error";
           elements.status.textContent = `Error: ${error.message}`;
+          SECTION_ORDER.forEach((key) => {
+            if (state.sectionProgress[key] !== "done") markSection(key, "error");
+          });
+          setLoadingOverlay(false, "", "");
         } finally {
           elements.analyzeBtn.disabled = false;
         }
@@ -831,6 +1017,8 @@
         fundamentals: "Fundamentals",
         data_audit: "Data Audit",
       });
+      initSectionProgress();
+      renderPipelineStatus();
     </script>
   </body>
 </html>

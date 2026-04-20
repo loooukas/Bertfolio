@@ -263,3 +263,134 @@ def test_fetch_news_alpha_vantage_filters_unrelated(monkeypatch):
     assert "AAPL" in records[0].title
     assert not warnings
     assert audit.displayed_count == 1
+
+
+def test_fetch_news_multi_source_merges_and_dedupes(monkeypatch):
+    monkeypatch.setattr(
+        providers,
+        "fetch_news_alpha_vantage",
+        lambda *args, **kwargs: (
+            [
+                providers.NewsRecord(
+                    title="Apple demand update",
+                    summary="alpha summary",
+                    url="https://example.com/news/alpha",
+                    source="alpha",
+                    time_published="20260420T100000",
+                    sentiment_score=0.2,
+                    sentiment_label="bullish",
+                )
+            ],
+            [],
+            providers.FeedFetchAudit(5, 1, 1),
+        ),
+    )
+    monkeypatch.setattr(
+        providers,
+        "fetch_news_yahoo_finance",
+        lambda *args, **kwargs: (
+            [
+                providers.NewsRecord(
+                    title="Apple demand update",
+                    summary="duplicate title",
+                    url="https://example.com/news/alpha",
+                    source="yahoo",
+                    time_published="20260420T100100",
+                    sentiment_score=0.0,
+                    sentiment_label="neutral",
+                ),
+                providers.NewsRecord(
+                    title="Apple services momentum",
+                    summary="yahoo summary",
+                    url="https://example.com/news/yahoo",
+                    source="yahoo",
+                    time_published="20260420T110000",
+                    sentiment_score=0.0,
+                    sentiment_label="neutral",
+                ),
+            ],
+            [],
+            providers.FeedFetchAudit(7, 2, 2),
+        ),
+    )
+
+    records, warnings, audit = providers.fetch_news_multi_source(
+        "AAPL",
+        _settings(),
+        limit=5,
+        pool_size=10,
+        company_name="Apple Inc",
+        lookback_days=14,
+    )
+
+    assert len(records) == 2
+    assert not warnings
+    assert audit.fetched_pool == 12
+    assert audit.displayed_count == 2
+
+
+def test_fetch_social_multi_source_merges_and_dedupes(monkeypatch):
+    monkeypatch.setattr(
+        providers,
+        "fetch_social_reddit",
+        lambda *args, **kwargs: (
+            [
+                providers.SocialRecord(
+                    source="reddit",
+                    title="AAPL thread",
+                    body="reddit body",
+                    excerpt="reddit body",
+                    url="https://example.com/social/1",
+                    subreddit="stocks",
+                    created_utc=1776316800,
+                    relevance_score=6.2,
+                )
+            ],
+            [],
+            providers.FeedFetchAudit(8, 1, 1),
+        ),
+    )
+    monkeypatch.setattr(
+        providers,
+        "fetch_social_stocktwits",
+        lambda *args, **kwargs: (
+            [
+                providers.SocialRecord(
+                    source="stocktwits",
+                    title="AAPL thread",
+                    body="stocktwits body",
+                    excerpt="stocktwits body",
+                    url="https://example.com/social/1",
+                    subreddit=None,
+                    created_utc=1776316810,
+                    relevance_score=5.1,
+                ),
+                providers.SocialRecord(
+                    source="stocktwits",
+                    title="AAPL new message",
+                    body="new body",
+                    excerpt="new body",
+                    url="https://example.com/social/2",
+                    subreddit=None,
+                    created_utc=1776316820,
+                    relevance_score=6.8,
+                ),
+            ],
+            [],
+            providers.FeedFetchAudit(9, 2, 2),
+        ),
+    )
+
+    records, warnings, audit = providers.fetch_social_multi_source(
+        "AAPL",
+        _settings(),
+        limit=5,
+        pool_size=10,
+        company_name="Apple Inc",
+        lookback_days=14,
+    )
+
+    assert len(records) == 2
+    assert not warnings
+    assert audit.fetched_pool == 17
+    assert audit.displayed_count == 2
