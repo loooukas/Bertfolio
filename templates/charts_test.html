@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FinBERT Charts Test</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="kicker">FinBERT Dev Utility</p>
+          <h1>Charts Test Surface</h1>
+          <p id="hero-subtitle">Validate full-width chart rendering without waiting for transcript analysis runs.</p>
+        </div>
+        <section class="query-panel">
+          <label>Quick Actions</label>
+          <div class="query-row">
+            <button id="regen-btn">Regenerate Mock Data</button>
+            <button id="back-btn" class="ghost-btn" type="button">Back To App</button>
+          </div>
+          <p class="query-note">This page intentionally uses synthetic values to test chart layout and responsiveness.</p>
+        </section>
+      </header>
+
+      <section class="workspace" style="grid-template-columns: 1fr;">
+        <section class="main-panel">
+          <section class="section-pane active">
+            <article class="panel-card">
+              <h2>Speaker Confidence Profile</h2>
+              <div id="speaker-chart" class="chart-surface"></div>
+            </article>
+            <article class="panel-card">
+              <h2>Fundamentals Trend</h2>
+              <div id="fundamentals-chart" class="chart-surface"></div>
+            </article>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      let speakerChart = null;
+      let fundamentalsChart = null;
+
+      function randomSeries(base, variance, count) {
+        return Array.from({ length: count }, () => Number((base + (Math.random() - 0.5) * variance).toFixed(2)));
+      }
+
+      function buildCanvas(containerId) {
+        const root = document.getElementById(containerId);
+        root.innerHTML = "";
+        const canvas = document.createElement("canvas");
+        root.appendChild(canvas);
+        return canvas;
+      }
+
+      function renderCharts() {
+        const speakers = ["Tim Cook", "Kevan Parekh", "Suhasini", "Amit", "David", "Wamsi"];
+        const quarters = ["2025-Q1", "2025-Q2", "2025-Q3", "2025-Q4", "2026-Q1", "2026-Q2"];
+
+        if (speakerChart) speakerChart.destroy();
+        if (fundamentalsChart) fundamentalsChart.destroy();
+
+        speakerChart = new Chart(buildCanvas("speaker-chart"), {
+          type: "bar",
+          data: {
+            labels: speakers,
+            datasets: [
+              { label: "Confidence", data: randomSeries(58, 18, speakers.length), backgroundColor: "rgba(80,202,163,0.72)", borderRadius: 8 },
+              { label: "Evasiveness", data: randomSeries(42, 16, speakers.length), backgroundColor: "rgba(240,99,123,0.65)", borderRadius: 8 },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { ticks: { color: "#c9d6ec" } },
+              y: { min: 0, max: 100, ticks: { color: "#c9d6ec" } },
+            },
+            plugins: { legend: { labels: { color: "#dce7fa" } } },
+          },
+        });
+
+        fundamentalsChart = new Chart(buildCanvas("fundamentals-chart"), {
+          data: {
+            labels: quarters,
+            datasets: [
+              { type: "bar", label: "Revenue", data: randomSeries(120_000_000_000, 50_000_000_000, quarters.length), yAxisID: "yUSD", backgroundColor: "rgba(120,191,255,0.58)", borderRadius: 7 },
+              { type: "bar", label: "Net Income", data: randomSeries(32_000_000_000, 15_000_000_000, quarters.length), yAxisID: "yUSD", backgroundColor: "rgba(82,205,162,0.58)", borderRadius: 7 },
+              { type: "line", label: "Reported EPS", data: randomSeries(2.2, 1.0, quarters.length), yAxisID: "yEPS", borderColor: "#f4c66e", backgroundColor: "#f4c66e", tension: 0.3 },
+              { type: "line", label: "EPS Estimate", data: randomSeries(2.0, 0.9, quarters.length), yAxisID: "yEPS", borderColor: "#ff9f7a", backgroundColor: "#ff9f7a", tension: 0.3, borderDash: [6, 4] },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              yUSD: { type: "linear", position: "left", ticks: { color: "#c9d6ec" } },
+              yEPS: { type: "linear", position: "right", grid: { drawOnChartArea: false }, ticks: { color: "#c9d6ec" } },
+              x: { ticks: { color: "#c9d6ec" } },
+            },
+            plugins: { legend: { labels: { color: "#dce7fa" } } },
+          },
+        });
+      }
+
+      document.getElementById("regen-btn").addEventListener("click", renderCharts);
+      document.getElementById("back-btn").addEventListener("click", () => {
+        window.location.href = "/";
+      });
+
+      renderCharts();
+    </script>
+  </body>
+</html>

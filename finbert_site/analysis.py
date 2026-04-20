@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import math
 import re
 from statistics import mean
+import time
 from typing import Any, Optional
 
 from .finbert_model import get_engine
@@ -19,15 +20,18 @@ from .providers import (
     FeedFetchAudit,
     TranscriptDiscoveryAudit as ProviderTranscriptDiscoveryAudit,
     TranscriptRecord,
+    enrich_fundamentals_with_alpha_validation,
     fetch_fundamentals,
     fetch_news_multi_source,
     fetch_price_volume_history,
     fetch_social_multi_source,
 )
+from .progress import RunProgressTracker
 from .schemas import (
     AggregateScores,
     AnalysisResponse,
     AnalystSignal,
+    AuditTaskBreakdown,
     ChartsPayload,
     CompactMetric,
     CopyDictionary,
@@ -36,6 +40,8 @@ from .schemas import (
     FundamentalsSnapshot,
     FundamentalsSummary,
     FundamentalsTrendPoint,
+    FundamentalsValidationAudit,
+    FundamentalsValidationMismatch,
     FundamentalsWorkspaceSection,
     ManagerDecision,
     MarketReactionSection,
@@ -61,6 +67,7 @@ from .schemas import (
     TranscriptQuarterStatus,
     TranscriptResult,
     TranscriptSectionPayload,
+    TranscriptSpeakerRollup,
     TranscriptSpeakerAnalysis,
     WorkflowStage,
 )
@@ -525,6 +532,45 @@ def _score_social_records(social_records: list, engine) -> list[SocialPost]:
 
 def _build_transcript_quarter_status(raw_records: list[TranscriptRecord]) -> list[str]:
     return [f"{record.year}-Q{record.quarter}" for record in raw_records]
+
+
+def _is_operator_speaker_name(name: str) -> bool:
+    lowered = (name or "").strip().lower()
+    return lowered == "operator" or lowered.startswith("operator ")
+
+
+def _exclude_operator_rows(rows: list[TranscriptSpeakerAnalysis]) -> list[TranscriptSpeakerAnalysis]:
+    return [row for row in rows if not _is_operator_speaker_name(row.speaker)]
+
+
+def _build_speaker_rollup(rows: list[TranscriptSpeakerAnalysis]) -> list[TranscriptSpeakerRollup]:
+    by_speaker: dict[str, list[TranscriptSpeakerAnalysis]] = defaultdict(list)
+    for row in rows:
+        by_speaker[row.speaker].append(row)
+
+    rollups: list[TranscriptSpeakerRollup] = []
+    for speaker, items in by_speaker.items():
+        topic_counts: dict[str, int] = defaultdict(int)
+        for item in items:
+            topic_counts[item.topic_label] += 1
+        dominant_topic = (
+            sorted(topic_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+            if topic_counts
+            else "general"
+        )
+        rollups.append(
+            TranscriptSpeakerRollup(
+                speaker=speaker,
+                mention_count=len(items),
+                avg_sentiment_direction=round(mean(item.sentiment_direction for item in items), 4),
+                avg_confidence=round(mean(item.confidence for item in items), 2),
+                avg_evasiveness=round(mean(item.evasiveness for item in items), 2),
+                dominant_topic=dominant_topic,
+            )
+        )
+
+    rollups.sort(key=lambda row: (-row.mention_count, row.speaker))
+    return rollups
 
 
 def _compact_warnings(warnings: list[str], found: int, requested: int) -> list[str]:
@@ -1014,37 +1060,122 @@ def build_sentiment_snapshot(ticker: str, settings: Settings) -> dict[str, Any]:
     }
 
 
-def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
+def build_analysis(
+    ticker: str,
+    settings: Settings,
+    progress: Optional[RunProgressTracker] = None,
+    run_id: Optional[str] = None,
+) -> AnalysisResponse:
+    task_breakdown: list[AuditTaskBreakdown] = []
+
+    def _record_task(key: str, label: str, start_ts: float, detail: str = "", status: str = "done") -> None:
+        duration_ms = int((time.perf_counter() - start_ts) * 1000)
+        task_breakdown.append(
+            AuditTaskBreakdown(
+                key=key,
+                label=label,
+                status=status if status in {"done", "error", "skipped"} else "done",
+                duration_ms=max(0, duration_ms),
+                detail=detail,
+            )
+        )
+
+    if progress is not None:
+        progress.start_stage(
+            "overview",
+            subtask="init",
+            message=f"Booting analysis context for {ticker.strip().upper() or ticker}.",
+        )
     symbol = _normalize_ticker(ticker)
+    if progress is not None:
+        progress.complete_stage("overview", message=f"Context initialized for {symbol}.")
 
-    fundamentals_dict = fetch_fundamentals(symbol)
-    company_name = str(fundamentals_dict.get("company_name") or symbol)
-
-    transcript_raw, transcript_warnings, transcript_diagnostics, transcript_discovery = fetch_transcripts_motley_fool(
-        symbol=symbol,
-        company_name=company_name,
-        settings=settings,
-        target_count=settings.transcript_target_count,
-    )
-
+    if progress is not None:
+        progress.start_stage("market_reaction", subtask="fetch_feeds", message="Fetching news and social feeds.")
+    news_fetch_start = time.perf_counter()
     news_records, news_warnings, news_audit = fetch_news_multi_source(
         symbol,
         settings,
         limit=max(1, settings.news_limit),
         pool_size=max(settings.news_pool_size, settings.news_limit),
-        company_name=company_name,
+        company_name=symbol,
         lookback_days=settings.news_lookback_days,
     )
+    _record_task("news_fetch", "News Fetch", news_fetch_start, detail=f"{len(news_records)} records.")
+
+    social_fetch_start = time.perf_counter()
     social_records, social_warnings, social_audit = fetch_social_multi_source(
         symbol,
         settings,
         limit=max(1, settings.social_limit),
         pool_size=max(settings.social_pool_size, settings.social_limit),
-        company_name=company_name,
+        company_name=symbol,
         lookback_days=settings.social_lookback_days,
     )
+    _record_task("social_fetch", "Social Fetch", social_fetch_start, detail=f"{len(social_records)} records.")
 
-    warnings = transcript_warnings + news_warnings + social_warnings
+    engine = get_engine(settings.finbert_model_name)
+
+    news_score_start = time.perf_counter()
+    news = _score_news_records(news_records, engine)
+    _record_task("news_sentiment", "News Sentiment Scoring", news_score_start, detail=f"{len(news)} scored.")
+
+    social_score_start = time.perf_counter()
+    social = _score_social_records(social_records, engine)
+    _record_task("social_sentiment", "Social Sentiment Scoring", social_score_start, detail=f"{len(social)} scored.")
+
+    if progress is not None:
+        progress.update_stage(
+            "market_reaction",
+            progress=0.8,
+            subtask="score_feeds",
+            message=f"Scored {len(news)} news and {len(social)} social items.",
+        )
+        progress.complete_stage("market_reaction", message="Market reaction feeds ranked and scored.")
+
+    news_avg = mean(n.sentiment_score for n in news) if news else 0.0
+    social_avg = mean(s.sentiment_score for s in social) if social else 0.0
+
+    news_summary = NewsSummary(
+        article_count=len(news),
+        avg_sentiment_score=round(news_avg, 4),
+        sentiment_label=_stance_from_score(news_avg),
+    )
+    social_summary = SocialSummary(
+        post_count=len(social),
+        avg_sentiment_score=round(social_avg, 4),
+        sentiment_label=_stance_from_score(social_avg),
+    )
+
+    if progress is not None:
+        progress.start_stage("fundamentals", subtask="fetch", message="Fetching fundamentals from Yahoo Finance.")
+    fundamentals_fetch_start = time.perf_counter()
+    fundamentals_dict_raw = fetch_fundamentals(symbol)
+    _record_task("fundamentals_fetch", "Fundamentals Fetch", fundamentals_fetch_start)
+
+    company_name = str(fundamentals_dict_raw.get("company_name") or symbol)
+
+    fundamentals_validate_start = time.perf_counter()
+    fundamentals_dict, fundamentals_validation_raw = enrich_fundamentals_with_alpha_validation(
+        symbol=symbol,
+        settings=settings,
+        yahoo_payload=fundamentals_dict_raw,
+    )
+    _record_task(
+        "fundamentals_validation",
+        "Fundamentals Validation",
+        fundamentals_validate_start,
+        detail=f"{len(fundamentals_validation_raw.get('mismatches') or [])} mismatches.",
+    )
+
+    if progress is not None:
+        progress.update_stage(
+            "fundamentals",
+            progress=0.85,
+            subtask="cross_check",
+            message="Cross-checked fundamentals against Alpha Vantage.",
+        )
+        progress.complete_stage("fundamentals", message="Fundamentals metrics assembled.")
 
     fundamentals = FundamentalsSummary(
         currency=fundamentals_dict.get("currency"),
@@ -1066,31 +1197,37 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         eps_qoq_growth_pct=fundamentals_dict.get("eps_qoq_growth_pct"),
     )
 
-    engine = get_engine(settings.finbert_model_name)
-
-    news = _score_news_records(news_records, engine)
-    social = _score_social_records(social_records, engine)
-
-    news_avg = mean(n.sentiment_score for n in news) if news else 0.0
-    social_avg = mean(s.sentiment_score for s in social) if social else 0.0
-
-    news_summary = NewsSummary(
-        article_count=len(news),
-        avg_sentiment_score=round(news_avg, 4),
-        sentiment_label=_stance_from_score(news_avg),
+    if progress is not None:
+        progress.start_stage("transcript", subtask="discovery_scrape", message="Running transcript discovery and scrape.")
+    transcript_fetch_start = time.perf_counter()
+    transcript_raw, transcript_warnings, transcript_diagnostics, transcript_discovery = fetch_transcripts_motley_fool(
+        symbol=symbol,
+        company_name=company_name,
+        settings=settings,
+        target_count=settings.transcript_target_count,
     )
-    social_summary = SocialSummary(
-        post_count=len(social),
-        avg_sentiment_score=round(social_avg, 4),
-        sentiment_label=_stance_from_score(social_avg),
+    _record_task(
+        "transcript_fetch",
+        "Transcript Discovery + Scrape",
+        transcript_fetch_start,
+        detail=f"{len(transcript_raw)} transcripts parsed.",
     )
+
+    if progress is not None:
+        progress.update_stage(
+            "transcript",
+            progress=0.35,
+            subtask="normalize",
+            message=f"Normalizing {len(transcript_raw)} transcript documents.",
+        )
 
     normalized_documents: list[TranscriptDocument] = []
     normalization_warnings: list[str] = []
     speaker_analysis_by_url: dict[str, list[TranscriptSpeakerAnalysis]] = {}
-    all_speaker_analysis: list[TranscriptSpeakerAnalysis] = []
+    all_speaker_analysis_raw: list[TranscriptSpeakerAnalysis] = []
 
-    for record in transcript_raw:
+    normalize_start = time.perf_counter()
+    for idx, record in enumerate(transcript_raw):
         normalized = normalize_transcript_document(
             ticker=symbol,
             company_name=company_name,
@@ -1106,13 +1243,38 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         )
         normalized_documents.append(normalized.document)
         normalization_warnings.extend(normalized.warnings)
+        if progress is not None and transcript_raw:
+            progress.update_stage(
+                "transcript",
+                progress=min(0.35 + ((idx + 1) / max(len(transcript_raw), 1)) * 0.35, 0.75),
+                subtask="normalize",
+                message=f"Normalized {idx + 1}/{len(transcript_raw)} transcript documents.",
+            )
+    _record_task(
+        "transcript_normalization",
+        "Transcript Normalization",
+        normalize_start,
+        detail=f"{len(normalized_documents)} normalized docs.",
+    )
 
+    scoring_start = time.perf_counter()
+    for normalized in normalized_documents:
         analysis_rows = build_speaker_analysis(
-            normalized.document.sections,
+            normalized.sections,
             lambda text: _score_text_with_segmentation(text, engine, settings),
         )
-        speaker_analysis_by_url[normalized.document.source_url or f"doc-{len(speaker_analysis_by_url)}"] = analysis_rows
-        all_speaker_analysis.extend(analysis_rows)
+        filtered_rows = _exclude_operator_rows(analysis_rows)
+        speaker_analysis_by_url[normalized.source_url or f"doc-{len(speaker_analysis_by_url)}"] = filtered_rows
+        all_speaker_analysis_raw.extend(filtered_rows)
+    _record_task(
+        "transcript_scoring",
+        "Transcript Sentiment + Speaker Scoring",
+        scoring_start,
+        detail=f"{len(all_speaker_analysis_raw)} speaker blocks.",
+    )
+
+    all_speaker_analysis = all_speaker_analysis_raw
+    speaker_rollup = _build_speaker_rollup(all_speaker_analysis)
 
     transcript_summary, transcript_takeaways, pressure_points = summarize_transcript_findings(all_speaker_analysis)
 
@@ -1120,26 +1282,27 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
     qa_count = sum(1 for row in all_speaker_analysis if row.section_type == "qa")
     prepared_vs_qa_note = f"Prepared remarks blocks: {prepared_count}; Q&A blocks: {qa_count}."
 
-    speaker_groups: dict[str, list[TranscriptSpeakerAnalysis]] = defaultdict(list)
-    for row in all_speaker_analysis:
-        speaker_groups[row.speaker].append(row)
-
     speaker_confidence_profile = [
         {
-            "speaker": speaker,
-            "confidence": round(mean(item.confidence for item in rows), 2),
-            "evasiveness": round(mean(item.evasiveness for item in rows), 2),
-            "sentiment": round(mean(item.sentiment_direction for item in rows), 4),
+            "speaker": row.speaker,
+            "mentions": row.mention_count,
+            "confidence": round(row.avg_confidence, 2),
+            "evasiveness": round(row.avg_evasiveness, 2),
+            "sentiment": round(row.avg_sentiment_direction, 4),
         }
-        for speaker, rows in speaker_groups.items()
+        for row in speaker_rollup
     ]
-    speaker_confidence_profile.sort(key=lambda item: item["confidence"], reverse=True)
 
     transcript_availability = "missing"
     if normalized_documents and len(normalized_documents) >= settings.transcript_target_count:
         transcript_availability = "available"
     elif normalized_documents:
         transcript_availability = "partial"
+
+    quarter_status = [
+        TranscriptQuarterStatus(quarter=item.quarter, status=item.status, detail=item.detail)
+        for item in transcript_diagnostics.outcomes
+    ]
 
     transcript_section = TranscriptSectionPayload(
         availability=transcript_availability,
@@ -1148,13 +1311,26 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         latest_summary=transcript_summary,
         prepared_vs_qa_note=prepared_vs_qa_note,
         speaker_analysis=all_speaker_analysis,
-        key_quotes=[quote for doc in normalized_documents for quote in doc.key_quotes][:8],
+        key_quotes=[quote for doc in normalized_documents for quote in doc.key_quotes][:10],
         qa_pressure_points=pressure_points,
         transcripts=normalized_documents,
         speaker_confidence_profile=speaker_confidence_profile,
+        speaker_rollup=speaker_rollup,
+        quarter_status=quarter_status,
         chart_enabled=len(speaker_confidence_profile) >= 2,
-        sparse_note=None if len(speaker_confidence_profile) >= 2 else "Not enough speaker diversity for a useful profile chart.",
+        sparse_note=(
+            None if len(speaker_confidence_profile) >= 2 else "Not enough speaker diversity for a useful profile chart."
+        ),
     )
+
+    if progress is not None:
+        progress.update_stage(
+            "transcript",
+            progress=0.9,
+            subtask="summarize",
+            message=f"Built transcript summary from {len(all_speaker_analysis)} non-operator speaker blocks.",
+        )
+        progress.complete_stage("transcript", message="Transcript analysis completed.")
 
     transcript_direction = mean(row.sentiment_direction for row in all_speaker_analysis) if all_speaker_analysis else 0.0
     forward_strength = mean(row.forward_looking_strength for row in all_speaker_analysis) if all_speaker_analysis else 45.0
@@ -1178,15 +1354,16 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
     overall_label = _label_from_sentiment_score(overall_score)
 
     overview_takeaways = transcript_takeaways[:3]
-    if len(overview_takeaways) < 5:
+    if len(overview_takeaways) < 6:
         overview_takeaways.extend(
             [
                 f"Captured {len(news)} high-relevance news stories in the recent window.",
                 f"Captured {len(social)} related social discussions in the recent window.",
                 f"Latest revenue QoQ growth is {_format_pct(fundamentals.revenue_qoq_growth_pct)}.",
+                f"Most active management speaker: {speaker_rollup[0].speaker if speaker_rollup else 'n/a'}.",
             ]
         )
-    overview_takeaways = overview_takeaways[:5]
+    overview_takeaways = overview_takeaways[:6]
 
     overview = OverviewSection(
         ticker=symbol,
@@ -1267,6 +1444,8 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         sparse_note=None if fundamentals_chart_enabled else UI_COPY.empty_states["fundamentals_chart"],
     )
 
+    warnings = transcript_warnings + news_warnings + social_warnings
+
     normalization_mode = (
         "openai"
         if normalized_documents and all(doc.normalization_mode == "openai" for doc in normalized_documents)
@@ -1284,6 +1463,33 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
     if not social:
         missing_items.append("No social records were available after ranking.")
 
+    fundamentals_mismatches = [
+        FundamentalsValidationMismatch(
+            key=str(item.get("key") or ""),
+            yahoo_value=item.get("yahoo_value"),
+            alpha_value=item.get("alpha_value"),
+            relative_diff_pct=item.get("relative_diff_pct"),
+            note=item.get("note"),
+        )
+        for item in (fundamentals_validation_raw.get("mismatches") or [])
+        if isinstance(item, dict)
+    ]
+    fundamentals_validation = FundamentalsValidationAudit(
+        yahoo_source_used=bool(fundamentals_validation_raw.get("yahoo_source_used", True)),
+        alpha_source_used=bool(fundamentals_validation_raw.get("alpha_source_used", False)),
+        compared_fields=[str(item) for item in fundamentals_validation_raw.get("compared_fields") or []],
+        mismatches=fundamentals_mismatches,
+        notes=[str(item) for item in fundamentals_validation_raw.get("notes") or []],
+    )
+    if fundamentals_validation.notes:
+        warnings.extend([f"Fundamentals validation: {note}" for note in fundamentals_validation.notes[:5]])
+    if fundamentals_validation.mismatches:
+        warnings.append(
+            f"Fundamentals validation found {len(fundamentals_validation.mismatches)} cross-source mismatches."
+        )
+    if fundamentals_validation.mismatches:
+        missing_items.append("Fundamentals cross-check found provider mismatches; review Data Audit details.")
+
     avg_extraction_confidence = (
         mean(doc.extraction_confidence for doc in normalized_documents)
         if normalized_documents
@@ -1294,6 +1500,17 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         if normalized_documents
         else "No transcript extraction confidence is available for this run."
     )
+
+    if progress is not None:
+        progress.start_stage("data_audit", subtask="assemble", message="Assembling data audit details.")
+
+    report_assembly_start = time.perf_counter()
+    _record_task("report_assembly", "Report Assembly", report_assembly_start, detail="Sections and tables materialized.")
+
+    slowest_tasks = [
+        f"{task.label} ({task.duration_ms}ms)"
+        for task in sorted(task_breakdown, key=lambda row: row.duration_ms, reverse=True)[:4]
+    ]
 
     data_audit = DataAuditSection(
         transcript_discovery=TranscriptDiscoveryAudit(
@@ -1322,7 +1539,19 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
         normalization_mode=normalization_mode,
         warnings=warnings,
         confidence_note=confidence_note,
+        task_breakdown=task_breakdown,
+        slowest_tasks=slowest_tasks,
+        fundamentals_validation=fundamentals_validation,
     )
+
+    if progress is not None:
+        progress.update_stage(
+            "data_audit",
+            progress=0.85,
+            subtask="finalize",
+            message=f"Data audit assembled with {len(task_breakdown)} granular tasks.",
+        )
+        progress.complete_stage("data_audit", message="Data audit finalized.")
 
     aggregate = _aggregate_scores(all_speaker_analysis, fundamentals, news_avg, social_avg)
 
@@ -1350,14 +1579,7 @@ def build_analysis(ticker: str, settings: Settings) -> AnalysisResponse:
             found_quarters=transcript_diagnostics.found_quarters,
             missing_quarters=transcript_diagnostics.missing_quarters,
             errors=transcript_diagnostics.errors,
-            outcomes=[
-                TranscriptQuarterStatus(
-                    quarter=o.quarter,
-                    status=o.status,
-                    detail=o.detail,
-                )
-                for o in transcript_diagnostics.outcomes
-            ],
+            outcomes=quarter_status,
         ),
         warnings_compact=_compact_warnings(
             warnings=warnings,

@@ -282,6 +282,15 @@ class TranscriptSpeakerAnalysis(BaseModel):
     segment_diagnostics: Optional[dict[str, Any]] = None
 
 
+class TranscriptSpeakerRollup(BaseModel):
+    speaker: str
+    mention_count: int
+    avg_sentiment_direction: float
+    avg_confidence: float
+    avg_evasiveness: float
+    dominant_topic: str
+
+
 class TranscriptDocument(BaseModel):
     ticker: str
     company_name: Optional[str] = None
@@ -309,6 +318,8 @@ class TranscriptSectionPayload(BaseModel):
     qa_pressure_points: list[str]
     transcripts: list[TranscriptDocument]
     speaker_confidence_profile: list[dict[str, Any]]
+    speaker_rollup: list[TranscriptSpeakerRollup] = Field(default_factory=list)
+    quarter_status: list[TranscriptQuarterStatus] = Field(default_factory=list)
     chart_enabled: bool
     sparse_note: Optional[str] = None
 
@@ -343,6 +354,30 @@ class TranscriptDiscoveryAudit(BaseModel):
     playwright_fallback_used: bool
 
 
+class FundamentalsValidationMismatch(BaseModel):
+    key: str
+    yahoo_value: Optional[float] = None
+    alpha_value: Optional[float] = None
+    relative_diff_pct: Optional[float] = None
+    note: Optional[str] = None
+
+
+class FundamentalsValidationAudit(BaseModel):
+    yahoo_source_used: bool = True
+    alpha_source_used: bool = False
+    compared_fields: list[str] = Field(default_factory=list)
+    mismatches: list[FundamentalsValidationMismatch] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class AuditTaskBreakdown(BaseModel):
+    key: str
+    label: str
+    status: Literal["done", "error", "skipped"]
+    duration_ms: int = 0
+    detail: str = ""
+
+
 class DataAuditSection(BaseModel):
     transcript_discovery: TranscriptDiscoveryAudit
     source_counts: dict[str, int]
@@ -352,6 +387,9 @@ class DataAuditSection(BaseModel):
     normalization_mode: Literal["openai", "deterministic_degraded"]
     warnings: list[str]
     confidence_note: str
+    task_breakdown: list[AuditTaskBreakdown] = Field(default_factory=list)
+    slowest_tasks: list[str] = Field(default_factory=list)
+    fundamentals_validation: FundamentalsValidationAudit = Field(default_factory=FundamentalsValidationAudit)
 
 
 class AnalysisResponse(BaseModel):

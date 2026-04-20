@@ -237,6 +237,10 @@ def test_build_analysis_returns_new_sections_and_legacy_fields(monkeypatch):
     assert result.market_reaction.news_count == 1
     assert result.fundamentals_workspace.table
     assert result.data_audit.transcript_discovery.pages_scanned == 2
+    assert result.data_audit.task_breakdown
+    assert isinstance(result.data_audit.slowest_tasks, list)
+    assert result.transcript.quarter_status
+    assert result.transcript.speaker_rollup
 
     # strict chart gating for timeline: only one point should disable it
     assert result.market_reaction.chart_enabled is False
@@ -245,6 +249,169 @@ def test_build_analysis_returns_new_sections_and_legacy_fields(monkeypatch):
     assert result.trader_plan.action == "hold"
     assert result.manager_decision.action == "hold"
     assert result.report_tabs
+
+
+def test_operator_rows_are_excluded_from_transcript_analysis(monkeypatch):
+    transcript_record = TranscriptRecord(
+        symbol="AAPL",
+        year=2026,
+        quarter=1,
+        date="2026-01-29",
+        content="Operator: hello\nTim Cook: demand remains strong",
+        source="motley_fool",
+        source_url="https://example.com/transcript",
+        title="Apple (AAPL) Q1 2026 Earnings Call Transcript",
+        extraction_confidence=0.88,
+        parsing_warnings=[],
+        participants=[],
+    )
+
+    transcript_diag = TranscriptFetchDiagnostics(
+        requested_quarters=["2026-Q1"],
+        found_quarters=["2026-Q1"],
+        missing_quarters=[],
+        errors=[],
+        outcomes=[TranscriptFetchOutcome("2026-Q1", "found")],
+    )
+
+    transcript_discovery = TranscriptDiscoveryAudit(
+        pages_scanned=1,
+        candidates_total=1,
+        transcript_like_count=1,
+        match_filtered_count=1,
+        selected_count=1,
+        discarded_near_matches=[],
+        fetch_failures=[],
+        playwright_fallback_used=False,
+    )
+
+    monkeypatch.setattr(
+        analysis,
+        "fetch_transcripts_motley_fool",
+        lambda symbol, company_name, settings, target_count=4: (
+            [transcript_record],
+            [],
+            transcript_diag,
+            transcript_discovery,
+        ),
+    )
+    monkeypatch.setattr(
+        analysis,
+        "fetch_news_multi_source",
+        lambda *args, **kwargs: ([], [], FeedFetchAudit(0, 0, 0)),
+    )
+    monkeypatch.setattr(
+        analysis,
+        "fetch_social_multi_source",
+        lambda *args, **kwargs: ([], [], FeedFetchAudit(0, 0, 0)),
+    )
+    monkeypatch.setattr(
+        analysis,
+        "fetch_fundamentals",
+        lambda symbol: {
+            "company_name": "Apple Inc",
+            "currency": "USD",
+            "market_cap": 1,
+            "trailing_pe": 1,
+            "forward_pe": 1,
+            "debt_to_equity": 1,
+            "quarterly": [],
+            "revenue_qoq_growth_pct": 0,
+            "eps_qoq_growth_pct": 0,
+        },
+    )
+    monkeypatch.setattr(
+        analysis,
+        "enrich_fundamentals_with_alpha_validation",
+        lambda symbol, settings, yahoo_payload: (
+            yahoo_payload,
+            {"yahoo_source_used": True, "alpha_source_used": False, "compared_fields": [], "mismatches": [], "notes": []},
+        ),
+    )
+    monkeypatch.setattr(
+        analysis,
+        "fetch_price_volume_history",
+        lambda symbol, period="3mo": [],
+    )
+    normalized_document = TranscriptDocument(
+        ticker="AAPL",
+        company_name="Apple Inc",
+        source="motley_fool",
+        source_url="https://example.com/transcript",
+        title="Apple (AAPL) Q1 2026 Earnings Call Transcript",
+        published_date="2026-01-29",
+        has_full_transcript=True,
+        extraction_confidence=0.9,
+        parsing_warnings=[],
+        participants=[],
+        sections=[
+            TranscriptSectionBlock(
+                section_type="prepared_remarks",
+                speaker="Operator",
+                speaker_role="operator",
+                text="Welcome everyone.",
+                order_index=0,
+                evidence_snippets=["Welcome everyone."],
+            ),
+            TranscriptSectionBlock(
+                section_type="prepared_remarks",
+                speaker="Tim Cook",
+                speaker_role="management",
+                text="Demand remained strong.",
+                order_index=1,
+                evidence_snippets=["Demand remained strong."],
+            ),
+        ],
+        key_quotes=["Demand remained strong."],
+        normalization_mode="deterministic_degraded",
+    )
+    monkeypatch.setattr(
+        analysis,
+        "normalize_transcript_document",
+        lambda **kwargs: NormalizationResult(document=normalized_document, warnings=[]),
+    )
+    monkeypatch.setattr(
+        analysis,
+        "build_speaker_analysis",
+        lambda sections, score_text_fn: [
+            TranscriptSpeakerAnalysis(
+                speaker="Operator",
+                section_type="prepared_remarks",
+                sentiment_direction=0.0,
+                confidence=48.0,
+                evasiveness=45.0,
+                specificity=30.0,
+                forward_looking_strength=30.0,
+                risk_language_intensity=20.0,
+                topic_label="general",
+                evidence_snippets=["Welcome everyone."],
+            ),
+            TranscriptSpeakerAnalysis(
+                speaker="Tim Cook",
+                section_type="prepared_remarks",
+                sentiment_direction=0.4,
+                confidence=70.0,
+                evasiveness=28.0,
+                specificity=60.0,
+                forward_looking_strength=68.0,
+                risk_language_intensity=24.0,
+                topic_label="demand",
+                evidence_snippets=["Demand remained strong."],
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        analysis,
+        "summarize_transcript_findings",
+        lambda speaker_analysis: ("Summary", [], []),
+    )
+    monkeypatch.setattr(analysis, "get_engine", lambda model_name: _StubEngine())
+
+    result = analysis.build_analysis("AAPL", _settings())
+
+    speakers = {row.speaker for row in result.transcript.speaker_analysis}
+    assert "Operator" not in speakers
+    assert "Tim Cook" in speakers
 
 
 class _SegmentEngine:

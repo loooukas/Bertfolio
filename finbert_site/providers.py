@@ -1473,3 +1473,180 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
         "revenue_qoq_growth_pct": revenue_qoq,
         "eps_qoq_growth_pct": eps_qoq,
     }
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        text = str(value).strip()
+        if not text or text.lower() in {"none", "nan", "null", "-"}:
+            return None
+        return float(text)
+    except Exception:
+        return None
+
+
+def _fetch_alpha_overview(symbol: str, settings: Settings) -> tuple[dict[str, Any], list[str]]:
+    if not settings.alpha_vantage_api_key:
+        return {}, ["ALPHAVANTAGE_API_KEY is missing in .env"]
+    try:
+        payload = _alpha_get(
+            {
+                "function": "OVERVIEW",
+                "symbol": symbol,
+                "apikey": settings.alpha_vantage_api_key,
+            },
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+        return payload, []
+    except Exception as exc:
+        return {}, [f"Alpha Vantage fundamentals overview error for {symbol}: {exc}"]
+
+
+def _fetch_alpha_quarterly_eps(symbol: str, settings: Settings) -> tuple[dict[str, dict[str, Optional[float]]], list[str]]:
+    if not settings.alpha_vantage_api_key:
+        return {}, []
+    try:
+        payload = _alpha_get(
+            {
+                "function": "EARNINGS",
+                "symbol": symbol,
+                "apikey": settings.alpha_vantage_api_key,
+            },
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+    except Exception as exc:
+        return {}, [f"Alpha Vantage quarterly EPS error for {symbol}: {exc}"]
+
+    items = payload.get("quarterlyEarnings")
+    if not isinstance(items, list):
+        return {}, []
+
+    rows: dict[str, dict[str, Optional[float]]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        raw_date = str(item.get("fiscalDateEnding") or "").strip()
+        if not raw_date:
+            continue
+        try:
+            ts = pd.Timestamp(raw_date)
+            quarter_label = _quarter_label(int(ts.year), _quarter_from_month(int(ts.month)))
+        except Exception:
+            continue
+        rows[quarter_label] = {
+            "reported": _safe_float(item.get("reportedEPS")),
+            "estimate": _safe_float(item.get("estimatedEPS")),
+        }
+    return rows, []
+
+
+def enrich_fundamentals_with_alpha_validation(
+    symbol: str,
+    settings: Settings,
+    yahoo_payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Cross-check selected fundamentals fields with Alpha Vantage and backfill missing
+    EPS values where possible. Returns merged fundamentals + validation diagnostics.
+    """
+    merged = dict(yahoo_payload)
+    validation: dict[str, Any] = {
+        "yahoo_source_used": True,
+        "alpha_source_used": False,
+        "compared_fields": [],
+        "mismatches": [],
+        "notes": [],
+    }
+
+    alpha_overview, overview_notes = _fetch_alpha_overview(symbol, settings)
+    validation["notes"].extend(overview_notes)
+    if alpha_overview:
+        validation["alpha_source_used"] = True
+
+    alpha_field_map = {
+        "beta": "Beta",
+        "trailing_pe": "PERatio",
+        "forward_pe": "ForwardPE",
+        "debt_to_equity": "DebtToEquity",
+        "market_cap": "MarketCapitalization",
+    }
+    for key, alpha_key in alpha_field_map.items():
+        alpha_value = _safe_float(alpha_overview.get(alpha_key)) if alpha_overview else None
+        yahoo_value = _safe_float(merged.get(key))
+        if alpha_value is not None or yahoo_value is not None:
+            validation["compared_fields"].append(key)
+        if yahoo_value is None and alpha_value is not None:
+            merged[key] = alpha_value
+            validation["notes"].append(f"{key}: populated from Alpha Vantage.")
+            continue
+        if yahoo_value is None or alpha_value is None:
+            continue
+
+        rel_diff_pct = None
+        if abs(alpha_value) > 1e-8:
+            rel_diff_pct = abs((yahoo_value - alpha_value) / alpha_value) * 100.0
+        if rel_diff_pct is not None and rel_diff_pct >= 10.0:
+            validation["mismatches"].append(
+                {
+                    "key": key,
+                    "yahoo_value": yahoo_value,
+                    "alpha_value": alpha_value,
+                    "relative_diff_pct": round(rel_diff_pct, 2),
+                    "note": "Field differs by >= 10% across providers.",
+                }
+            )
+
+    alpha_eps_map, eps_notes = _fetch_alpha_quarterly_eps(symbol, settings)
+    validation["notes"].extend(eps_notes)
+
+    quarterly = [
+        {
+            "quarter": row.get("quarter"),
+            "revenue": row.get("revenue"),
+            "net_income": row.get("net_income"),
+            "reported_eps": row.get("reported_eps"),
+            "eps_estimate": row.get("eps_estimate"),
+        }
+        for row in (merged.get("quarterly") or [])
+        if isinstance(row, dict) and row.get("quarter")
+    ]
+    quarterly_by_label = {str(row["quarter"]): row for row in quarterly}
+
+    for quarter, eps_row in alpha_eps_map.items():
+        existing = quarterly_by_label.get(quarter)
+        if existing is None:
+            quarterly_by_label[quarter] = {
+                "quarter": quarter,
+                "revenue": None,
+                "net_income": None,
+                "reported_eps": eps_row.get("reported"),
+                "eps_estimate": eps_row.get("estimate"),
+            }
+            continue
+        if existing.get("reported_eps") is None and eps_row.get("reported") is not None:
+            existing["reported_eps"] = eps_row.get("reported")
+        if existing.get("eps_estimate") is None and eps_row.get("estimate") is not None:
+            existing["eps_estimate"] = eps_row.get("estimate")
+
+    def _quarter_sort_key(row: dict[str, Any]) -> tuple[int, int]:
+        label = str(row.get("quarter") or "")
+        try:
+            return _quarter_tuple_from_label(label)
+        except Exception:
+            return (0, 0)
+
+    sorted_quarters = sorted(
+        quarterly_by_label.values(),
+        key=_quarter_sort_key,
+        reverse=True,
+    )[:4]
+    merged["quarterly"] = sorted_quarters
+
+    if len(sorted_quarters) >= 2:
+        current_eps = _safe_float(sorted_quarters[0].get("reported_eps"))
+        prev_eps = _safe_float(sorted_quarters[1].get("reported_eps"))
+        merged["eps_qoq_growth_pct"] = _safe_growth(current_eps, prev_eps)
+
+    return merged, validation

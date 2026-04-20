@@ -34,6 +34,7 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 - Transcript-first workspace IA with left-rail section navigation
 - Centralized UI copy dictionary for hard-coded labels and microcopy
 - Deterministic Motley Fool transcript discovery and parsing pipeline
+- Async run-job orchestration with real backend progress polling
 - Optional OpenAI normalization for strict transcript JSON output
 - Deterministic degraded normalization mode when OpenAI is unavailable
 - Market reaction feed ranking improvements with 14-day lookback + recency weighting
@@ -41,6 +42,7 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 - Social cards now show short excerpts only, with full-post modal view and top-right open-in-new-tab icon
 - News/social cards use 3-column desktop grids for cleaner scan density
 - ECharts-based visual system for higher-fidelity fundamentals and speaker profile charts
+- Chart.js rendering with lazy-init per visible section and full-width responsive surfaces
 - Sentiment timeline panel removed from UI by design (per latest UX decision)
 - Canonical API section payloads + legacy compatibility contract
 
@@ -158,6 +160,18 @@ Legacy fields remain during migration:
 - `aggregate_scores`, `fundamentals`, `news_summary`, `social_summary`
 - `analyst_team`, `research_team`, `trader_plan`, `risk_management`, `manager_decision`
 - `report_tabs`, `charts`, `news`, `social`, `transcripts`
+
+### Async Progress API
+
+- `POST /api/analyze/jobs` with JSON body `{ "ticker": "AAPL" }`
+- `GET /api/analyze/jobs/{job_id}` for run status + progress stages/subtasks
+- `GET /api/analyze/jobs/{job_id}/result` for the completed report payload
+
+The frontend now uses this job flow so the loading screen reflects real backend stage completion.
+
+### Charts Test Surface
+
+Open [http://127.0.0.1:8000/charts-test](http://127.0.0.1:8000/charts-test) to validate chart rendering without waiting on a full analysis run.
 
 ## Local Run
 

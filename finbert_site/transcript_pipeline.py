@@ -7,7 +7,7 @@ records expected by the core analysis flow.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .openai_motley_search import discover_last_quarter_links, scrape_recent_transcripts_for_report
 from .providers import (
@@ -348,6 +348,7 @@ def _fetch_transcripts_motley_cli(
     symbol: str,
     settings: Settings,
     target_count: int,
+    log_fn: Optional[Callable[[str], None]] = None,
 ) -> tuple[list[TranscriptRecord], list[str], TranscriptFetchDiagnostics, TranscriptDiscoveryAudit]:
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY is required for transcript pipeline mode 'motley_cli'.")
@@ -364,6 +365,7 @@ def _fetch_transcripts_motley_cli(
         author_max_pages=settings.motley_author_max_pages,
         discovery_cache_mode=settings.motley_discovery_cache_mode,
         discovery_cache_dir=settings.motley_discovery_cache_dir,
+        log_fn=log_fn,
     )
 
     scrape_payload = scrape_recent_transcripts_for_report(
@@ -375,6 +377,7 @@ def _fetch_transcripts_motley_cli(
         retry_attempts=settings.motley_openai_retries,
         cache_mode=settings.motley_scrape_cache_mode,
         cache_dir=settings.motley_scrape_cache_dir,
+        log_fn=log_fn,
     )
 
     return _build_provider_payload_from_motley_pipeline(
@@ -437,6 +440,7 @@ def fetch_transcripts_for_analysis(
     company_name: Optional[str],
     settings: Settings,
     target_count: int,
+    log_fn: Optional[Callable[[str], None]] = None,
 ) -> tuple[list[TranscriptRecord], list[str], TranscriptFetchDiagnostics, TranscriptDiscoveryAudit]:
     mode = str(settings.transcript_pipeline_mode or "motley_cli").strip().lower()
     if mode not in {"motley_cli", "legacy"}:
@@ -455,6 +459,7 @@ def fetch_transcripts_for_analysis(
             symbol=symbol,
             settings=settings,
             target_count=target_count,
+            log_fn=log_fn,
         )
     except Exception as exc:
         if not settings.transcript_pipeline_fallback_to_legacy:

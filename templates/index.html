@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FinBERT Earnings Signals</title>
     <link rel="stylesheet" href="/static/style.css" />
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   </head>
   <body>
     <main class="app-shell">
@@ -80,6 +80,10 @@
               <p id="transcript-availability" class="summary"></p>
               <p id="transcript-summary" class="body-copy"></p>
               <p id="transcript-prepared-qa" class="body-copy"></p>
+              <div>
+                <h4>Recent Quarters</h4>
+                <div id="transcript-quarter-actions" class="quarter-action-grid"></div>
+              </div>
 
               <div class="split-grid">
                 <div>
@@ -95,6 +99,37 @@
 
             <article class="panel-card">
               <h3 id="heading-speaker-table">Speaker Block Analysis</h3>
+              <div class="filter-grid">
+                <label>
+                  Speaker
+                  <select id="filter-speaker"></select>
+                </label>
+                <label>
+                  Section
+                  <select id="filter-section"></select>
+                </label>
+                <label>
+                  Topic
+                  <select id="filter-topic"></select>
+                </label>
+                <label>
+                  Sentiment
+                  <select id="filter-sentiment"></select>
+                </label>
+                <label>
+                  Min Confidence
+                  <input id="filter-confidence-min" type="number" value="0" min="0" max="100" step="1" />
+                </label>
+                <label>
+                  Max Evasiveness
+                  <input id="filter-evasiveness-max" type="number" value="100" min="0" max="100" step="1" />
+                </label>
+                <label>
+                  Min Specificity
+                  <input id="filter-specificity-min" type="number" value="0" min="0" max="100" step="1" />
+                </label>
+                <button id="filter-reset" type="button" class="ghost-btn">Reset Filters</button>
+              </div>
               <div class="table-wrap">
                 <table id="speaker-analysis-table">
                   <thead>
@@ -227,17 +262,36 @@
       </article>
     </dialog>
 
+    <dialog id="transcript-modal" class="modal">
+      <article class="modal-card">
+        <header>
+          <h3 id="transcript-modal-title">Structured Transcript</h3>
+          <button id="transcript-modal-close" class="ghost-btn" type="button">Close</button>
+        </header>
+        <p id="transcript-modal-meta" class="meta-line"></p>
+        <div id="transcript-modal-body" class="transcript-modal-body"></div>
+      </article>
+    </dialog>
+
     <script>
       const SECTION_ORDER = ["overview", "transcript", "market_reaction", "fundamentals", "data_audit"];
 
       const state = {
         payload: null,
         uiCopy: null,
-        sectionProgress: {},
+        currentSection: "overview",
+        currentJobId: null,
+        jobProgress: null,
         charts: {
           speaker: null,
           fundamentals: null,
         },
+        chartData: {
+          speaker: null,
+          fundamentals: null,
+        },
+        speakerRows: [],
+        transcriptQuarterDocs: {},
       };
 
       const elements = {
@@ -287,7 +341,16 @@
         transcriptPreparedQa: document.getElementById("transcript-prepared-qa"),
         transcriptQuotes: document.getElementById("transcript-quotes"),
         transcriptPressure: document.getElementById("transcript-pressure"),
+        transcriptQuarterActions: document.getElementById("transcript-quarter-actions"),
         speakerTableBody: document.querySelector("#speaker-analysis-table tbody"),
+        filterSpeaker: document.getElementById("filter-speaker"),
+        filterSection: document.getElementById("filter-section"),
+        filterTopic: document.getElementById("filter-topic"),
+        filterSentiment: document.getElementById("filter-sentiment"),
+        filterConfidenceMin: document.getElementById("filter-confidence-min"),
+        filterEvasivenessMax: document.getElementById("filter-evasiveness-max"),
+        filterSpecificityMin: document.getElementById("filter-specificity-min"),
+        filterReset: document.getElementById("filter-reset"),
 
         marketBalance: document.getElementById("market-balance"),
         newsCards: document.getElementById("news-cards"),
@@ -317,11 +380,26 @@
         modalMeta: document.getElementById("modal-meta"),
         modalBody: document.getElementById("modal-body"),
         modalLink: document.getElementById("modal-link"),
+
+        transcriptModal: document.getElementById("transcript-modal"),
+        transcriptModalClose: document.getElementById("transcript-modal-close"),
+        transcriptModalTitle: document.getElementById("transcript-modal-title"),
+        transcriptModalMeta: document.getElementById("transcript-modal-meta"),
+        transcriptModalBody: document.getElementById("transcript-modal-body"),
       };
+
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
 
       function fmtNum(value, digits = 2) {
         if (value === null || value === undefined || Number.isNaN(value)) return "-";
         return new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(value);
+      }
+
+      function fmtCurrency(value) {
+        if (value === null || value === undefined || Number.isNaN(value)) return "-";
+        return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
       }
 
       function fmtDate(utc) {
@@ -333,40 +411,23 @@
 
       function fmtExternalDate(value) {
         if (!value) return "n/a";
-        if (typeof value === "number") return fmtDate(value);
-
         const raw = String(value).trim();
-        if (/^\d{8}T\d{6}$/.test(raw)) {
-          return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
-        }
-        if (/^\d{8}$/.test(raw)) {
-          return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
-        }
-        const maybeDate = new Date(raw);
-        if (!Number.isNaN(maybeDate.getTime())) return maybeDate.toISOString().slice(0, 10);
-        return raw;
+        if (/^\d{8}T\d{6}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+        if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+        return raw.slice(0, 10);
       }
 
-      function fmtCurrency(value) {
-        if (value === null || value === undefined || Number.isNaN(value)) return "-";
-        return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
-      }
-
-      function compactText(text, maxChars = 160) {
-        const cleaned = (text || "").replace(/\s+/g, " ").trim();
+      function compactText(text, maxChars = 180) {
+        const cleaned = String(text || "").replace(/\s+/g, " ").trim();
         if (!cleaned) return "";
-        if (cleaned.length <= maxChars) return cleaned;
-        return `${cleaned.slice(0, maxChars - 1).trimEnd()}…`;
+        return cleaned.length <= maxChars ? cleaned : `${cleaned.slice(0, maxChars - 1).trimEnd()}…`;
       }
 
-      function chartAxisCompact(value) {
-        const num = Number(value || 0);
-        const abs = Math.abs(num);
-        if (abs >= 1_000_000_000_000) return `${(num / 1_000_000_000_000).toFixed(1)}T`;
-        if (abs >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1)}B`;
-        if (abs >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
-        if (abs >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
-        return `${num.toFixed(0)}`;
+      function humanizeToken(value) {
+        return String(value || "n/a")
+          .replaceAll("_", " ")
+          .toLowerCase()
+          .replace(/\b\w/g, (match) => match.toUpperCase());
       }
 
       function externalIcon() {
@@ -378,170 +439,25 @@
         `;
       }
 
-      function sleep(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
+      function clearList(el) {
+        el.innerHTML = "";
       }
 
-      function setLoadingOverlay(visible, title, subtitle) {
+      function renderList(el, items, fallback) {
+        clearList(el);
+        const rows = items && items.length ? items : [fallback];
+        rows.forEach((value) => {
+          const li = document.createElement("li");
+          li.textContent = String(value);
+          el.appendChild(li);
+        });
+      }
+
+      function setLoadingOverlay(visible, title = "", subtitle = "") {
         elements.loadingOverlay.classList.toggle("hidden", !visible);
         document.body.classList.toggle("loading-active", visible);
         if (title) elements.loadingTitle.textContent = title;
         if (subtitle) elements.loadingSubtitle.textContent = subtitle;
-      }
-
-      function initSectionProgress() {
-        state.sectionProgress = {
-          overview: "pending",
-          transcript: "pending",
-          market_reaction: "pending",
-          fundamentals: "pending",
-          data_audit: "pending",
-        };
-      }
-
-      function markSection(sectionKey, status) {
-        if (!state.sectionProgress[sectionKey] && sectionKey !== "overview") return;
-        state.sectionProgress[sectionKey] = status;
-        renderPipelineStatus();
-      }
-
-      function renderPipelineStatus() {
-        const labels = state.uiCopy?.section_labels || {
-          overview: "Overview",
-          transcript: "Transcript",
-          market_reaction: "Market Reaction",
-          fundamentals: "Fundamentals",
-          data_audit: "Data Audit",
-        };
-        const toText = (status) => {
-          if (status === "done") return "Ready";
-          if (status === "loading") return "Loading";
-          if (status === "error") return "Error";
-          return "Queued";
-        };
-
-        elements.pipelineStatus.innerHTML = `
-          <h3>Section Progress</h3>
-          <div class="pipeline-list">
-            ${SECTION_ORDER.map((key) => {
-              const status = state.sectionProgress[key] || "pending";
-              const statusClass = status === "done" ? "is-done" : status === "loading" ? "is-loading" : status === "error" ? "is-error" : "is-pending";
-              return `
-                <div class="pipeline-row">
-                  <span class="pipeline-label">${labels[key] || key}</span>
-                  <span class="pipeline-badge ${statusClass}">
-                    <span class="dot"></span>${toText(status)}
-                  </span>
-                </div>
-              `;
-            }).join("")}
-          </div>
-        `;
-        renderLoadingProgress();
-      }
-
-      function renderLoadingProgress() {
-        const labels = state.uiCopy?.section_labels || {
-          overview: "Overview",
-          transcript: "Transcript",
-          market_reaction: "Market Reaction",
-          fundamentals: "Fundamentals",
-          data_audit: "Data Audit",
-        };
-        const textFor = (status) => {
-          if (status === "done") return "Ready";
-          if (status === "loading") return "Loading";
-          if (status === "error") return "Error";
-          return "Queued";
-        };
-
-        const doneCount = SECTION_ORDER.filter((key) => state.sectionProgress[key] === "done").length;
-        const total = SECTION_ORDER.length || 1;
-        const pct = Math.max(0, Math.min(100, Math.round((doneCount / total) * 100)));
-        elements.loadingProgressBar.style.width = `${pct}%`;
-        elements.loadingProgressList.innerHTML = SECTION_ORDER.map((key) => {
-          const status = state.sectionProgress[key] || "pending";
-          return `
-            <div class="loading-progress-row">
-              <span class="name">${labels[key] || key}</span>
-              <span class="state ${status}">${textFor(status)}</span>
-            </div>
-          `;
-        }).join("");
-      }
-
-      function startProgressTicker() {
-        const stageOrder = ["overview", "market_reaction", "transcript", "fundamentals", "data_audit"];
-        const titles = {
-          overview: "Running sentiment + reaction pipeline…",
-          market_reaction: "Scoring news and social feeds…",
-          transcript: "Parsing transcript pipeline…",
-          fundamentals: "Computing fundamentals metrics…",
-          data_audit: "Finalizing data audit and report…",
-        };
-        let idx = 0;
-        markSection(stageOrder[idx], "loading");
-        setLoadingOverlay(true, titles[stageOrder[idx]], "Preparing the complete report.");
-
-        const timer = setInterval(() => {
-          if (idx >= stageOrder.length - 1) {
-            return;
-          }
-          const current = stageOrder[idx];
-          if (state.sectionProgress[current] === "loading") {
-            markSection(current, "done");
-          }
-          idx += 1;
-          const next = stageOrder[idx];
-          if (state.sectionProgress[next] !== "done") {
-            markSection(next, "loading");
-          }
-          setLoadingOverlay(true, titles[next], "Preparing the complete report.");
-        }, 1400);
-
-        return () => clearInterval(timer);
-      }
-
-      function clearList(listEl) {
-        listEl.innerHTML = "";
-      }
-
-      function renderList(listEl, items, fallback) {
-        clearList(listEl);
-        const rows = items && items.length ? items : [fallback];
-        rows.forEach((text) => {
-          const li = document.createElement("li");
-          li.textContent = text;
-          listEl.appendChild(li);
-        });
-      }
-
-      function resetDeferredSections() {
-        elements.transcriptAvailability.textContent = "Availability: loading…";
-        elements.transcriptSummary.textContent = "Transcript normalization and speaker analysis are in progress.";
-        elements.transcriptPreparedQa.textContent = "";
-        elements.speakerTableBody.innerHTML = "";
-        renderList(elements.transcriptQuotes, [], "Loading transcript quotes…");
-        renderList(elements.transcriptPressure, [], "Loading Q&A pressure points…");
-
-        elements.fundamentalsContext.textContent = "Fundamentals trend processing…";
-        elements.fundamentalsMetrics.innerHTML = "";
-        elements.fundamentalsTableBody.innerHTML = "";
-        setChartVisibility(elements.fundamentalsChartSurface, elements.fundamentalsChartEmpty, false);
-        elements.fundamentalsChartEmpty.textContent = "Fundamentals section is still loading.";
-
-        elements.auditConfidence.textContent = "Audit diagnostics are still loading.";
-        elements.auditTableBody.innerHTML = "";
-        renderList(elements.auditWarnings, [], "Loading warnings…");
-        renderList(elements.auditMissing, [], "Loading sparse-source flags…");
-        renderList(elements.auditDedupe, [], "Loading dedupe stats…");
-        renderList(elements.auditFailures, [], "Loading discovery failures…");
-        renderList(elements.auditDiscarded, [], "Loading discarded near-matches…");
-        renderList(elements.auditParsing, [], "Loading parsing warnings…");
-      }
-
-      function destroyChart(chart) {
-        if (chart && typeof chart.dispose === "function") chart.dispose();
       }
 
       function setChartVisibility(surface, empty, enabled) {
@@ -549,14 +465,87 @@
         empty.style.display = enabled ? "none" : "block";
       }
 
-      function buildSectionNav(sectionLabels) {
-        elements.sectionNav.innerHTML = SECTION_ORDER
-          .map((id, index) => {
-            const active = index === 0 ? "active" : "";
-            const label = sectionLabels[id] || id;
-            return `<button type="button" class="nav-btn ${active}" data-section="${id}">${label}</button>`;
+      function destroyCharts() {
+        Object.keys(state.charts).forEach((key) => {
+          const chart = state.charts[key];
+          if (chart && typeof chart.destroy === "function") chart.destroy();
+          state.charts[key] = null;
+        });
+      }
+
+      function stageLabels() {
+        return state.uiCopy?.section_labels || {
+          overview: "Overview",
+          transcript: "Transcript",
+          market_reaction: "Market Reaction",
+          fundamentals: "Fundamentals",
+          data_audit: "Data Audit",
+        };
+      }
+
+      function renderPipelineStatus() {
+        const progress = state.jobProgress;
+        const labels = stageLabels();
+        const stages = progress?.stages || SECTION_ORDER.map((key) => ({ key, status: "pending", subtask: "", message: "" }));
+        elements.pipelineStatus.innerHTML = `
+          <h3>Section Progress</h3>
+          <div class="pipeline-list">
+            ${stages
+              .map((stage) => {
+                const status = stage.status || "pending";
+                const icon = status === "done" ? "✓" : status === "loading" ? "…" : status === "error" ? "!" : "·";
+                const text = status === "done" ? "Ready" : status === "loading" ? "Loading" : status === "error" ? "Error" : "Queued";
+                return `
+                  <div class="pipeline-row">
+                    <span class="pipeline-label">${labels[stage.key] || humanizeToken(stage.key)}</span>
+                    <span class="pipeline-badge is-${status}">
+                      <span class="dot">${icon}</span>${text}
+                    </span>
+                  </div>
+                `;
+              })
+              .join("")}
+          </div>
+        `;
+      }
+
+      function renderLoadingProgress() {
+        const progress = state.jobProgress;
+        const stages = progress?.stages || SECTION_ORDER.map((key) => ({ key, status: "pending" }));
+        const labels = stageLabels();
+        const percent = Math.max(0, Math.min(100, Number(progress?.percent || 0)));
+        elements.loadingProgressBar.style.width = `${percent}%`;
+        elements.loadingProgressList.innerHTML = stages
+          .map((stage) => {
+            const status = stage.status || "pending";
+            const text = status === "done" ? "Ready" : status === "loading" ? "Loading" : status === "error" ? "Error" : "Queued";
+            return `
+              <div class="loading-progress-row">
+                <span class="name">${labels[stage.key] || humanizeToken(stage.key)}</span>
+                <span class="state ${status}">${text}</span>
+              </div>
+            `;
           })
           .join("");
+
+        const activeStage = labels[progress?.active_stage] || "Booting Analysis";
+        const activeTask = progress?.active_subtask ? humanizeToken(progress.active_subtask) : "Preparing the complete report.";
+        elements.loadingTitle.textContent = `${activeStage} in progress…`;
+        elements.loadingSubtitle.textContent = activeTask;
+      }
+
+      function updateProgressView(jobPayload) {
+        state.jobProgress = jobPayload?.progress || null;
+        renderPipelineStatus();
+        renderLoadingProgress();
+      }
+
+      function buildSectionNav(sectionLabels) {
+        elements.sectionNav.innerHTML = SECTION_ORDER.map((id, index) => {
+          const active = index === 0 ? "active" : "";
+          const label = sectionLabels[id] || humanizeToken(id);
+          return `<button type="button" class="nav-btn ${active}" data-section="${id}">${label}</button>`;
+        }).join("");
 
         elements.sectionNav.querySelectorAll(".nav-btn").forEach((button) => {
           button.addEventListener("click", () => switchSection(button.dataset.section));
@@ -564,340 +553,14 @@
       }
 
       function switchSection(sectionId) {
+        state.currentSection = sectionId;
         document.querySelectorAll(".nav-btn").forEach((button) => {
           button.classList.toggle("active", button.dataset.section === sectionId);
         });
         document.querySelectorAll(".section-pane").forEach((pane) => {
           pane.classList.toggle("active", pane.id === `section-${sectionId}`);
         });
-      }
-
-      function renderRunContext(payload) {
-        const overview = payload.overview;
-        const transcript = payload.transcript || { transcript_count_found: "-", transcript_count_requested: "-" };
-        const market = payload.market_reaction || { news_count: 0, social_count: 0 };
-        const stance = (overview.stance_label || "mixed").replaceAll("_", " ");
-        const overall = (payload.overall_sentiment_label || "mixed").replaceAll("_", " ");
-        const normalization = payload.data_audit
-          ? payload.data_audit.normalization_mode === "openai"
-            ? "OpenAI normalized"
-            : "Deterministic fallback"
-          : "Snapshot mode";
-        elements.runContext.innerHTML = `
-          <h3>${overview.ticker}</h3>
-          <p class="summary">Stance: ${stance} · Overall: ${overall} (${fmtNum(payload.overall_sentiment_score, 3)})</p>
-          <p class="meta-line">Coverage T:${transcript.transcript_count_found}/${transcript.transcript_count_requested} · N:${market.news_count} · S:${market.social_count}</p>
-          <p class="meta-line">${normalization}</p>
-        `;
-      }
-
-      function renderOverview(payload) {
-        const transcript = payload.transcript || {};
-        elements.overviewSummary.textContent = payload.overview.executive_summary;
-
-        clearList(elements.overviewTakeaways);
-        (payload.overview.key_takeaways || []).forEach((item) => {
-          const li = document.createElement("li");
-          li.textContent = item;
-          elements.overviewTakeaways.appendChild(li);
-        });
-
-        elements.overviewMetrics.innerHTML = (payload.overview.metrics || [])
-          .map((metric) => `
-            <article class="metric-card">
-              <p>${metric.label}</p>
-              <strong>${metric.value}</strong>
-            </article>
-          `)
-          .join("");
-
-        destroyChart(state.charts.speaker);
-        const profile = transcript.speaker_confidence_profile || [];
-        const canChart = Boolean(transcript.chart_enabled && profile.length >= 2);
-        setChartVisibility(elements.speakerChartSurface, elements.speakerChartEmpty, canChart);
-
-        if (canChart) {
-          state.charts.speaker = echarts.init(elements.speakerChartSurface, null, { renderer: "canvas" });
-          state.charts.speaker.setOption({
-            grid: { left: 52, right: 18, top: 44, bottom: 48 },
-            tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
-            legend: {
-              top: 6,
-              textStyle: { color: "#d3ddf2" },
-              data: ["Confidence", "Evasiveness"],
-            },
-            xAxis: {
-              type: "category",
-              data: profile.map((row) => row.speaker),
-              axisLabel: { color: "#9aaacc", interval: 0, rotate: 18 },
-              axisLine: { lineStyle: { color: "rgba(255,255,255,0.2)" } },
-            },
-            yAxis: {
-              type: "value",
-              min: 0,
-              max: 100,
-              axisLabel: { color: "#9aaacc" },
-              splitLine: { lineStyle: { color: "rgba(255,255,255,0.08)" } },
-            },
-            series: [
-              {
-                name: "Confidence",
-                type: "bar",
-                barMaxWidth: 38,
-                itemStyle: { color: "rgba(80, 202, 163, 0.74)", borderRadius: [8, 8, 0, 0] },
-                data: profile.map((row) => row.confidence),
-              },
-              {
-                name: "Evasiveness",
-                type: "bar",
-                barMaxWidth: 38,
-                itemStyle: { color: "rgba(240, 99, 123, 0.62)", borderRadius: [8, 8, 0, 0] },
-                data: profile.map((row) => row.evasiveness),
-              },
-            ],
-          });
-        }
-      }
-
-      function renderTranscript(payload) {
-        const transcript = payload.transcript;
-        elements.transcriptAvailability.textContent = `Availability: ${transcript.availability} · Coverage ${transcript.transcript_count_found}/${transcript.transcript_count_requested}`;
-        elements.transcriptSummary.textContent = transcript.latest_summary || "No transcript summary available.";
-        elements.transcriptPreparedQa.textContent = transcript.prepared_vs_qa_note || "Prepared remarks vs Q&A distinction unavailable.";
-
-        renderList(elements.transcriptQuotes, transcript.key_quotes || [], "No quotes extracted.");
-        renderList(elements.transcriptPressure, transcript.qa_pressure_points || [], "No pressure points identified.");
-
-        elements.speakerTableBody.innerHTML = "";
-        (transcript.speaker_analysis || []).forEach((row) => {
-          const tr = document.createElement("tr");
-          tr.innerHTML = `
-            <td>${row.speaker}</td>
-            <td>${row.section_type}</td>
-            <td>${fmtNum(row.sentiment_direction, 3)}</td>
-            <td>${fmtNum(row.confidence, 1)}</td>
-            <td>${fmtNum(row.evasiveness, 1)}</td>
-            <td>${fmtNum(row.specificity, 1)}</td>
-            <td>${row.topic_label}</td>
-          `;
-          elements.speakerTableBody.appendChild(tr);
-        });
-      }
-
-      function renderNewsCards(items) {
-        elements.newsCards.innerHTML = "";
-        if (!items || !items.length) {
-          const text = state.uiCopy?.empty_states?.news || "No news items met the quality threshold.";
-          elements.newsCards.innerHTML = `<p class="empty-note">${text}</p>`;
-          return;
-        }
-
-        elements.newsCards.innerHTML = items
-          .map((item) => `
-            <article class="feed-card">
-              <a class="card-link-icon" href="${item.url}" target="_blank" rel="noopener noreferrer" aria-label="Open in new tab">
-                ${externalIcon()}
-              </a>
-              <div class="feed-meta">
-                <span>${item.source || "source n/a"}</span>
-                <span>${fmtExternalDate(item.time_published)}</span>
-                <span>${item.sentiment_label} ${fmtNum(item.sentiment_score, 3)}</span>
-              </div>
-              <h4><a href="${item.url}" target="_blank" rel="noopener noreferrer">${item.title}</a></h4>
-              <p>${compactText(item.summary || "No preview available.", 190)}</p>
-            </article>
-          `)
-          .join("");
-      }
-
-      function openSocialModal(item) {
-        elements.modalTitle.textContent = item.title || "Social Post";
-        elements.modalMeta.textContent = `${item.subreddit ? `r/${item.subreddit}` : "reddit"} · ${fmtDate(item.created_utc)} · ${item.sentiment_label} ${fmtNum(item.sentiment_score, 3)}`;
-        elements.modalBody.textContent = item.body || "No body text available.";
-        elements.modalLink.href = item.url || "https://www.reddit.com";
-        elements.modal.showModal();
-      }
-
-      function renderSocialCards(items) {
-        elements.socialCards.innerHTML = "";
-        if (!items || !items.length) {
-          const text = state.uiCopy?.empty_states?.social || "No social items met the quality threshold.";
-          elements.socialCards.innerHTML = `<p class="empty-note">${text}</p>`;
-          return;
-        }
-
-        const cards = items
-          .map((item, index) => `
-            <article class="feed-card social-card" data-index="${index}">
-              <a class="card-link-icon" href="${item.url}" target="_blank" rel="noopener noreferrer" aria-label="Open in new tab">
-                ${externalIcon()}
-              </a>
-              <div class="feed-meta">
-                <span>${item.subreddit ? `r/${item.subreddit}` : "reddit"}</span>
-                <span>${fmtDate(item.created_utc)}</span>
-                <span>${item.sentiment_label} ${fmtNum(item.sentiment_score, 3)}</span>
-              </div>
-              <h4>${item.title}</h4>
-              <p>${item.excerpt || "No excerpt available."}</p>
-            </article>
-          `)
-          .join("");
-
-        elements.socialCards.innerHTML = cards;
-        elements.socialCards.querySelectorAll(".social-card").forEach((card) => {
-          const index = Number(card.dataset.index);
-          card.addEventListener("click", (event) => {
-            if (event.target.closest(".card-link-icon")) return;
-            openSocialModal(items[index]);
-          });
-        });
-      }
-
-      function renderMarketReaction(payload) {
-        const market = payload.market_reaction;
-        elements.marketBalance.textContent = market.balance_summary;
-        renderNewsCards(market.news_items || []);
-        renderSocialCards(market.social_items || []);
-      }
-
-      function renderFundamentals(payload) {
-        const f = payload.fundamentals_workspace;
-        elements.fundamentalsContext.textContent = f.operating_context;
-
-        elements.fundamentalsMetrics.innerHTML = (f.metrics || [])
-          .map((metric) => `
-            <article class="metric-card">
-              <p>${metric.label}</p>
-              <strong>${metric.value}</strong>
-            </article>
-          `)
-          .join("");
-
-        elements.fundamentalsTableBody.innerHTML = "";
-        (f.table || []).forEach((row) => {
-          const tr = document.createElement("tr");
-          tr.innerHTML = `
-            <td>${row.quarter}</td>
-            <td>${fmtCurrency(row.revenue)}</td>
-            <td>${fmtCurrency(row.net_income)}</td>
-            <td>${fmtNum(row.reported_eps, 2)}</td>
-            <td>${fmtNum(row.eps_estimate, 2)}</td>
-          `;
-          elements.fundamentalsTableBody.appendChild(tr);
-        });
-
-        destroyChart(state.charts.fundamentals);
-        const trend = f.trend_series || [];
-        const canChart = Boolean(f.chart_enabled && trend.length >= 3);
-        setChartVisibility(elements.fundamentalsChartSurface, elements.fundamentalsChartEmpty, canChart);
-
-        if (canChart) {
-          state.charts.fundamentals = echarts.init(elements.fundamentalsChartSurface, null, { renderer: "canvas" });
-          state.charts.fundamentals.setOption({
-            grid: { left: 64, right: 72, top: 52, bottom: 48 },
-            tooltip: { trigger: "axis" },
-            legend: {
-              top: 8,
-              textStyle: { color: "#d3ddf2" },
-              data: ["Revenue", "Net Income", "Reported EPS", "EPS Estimate"],
-            },
-            xAxis: {
-              type: "category",
-              data: trend.map((point) => point.quarter),
-              axisLabel: { color: "#9aaacc" },
-              axisLine: { lineStyle: { color: "rgba(255,255,255,0.2)" } },
-            },
-            yAxis: [
-              {
-                type: "value",
-                name: "USD",
-                axisLabel: {
-                  color: "#9aaacc",
-                  formatter: (value) => chartAxisCompact(value),
-                },
-                splitLine: { lineStyle: { color: "rgba(255,255,255,0.08)" } },
-              },
-              {
-                type: "value",
-                name: "EPS",
-                position: "right",
-                axisLabel: { color: "#9aaacc" },
-                splitLine: { show: false },
-              },
-            ],
-            series: [
-              {
-                name: "Revenue",
-                type: "bar",
-                barMaxWidth: 46,
-                itemStyle: { color: "rgba(120, 191, 255, 0.62)", borderRadius: [8, 8, 0, 0] },
-                data: trend.map((point) => point.revenue ?? null),
-              },
-              {
-                name: "Net Income",
-                type: "bar",
-                barMaxWidth: 46,
-                itemStyle: { color: "rgba(82, 205, 162, 0.58)", borderRadius: [8, 8, 0, 0] },
-                data: trend.map((point) => point.net_income ?? null),
-              },
-              {
-                name: "Reported EPS",
-                type: "line",
-                yAxisIndex: 1,
-                smooth: true,
-                showSymbol: true,
-                symbolSize: 8,
-                lineStyle: { width: 3, color: "#f4c66e" },
-                itemStyle: { color: "#f4c66e" },
-                data: trend.map((point) => point.eps ?? null),
-              },
-              {
-                name: "EPS Estimate",
-                type: "line",
-                yAxisIndex: 1,
-                smooth: true,
-                showSymbol: true,
-                symbolSize: 7,
-                lineStyle: { width: 2, type: "dashed", color: "#ff9f7a" },
-                itemStyle: { color: "#ff9f7a" },
-                data: trend.map((point) => point.eps_estimate ?? null),
-              },
-            ],
-          });
-        }
-      }
-
-      function renderDataAudit(payload) {
-        const audit = payload.data_audit;
-        elements.auditConfidence.textContent = `${audit.confidence_note} Normalization mode: ${audit.normalization_mode}.`;
-
-        elements.auditTableBody.innerHTML = "";
-        const rows = [
-          ["Pages scanned", audit.transcript_discovery.pages_scanned],
-          ["Candidates total", audit.transcript_discovery.candidates_total],
-          ["Transcript-like titles", audit.transcript_discovery.transcript_like_count],
-          ["Match-filtered", audit.transcript_discovery.match_filtered_count],
-          ["Selected", audit.transcript_discovery.selected_count],
-          ["Near-match discards", (audit.transcript_discovery.discarded_near_matches || []).length],
-          ["Fetch failures", (audit.transcript_discovery.fetch_failures || []).length],
-          ["Playwright fallback used", audit.transcript_discovery.playwright_fallback_used ? "yes" : "no"],
-        ];
-
-        rows.forEach(([label, value]) => {
-          const tr = document.createElement("tr");
-          tr.innerHTML = `<td>${label}</td><td>${value}</td>`;
-          elements.auditTableBody.appendChild(tr);
-        });
-
-        renderList(elements.auditWarnings, audit.warnings || [], "No warnings.");
-        renderList(elements.auditMissing, audit.missing_items || [], "No missing-source flags.");
-
-        const dedupeRows = Object.entries(audit.dedupe_counts || {}).map(([key, value]) => `${key}: ${value}`);
-        renderList(elements.auditDedupe, dedupeRows, "No dedupe stats.");
-
-        renderList(elements.auditFailures, audit.transcript_discovery.fetch_failures || [], "No discovery fetch failures.");
-        renderList(elements.auditDiscarded, audit.transcript_discovery.discarded_near_matches || [], "No discarded near-matches.");
-        renderList(elements.auditParsing, audit.parsing_warnings || [], "No transcript parsing warnings.");
+        renderVisibleCharts();
       }
 
       function applyCopy(copy) {
@@ -929,20 +592,466 @@
         elements.headingAuditDiscarded.textContent = copy.headings?.audit_discarded || elements.headingAuditDiscarded.textContent;
         elements.headingAuditParsing.textContent = copy.headings?.audit_parsing || elements.headingAuditParsing.textContent;
 
-        elements.fundamentalsChartEmpty.textContent =
-          copy.empty_states?.fundamentals_chart || elements.fundamentalsChartEmpty.textContent;
-        elements.speakerChartEmpty.textContent =
-          copy.empty_states?.speaker_profile || elements.speakerChartEmpty.textContent;
-
+        elements.speakerChartEmpty.textContent = copy.empty_states?.speaker_profile || elements.speakerChartEmpty.textContent;
+        elements.fundamentalsChartEmpty.textContent = copy.empty_states?.fundamentals_chart || elements.fundamentalsChartEmpty.textContent;
         elements.modalClose.textContent = copy.microcopy?.modal_close_action || elements.modalClose.textContent;
         elements.modalLink.textContent = copy.microcopy?.modal_open_action || elements.modalLink.textContent;
+
         buildSectionNav(copy.section_labels || {});
-        renderPipelineStatus();
+      }
+
+      function renderRunContext(payload) {
+        const overview = payload.overview || {};
+        const transcript = payload.transcript || {};
+        const market = payload.market_reaction || {};
+        const overallLabel = humanizeToken(payload.overall_sentiment_label || "mixed");
+        const stanceLabel = humanizeToken(overview.stance_label || "mixed");
+        const cardTone = (payload.overall_sentiment_label || "").includes("bearish")
+          ? "tone-bearish"
+          : (payload.overall_sentiment_label || "").includes("bullish")
+            ? "tone-bullish"
+            : "tone-mixed";
+        elements.runContext.className = `rail-card ${cardTone}`;
+        elements.runContext.innerHTML = `
+          <h3>${overview.ticker || payload.ticker}</h3>
+          <p class="summary">Stance: ${stanceLabel} · Overall: ${overallLabel} (${fmtNum(payload.overall_sentiment_score, 3)})</p>
+          <p class="meta-line">Coverage T:${transcript.transcript_count_found || 0}/${transcript.transcript_count_requested || 0} · N:${market.news_count || 0} · S:${market.social_count || 0}</p>
+          <p class="meta-line">${humanizeToken(payload.data_audit?.normalization_mode || "snapshot_mode")}</p>
+        `;
+      }
+
+      function renderOverview(payload) {
+        elements.overviewSummary.textContent = payload.overview?.executive_summary || "No overview summary available.";
+        renderList(elements.overviewTakeaways, payload.overview?.key_takeaways || [], "No overview takeaways yet.");
+        elements.overviewMetrics.innerHTML = (payload.overview?.metrics || [])
+          .map((metric) => `<article class="metric-card"><p>${metric.label}</p><strong>${metric.value}</strong></article>`)
+          .join("");
+
+        const profile = payload.transcript?.speaker_confidence_profile || [];
+        const canChart = Boolean(payload.transcript?.chart_enabled && profile.length >= 2);
+        setChartVisibility(elements.speakerChartSurface, elements.speakerChartEmpty, canChart);
+        state.chartData.speaker = canChart
+          ? {
+              labels: profile.map((row) => row.speaker),
+              confidence: profile.map((row) => row.confidence),
+              evasiveness: profile.map((row) => row.evasiveness),
+            }
+          : null;
+      }
+
+      function populateFilters(rows) {
+        const speakers = Array.from(new Set(rows.map((row) => row.speaker))).sort();
+        const sections = Array.from(new Set(rows.map((row) => row.section_type))).sort();
+        const topics = Array.from(new Set(rows.map((row) => row.topic_label))).sort();
+        const sentimentOptions = [
+          { value: "all", label: "All" },
+          { value: "bullish", label: "Bullish Only" },
+          { value: "mixed", label: "Mixed/Neutral" },
+          { value: "bearish", label: "Bearish Only" },
+        ];
+
+        const makeOptions = (options, humanize = true) =>
+          [`<option value="all">All</option>`, ...options.map((value) => `<option value="${value}">${humanize ? humanizeToken(value) : value}</option>`)].join("");
+
+        elements.filterSpeaker.innerHTML = makeOptions(speakers, false);
+        elements.filterSection.innerHTML = makeOptions(sections);
+        elements.filterTopic.innerHTML = makeOptions(topics);
+        elements.filterSentiment.innerHTML = sentimentOptions.map((item) => `<option value="${item.value}">${item.label}</option>`).join("");
+      }
+
+      function sentimentBucket(value) {
+        if (value >= 0.12) return "bullish";
+        if (value <= -0.12) return "bearish";
+        return "mixed";
+      }
+
+      function filteredSpeakerRows() {
+        const speaker = elements.filterSpeaker.value;
+        const section = elements.filterSection.value;
+        const topic = elements.filterTopic.value;
+        const sentiment = elements.filterSentiment.value;
+        const minConfidence = Number(elements.filterConfidenceMin.value || 0);
+        const maxEvasiveness = Number(elements.filterEvasivenessMax.value || 100);
+        const minSpecificity = Number(elements.filterSpecificityMin.value || 0);
+
+        return state.speakerRows.filter((row) => {
+          if ((row.speaker || "").toLowerCase().startsWith("operator")) return false;
+          if (speaker && speaker !== "all" && row.speaker !== speaker) return false;
+          if (section && section !== "all" && row.section_type !== section) return false;
+          if (topic && topic !== "all" && row.topic_label !== topic) return false;
+          if (sentiment && sentiment !== "all" && sentimentBucket(Number(row.sentiment_direction || 0)) !== sentiment) return false;
+          if (Number(row.confidence || 0) < minConfidence) return false;
+          if (Number(row.evasiveness || 0) > maxEvasiveness) return false;
+          if (Number(row.specificity || 0) < minSpecificity) return false;
+          return true;
+        });
+      }
+
+      function renderSpeakerTable() {
+        const rows = filteredSpeakerRows();
+        const countBySpeaker = {};
+        rows.forEach((row) => {
+          countBySpeaker[row.speaker] = (countBySpeaker[row.speaker] || 0) + 1;
+        });
+        rows.sort((a, b) => {
+          const diff = (countBySpeaker[b.speaker] || 0) - (countBySpeaker[a.speaker] || 0);
+          if (diff !== 0) return diff;
+          if (a.speaker !== b.speaker) return a.speaker.localeCompare(b.speaker);
+          return Number(b.confidence || 0) - Number(a.confidence || 0);
+        });
+
+        elements.speakerTableBody.innerHTML = "";
+        let previousSpeaker = "";
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          if (row.speaker !== previousSpeaker) tr.classList.add("speaker-group-start");
+          previousSpeaker = row.speaker;
+          tr.innerHTML = `
+            <td>${row.speaker} <span class="meta-inline">(${countBySpeaker[row.speaker] || 0})</span></td>
+            <td>${humanizeToken(row.section_type)}</td>
+            <td>${fmtNum(row.sentiment_direction, 3)}</td>
+            <td>${fmtNum(row.confidence, 1)}</td>
+            <td>${fmtNum(row.evasiveness, 1)}</td>
+            <td>${fmtNum(row.specificity, 1)}</td>
+            <td>${humanizeToken(row.topic_label)}</td>
+          `;
+          elements.speakerTableBody.appendChild(tr);
+        });
+        if (!rows.length) {
+          elements.speakerTableBody.innerHTML = `<tr><td colspan="7">No speaker blocks match the current filters.</td></tr>`;
+        }
+      }
+
+      function transcriptDocForQuarter(quarterLabel, docs, quarterStatus) {
+        const statusRows = quarterStatus || [];
+        const foundRows = statusRows.filter((row) => row.status === "found");
+        const foundIndex = foundRows.findIndex((row) => row.quarter === quarterLabel);
+        if (foundIndex < 0) return null;
+        return docs[foundIndex] || null;
+      }
+
+      function openTranscriptModal(quarter, doc) {
+        if (!doc) return;
+        elements.transcriptModalTitle.textContent = `${quarter} Structured Transcript`;
+        elements.transcriptModalMeta.textContent = `${doc.title || "Transcript"} · ${doc.source || "source"} · ${doc.published_date || "n/a"}`;
+        const participantLine = (doc.participants || []).map((row) => `${row.name}${row.role ? ` (${row.role})` : ""}`).join(", ");
+        elements.transcriptModalBody.innerHTML = `
+          <p><strong>Participants:</strong> ${participantLine || "n/a"}</p>
+          ${(doc.sections || [])
+            .slice(0, 120)
+            .map(
+              (section) => `
+              <article class="transcript-section-block">
+                <header>${section.speaker || "Unknown"} · ${humanizeToken(section.section_type)}</header>
+                <p>${section.text || ""}</p>
+              </article>
+            `
+            )
+            .join("")}
+        `;
+        elements.transcriptModal.showModal();
+      }
+
+      function renderTranscriptQuarterActions(transcript) {
+        const statusRows = transcript.quarter_status || [];
+        const docs = transcript.transcripts || [];
+        state.transcriptQuarterDocs = {};
+        elements.transcriptQuarterActions.innerHTML = statusRows
+          .slice(0, 4)
+          .map((row) => {
+            const tone = row.status === "found" ? "is-ready" : row.status === "error" ? "is-error" : "is-missing";
+            const label = row.status === "found" ? "Ready" : row.status === "error" ? "Error" : "Missing";
+            const disabled = row.status !== "found" ? "disabled" : "";
+            const doc = transcriptDocForQuarter(row.quarter, docs, statusRows);
+            if (doc) state.transcriptQuarterDocs[row.quarter] = doc;
+            return `<button class="quarter-btn ${tone}" data-quarter="${row.quarter}" ${disabled}><span>${row.quarter}</span><small>${label}</small></button>`;
+          })
+          .join("");
+
+        elements.transcriptQuarterActions.querySelectorAll(".quarter-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const quarter = btn.dataset.quarter;
+            openTranscriptModal(quarter, state.transcriptQuarterDocs[quarter]);
+          });
+        });
+      }
+
+      function renderTranscript(payload) {
+        const transcript = payload.transcript || {};
+        elements.transcriptAvailability.textContent = `Availability: ${humanizeToken(transcript.availability)} · Coverage ${transcript.transcript_count_found || 0}/${transcript.transcript_count_requested || 0}`;
+        elements.transcriptSummary.textContent = transcript.latest_summary || "No transcript summary available.";
+        elements.transcriptPreparedQa.textContent = transcript.prepared_vs_qa_note || "Prepared remarks vs Q&A distinction unavailable.";
+        renderList(elements.transcriptQuotes, transcript.key_quotes || [], "No quotes extracted.");
+        renderList(elements.transcriptPressure, transcript.qa_pressure_points || [], "No pressure points identified.");
+
+        state.speakerRows = transcript.speaker_analysis || [];
+        populateFilters(state.speakerRows);
+        renderSpeakerTable();
+        renderTranscriptQuarterActions(transcript);
+      }
+
+      function renderNewsCards(items) {
+        elements.newsCards.innerHTML = "";
+        if (!items || !items.length) {
+          elements.newsCards.innerHTML = `<p class="empty-note">${state.uiCopy?.empty_states?.news || "No news items met the quality threshold."}</p>`;
+          return;
+        }
+        elements.newsCards.innerHTML = items
+          .map(
+            (item) => `
+            <article class="feed-card">
+              <a class="card-link-icon" href="${item.url}" target="_blank" rel="noopener noreferrer" aria-label="Open in new tab">${externalIcon()}</a>
+              <div class="feed-meta">
+                <span>${item.source || "source n/a"}</span>
+                <span>${fmtExternalDate(item.time_published)}</span>
+                <span>${humanizeToken(item.sentiment_label)} ${fmtNum(item.sentiment_score, 3)}</span>
+              </div>
+              <h4><a href="${item.url}" target="_blank" rel="noopener noreferrer">${item.title}</a></h4>
+              <p>${compactText(item.summary || "No preview available.", 190)}</p>
+            </article>
+          `
+          )
+          .join("");
+      }
+
+      function openSocialModal(item) {
+        elements.modalTitle.textContent = item.title || "Social Post";
+        elements.modalMeta.textContent = `${item.subreddit ? `r/${item.subreddit}` : "social"} · ${fmtDate(item.created_utc)} · ${humanizeToken(item.sentiment_label)} ${fmtNum(item.sentiment_score, 3)}`;
+        elements.modalBody.textContent = item.body || "No body text available.";
+        elements.modalLink.href = item.url || "#";
+        elements.modal.showModal();
+      }
+
+      function renderSocialCards(items) {
+        elements.socialCards.innerHTML = "";
+        if (!items || !items.length) {
+          elements.socialCards.innerHTML = `<p class="empty-note">${state.uiCopy?.empty_states?.social || "No social items met the quality threshold."}</p>`;
+          return;
+        }
+        elements.socialCards.innerHTML = items
+          .map(
+            (item, index) => `
+            <article class="feed-card social-card" data-index="${index}">
+              <a class="card-link-icon" href="${item.url}" target="_blank" rel="noopener noreferrer" aria-label="Open in new tab">${externalIcon()}</a>
+              <div class="feed-meta">
+                <span>${item.subreddit ? `r/${item.subreddit}` : item.source || "social"}</span>
+                <span>${fmtDate(item.created_utc)}</span>
+                <span>${humanizeToken(item.sentiment_label)} ${fmtNum(item.sentiment_score, 3)}</span>
+              </div>
+              <h4>${item.title}</h4>
+              <p>${item.excerpt || "No excerpt available."}</p>
+            </article>
+          `
+          )
+          .join("");
+        elements.socialCards.querySelectorAll(".social-card").forEach((card) => {
+          const idx = Number(card.dataset.index);
+          card.addEventListener("click", (event) => {
+            if (event.target.closest(".card-link-icon")) return;
+            openSocialModal(items[idx]);
+          });
+        });
+      }
+
+      function renderMarketReaction(payload) {
+        const market = payload.market_reaction || {};
+        elements.marketBalance.textContent = market.balance_summary || "No market reaction summary available.";
+        renderNewsCards(market.news_items || []);
+        renderSocialCards(market.social_items || []);
+      }
+
+      function prepareFundamentalsChartData(fundamentalsWorkspace) {
+        const trend = fundamentalsWorkspace?.trend_series || [];
+        if (!fundamentalsWorkspace?.chart_enabled || trend.length < 3) return null;
+        return {
+          labels: trend.map((point) => point.quarter),
+          revenue: trend.map((point) => point.revenue),
+          netIncome: trend.map((point) => point.net_income),
+          eps: trend.map((point) => point.eps),
+          epsEstimate: trend.map((point) => point.eps_estimate),
+        };
+      }
+
+      function renderFundamentals(payload) {
+        const f = payload.fundamentals_workspace || {};
+        elements.fundamentalsContext.textContent = f.operating_context || "No fundamentals context available.";
+        elements.fundamentalsMetrics.innerHTML = (f.metrics || [])
+          .map((metric) => `<article class="metric-card"><p>${metric.label}</p><strong>${metric.value}</strong></article>`)
+          .join("");
+
+        elements.fundamentalsTableBody.innerHTML = "";
+        (f.table || []).forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${row.quarter}</td>
+            <td>${fmtCurrency(row.revenue)}</td>
+            <td>${fmtCurrency(row.net_income)}</td>
+            <td>${fmtNum(row.reported_eps, 2)}</td>
+            <td>${fmtNum(row.eps_estimate, 2)}</td>
+          `;
+          elements.fundamentalsTableBody.appendChild(tr);
+        });
+        state.chartData.fundamentals = prepareFundamentalsChartData(f);
+        setChartVisibility(elements.fundamentalsChartSurface, elements.fundamentalsChartEmpty, Boolean(state.chartData.fundamentals));
+      }
+
+      function renderDataAudit(payload) {
+        const audit = payload.data_audit || {};
+        elements.auditConfidence.textContent = `${audit.confidence_note || "No audit confidence note."} Normalization mode: ${humanizeToken(audit.normalization_mode || "unknown")}.`;
+
+        elements.auditTableBody.innerHTML = "";
+        const rows = [
+          ["Pages Scanned", audit.transcript_discovery?.pages_scanned],
+          ["Candidates Total", audit.transcript_discovery?.candidates_total],
+          ["Transcript-like Titles", audit.transcript_discovery?.transcript_like_count],
+          ["Match-filtered", audit.transcript_discovery?.match_filtered_count],
+          ["Selected", audit.transcript_discovery?.selected_count],
+          ["Fetch Failures", (audit.transcript_discovery?.fetch_failures || []).length],
+          ["Playwright Fallback Used", audit.transcript_discovery?.playwright_fallback_used ? "yes" : "no"],
+          ["Validation Mismatches", (audit.fundamentals_validation?.mismatches || []).length],
+          ["Slowest Tasks", (audit.slowest_tasks || []).length],
+        ];
+        rows.forEach(([label, value]) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${label}</td><td>${value ?? "-"}</td>`;
+          elements.auditTableBody.appendChild(tr);
+        });
+
+        const warnings = [...(audit.warnings || [])];
+        const validationMismatches = audit.fundamentals_validation?.mismatches || [];
+        validationMismatches.forEach((row) => {
+          warnings.push(`${humanizeToken(row.key)} mismatch: Yahoo ${fmtNum(row.yahoo_value, 3)} vs Alpha ${fmtNum(row.alpha_value, 3)}.`);
+        });
+        renderList(elements.auditWarnings, warnings, "No warnings.");
+        renderList(elements.auditMissing, [...(audit.missing_items || []), ...(audit.slowest_tasks || [])], "No missing-source flags.");
+        renderList(
+          elements.auditDedupe,
+          Object.entries(audit.dedupe_counts || {}).map(([key, value]) => `${humanizeToken(key)}: ${value}`),
+          "No dedupe stats."
+        );
+        renderList(elements.auditFailures, audit.transcript_discovery?.fetch_failures || [], "No discovery fetch failures.");
+        renderList(elements.auditDiscarded, audit.transcript_discovery?.discarded_near_matches || [], "No discarded near-matches.");
+
+        const taskRows = (audit.task_breakdown || []).map((row) => `${row.label}: ${row.duration_ms}ms (${humanizeToken(row.status)})`);
+        const parsingRows = [...(audit.parsing_warnings || []), ...taskRows];
+        renderList(elements.auditParsing, parsingRows, "No transcript parsing warnings.");
+      }
+
+      function buildChartCanvas(container) {
+        container.innerHTML = "";
+        const canvas = document.createElement("canvas");
+        container.appendChild(canvas);
+        return canvas;
+      }
+
+      function renderVisibleCharts() {
+        if (state.currentSection === "overview") {
+          if (state.charts.fundamentals) {
+            state.charts.fundamentals.destroy();
+            state.charts.fundamentals = null;
+          }
+          const chartData = state.chartData.speaker;
+          if (!chartData) return;
+          if (state.charts.speaker) state.charts.speaker.destroy();
+          const canvas = buildChartCanvas(elements.speakerChartSurface);
+          state.charts.speaker = new Chart(canvas, {
+            type: "bar",
+            data: {
+              labels: chartData.labels,
+              datasets: [
+                {
+                  label: "Confidence",
+                  data: chartData.confidence,
+                  backgroundColor: "rgba(80, 202, 163, 0.7)",
+                  borderRadius: 8,
+                },
+                {
+                  label: "Evasiveness",
+                  data: chartData.evasiveness,
+                  backgroundColor: "rgba(240, 99, 123, 0.65)",
+                  borderRadius: 8,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                x: { ticks: { color: "#c9d6ec" } },
+                y: { min: 0, max: 100, ticks: { color: "#c9d6ec" } },
+              },
+              plugins: { legend: { labels: { color: "#dce7fa" } } },
+            },
+          });
+        }
+
+        if (state.currentSection === "fundamentals") {
+          if (state.charts.speaker) {
+            state.charts.speaker.destroy();
+            state.charts.speaker = null;
+          }
+          const chartData = state.chartData.fundamentals;
+          if (!chartData) return;
+          if (state.charts.fundamentals) state.charts.fundamentals.destroy();
+          const canvas = buildChartCanvas(elements.fundamentalsChartSurface);
+          state.charts.fundamentals = new Chart(canvas, {
+            data: {
+              labels: chartData.labels,
+              datasets: [
+                {
+                  type: "bar",
+                  label: "Revenue",
+                  data: chartData.revenue,
+                  backgroundColor: "rgba(120, 191, 255, 0.58)",
+                  borderRadius: 7,
+                  yAxisID: "yUSD",
+                },
+                {
+                  type: "bar",
+                  label: "Net Income",
+                  data: chartData.netIncome,
+                  backgroundColor: "rgba(82, 205, 162, 0.58)",
+                  borderRadius: 7,
+                  yAxisID: "yUSD",
+                },
+                {
+                  type: "line",
+                  label: "Reported EPS",
+                  data: chartData.eps,
+                  borderColor: "#f4c66e",
+                  backgroundColor: "#f4c66e",
+                  tension: 0.3,
+                  yAxisID: "yEPS",
+                },
+                {
+                  type: "line",
+                  label: "EPS Estimate",
+                  data: chartData.epsEstimate,
+                  borderColor: "#ff9f7a",
+                  backgroundColor: "#ff9f7a",
+                  borderDash: [6, 4],
+                  tension: 0.3,
+                  yAxisID: "yEPS",
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              interaction: { mode: "index", intersect: false },
+              scales: {
+                yUSD: { type: "linear", position: "left", ticks: { color: "#c9d6ec" } },
+                yEPS: { type: "linear", position: "right", grid: { drawOnChartArea: false }, ticks: { color: "#c9d6ec" } },
+                x: { ticks: { color: "#c9d6ec" } },
+              },
+              plugins: { legend: { labels: { color: "#dce7fa" } } },
+            },
+          });
+        }
       }
 
       function renderAll(payload) {
         state.payload = payload;
-        elements.workspace.classList.remove("hidden");
         applyCopy(payload.ui_copy);
         renderRunContext(payload);
         renderOverview(payload);
@@ -950,89 +1059,92 @@
         renderMarketReaction(payload);
         renderFundamentals(payload);
         renderDataAudit(payload);
+        elements.workspace.classList.remove("hidden");
         switchSection("overview");
       }
 
-      async function renderFullWithProgress(payload) {
-        state.payload = payload;
-        applyCopy(payload.ui_copy);
-        renderRunContext(payload);
+      async function pollJob(jobId) {
+        for (;;) {
+          const response = await fetch(`/api/analyze/jobs/${jobId}`);
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || "Failed to poll analysis job.");
+          updateProgressView(payload);
 
-        markSection("overview", "loading");
-        renderOverview(payload);
-        await sleep(120);
-        markSection("overview", "done");
-
-        markSection("transcript", "loading");
-        renderTranscript(payload);
-        await sleep(120);
-        markSection("transcript", "done");
-
-        markSection("market_reaction", "loading");
-        renderMarketReaction(payload);
-        await sleep(120);
-        markSection("market_reaction", "done");
-
-        markSection("fundamentals", "loading");
-        renderFundamentals(payload);
-        await sleep(120);
-        markSection("fundamentals", "done");
-
-        markSection("data_audit", "loading");
-        renderDataAudit(payload);
-        await sleep(120);
-        markSection("data_audit", "done");
+          if (payload.status === "completed") {
+            if (payload.result) return payload.result;
+            const resultResponse = await fetch(`/api/analyze/jobs/${jobId}/result`);
+            const resultPayload = await resultResponse.json();
+            if (!resultResponse.ok) throw new Error(resultPayload.detail || "Failed to fetch completed analysis.");
+            return resultPayload.result;
+          }
+          if (payload.status === "failed") {
+            throw new Error(payload.error || "Analysis run failed.");
+          }
+          await sleep(900);
+        }
       }
 
       async function runAnalysis() {
         const ticker = elements.tickerInput.value.trim().toUpperCase();
         if (!ticker) {
+          elements.status.className = "status-line error";
           elements.status.textContent = "Enter a ticker first.";
           return;
         }
-
         elements.analyzeBtn.disabled = true;
-        elements.status.className = "status-line";
-        elements.status.textContent = `Analyzing ${ticker}...`;
-        initSectionProgress();
         elements.workspace.classList.add("hidden");
-        setLoadingOverlay(
-          true,
-          "Starting full analysis…",
-          "Preparing the complete report."
-        );
-        const stopTicker = startProgressTicker();
+        destroyCharts();
+        state.payload = null;
+        state.currentJobId = null;
+        state.jobProgress = null;
+        elements.status.className = "status-line";
+        elements.status.textContent = `Queued analysis for ${ticker}...`;
+        setLoadingOverlay(true, "Booting Analysis…", "Waiting for backend job to start.");
 
         try {
-          const response = await fetch(`/api/analyze?ticker=${encodeURIComponent(ticker)}`);
-          const payload = await response.json();
-          if (!response.ok) {
-            throw new Error(payload.detail || "Analysis failed.");
-          }
+          const startResponse = await fetch("/api/analyze/jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ticker }),
+          });
+          const startPayload = await startResponse.json();
+          if (!startResponse.ok) throw new Error(startPayload.detail || "Failed to create analysis job.");
 
-          stopTicker();
-          SECTION_ORDER.forEach((key) => markSection(key, "done"));
-          setLoadingOverlay(true, "Finalizing report…", "All sections computed. Rendering workspace.");
-          await sleep(220);
-          await renderFullWithProgress(payload);
-          elements.workspace.classList.remove("hidden");
-          setLoadingOverlay(false, "", "");
+          state.currentJobId = startPayload.job_id;
+          updateProgressView(startPayload);
+          elements.status.textContent = `Running ${ticker} (job ${startPayload.job_id})...`;
+
+          const result = await pollJob(startPayload.job_id);
+          renderAll(result);
+          setLoadingOverlay(false);
           elements.status.className = "status-line ok";
-          const overall = (payload.overall_sentiment_label || "mixed").replaceAll("_", " ");
-          elements.status.textContent =
-            `${payload.ticker} · ${overall} (${fmtNum(payload.overall_sentiment_score, 3)}) · transcripts ${payload.transcript.transcript_count_found}/${payload.transcript.transcript_count_requested}`;
+          elements.status.textContent = `${result.ticker} · ${humanizeToken(result.overall_sentiment_label)} (${fmtNum(result.overall_sentiment_score, 3)}) · transcripts ${result.transcript.transcript_count_found}/${result.transcript.transcript_count_requested}`;
         } catch (error) {
-          stopTicker();
+          setLoadingOverlay(false);
           elements.status.className = "status-line error";
           elements.status.textContent = `Error: ${error.message}`;
-          SECTION_ORDER.forEach((key) => {
-            if (state.sectionProgress[key] !== "done") markSection(key, "error");
-          });
-          setLoadingOverlay(false, "", "");
         } finally {
           elements.analyzeBtn.disabled = false;
         }
       }
+
+      elements.filterSpeaker.addEventListener("change", renderSpeakerTable);
+      elements.filterSection.addEventListener("change", renderSpeakerTable);
+      elements.filterTopic.addEventListener("change", renderSpeakerTable);
+      elements.filterSentiment.addEventListener("change", renderSpeakerTable);
+      elements.filterConfidenceMin.addEventListener("input", renderSpeakerTable);
+      elements.filterEvasivenessMax.addEventListener("input", renderSpeakerTable);
+      elements.filterSpecificityMin.addEventListener("input", renderSpeakerTable);
+      elements.filterReset.addEventListener("click", () => {
+        elements.filterSpeaker.value = "all";
+        elements.filterSection.value = "all";
+        elements.filterTopic.value = "all";
+        elements.filterSentiment.value = "all";
+        elements.filterConfidenceMin.value = "0";
+        elements.filterEvasivenessMax.value = "100";
+        elements.filterSpecificityMin.value = "0";
+        renderSpeakerTable();
+      });
 
       elements.analyzeBtn.addEventListener("click", runAnalysis);
       elements.tickerInput.addEventListener("keydown", (event) => {
@@ -1040,30 +1152,9 @@
       });
 
       elements.modalClose.addEventListener("click", () => elements.modal.close());
-      elements.modal.addEventListener("click", (event) => {
-        const modalRect = elements.modal.getBoundingClientRect();
-        const inside =
-          event.clientX >= modalRect.left &&
-          event.clientX <= modalRect.right &&
-          event.clientY >= modalRect.top &&
-          event.clientY <= modalRect.bottom;
-        if (!inside) elements.modal.close();
-      });
+      elements.transcriptModalClose.addEventListener("click", () => elements.transcriptModal.close());
 
-      window.addEventListener("resize", () => {
-        Object.values(state.charts).forEach((chart) => {
-          if (chart && typeof chart.resize === "function") chart.resize();
-        });
-      });
-
-      buildSectionNav({
-        overview: "Overview",
-        transcript: "Transcript",
-        market_reaction: "Market Reaction",
-        fundamentals: "Fundamentals",
-        data_audit: "Data Audit",
-      });
-      initSectionProgress();
+      buildSectionNav(stageLabels());
       renderPipelineStatus();
     </script>
   </body>
