@@ -1,6 +1,10 @@
 # FinBERT Earnings Signals (Local)
 
-Local FastAPI app for transcript-first earnings analysis with FinBERT sentiment.
+Local FinBERT stack with a Next.js frontend and FastAPI backend.
+
+- Frontend: Next.js App Router (root app, promoted from `newsite/`)
+- Backend: `finbert_site` FastAPI APIs and analysis pipeline
+- Browser API path: Next proxy routes under `/api/*`
 
 ## Product Structure
 
@@ -12,7 +16,7 @@ The app is organized into exactly 5 primary sections:
 4. Fundamentals
 5. Data Audit
 
-## UI Implementation (Current)
+## UI Implementation (Current, Root Next.js App)
 
 The frontend now follows the provided FinBERT reference design (dark institutional dashboard) with:
 
@@ -43,7 +47,7 @@ Execution-role UI language (trader/risk/manager workflows) is removed from the p
 The UI now keeps a full-screen progress experience until every section finishes, then reveals the full report in one pass.
 Job polling is intentionally slowed to a 1.8s interval for lower churn while preserving responsive progress updates.
 
-## Quick Start
+## Quick Start (Single Command)
 
 ```bash
 cd <local-repo-path>
@@ -51,10 +55,24 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-uvicorn finbert_site.main:app --reload
+pnpm install
+pnpm dev
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
+
+`pnpm dev` starts both:
+
+- Next.js frontend (`127.0.0.1:3000`)
+- FastAPI backend (`127.0.0.1:8000`)
+
+## Backend/UI Routing Notes
+
+- FastAPI remains the source-of-truth API surface (`/api/analyze`, jobs, snapshot, health).
+- Next route handlers proxy browser requests from `/api/*` to the backend service URL.
+- Backend URL for proxying is configurable with:
+  - `FINBERT_BACKEND_URL` (default `http://127.0.0.1:8000`)
+- Legacy FastAPI-rendered HTML routes (`/`, `/charts-test`) still exist on the backend service but are now deprecated in favor of the Next frontend.
 
 ## What This Refactor Implements
 
@@ -196,18 +214,24 @@ The frontend now uses this job flow so the loading screen reflects real backend 
 
 ### Charts Test Surface
 
-Open [http://127.0.0.1:8000/charts-test](http://127.0.0.1:8000/charts-test) to validate chart rendering without waiting on a full analysis run.
+Open [http://127.0.0.1:3000/charts-test](http://127.0.0.1:3000/charts-test) to validate chart rendering without waiting on a full analysis run.
 
 ## Local Run
 
 1. Create and activate virtual environment
-2. Install dependencies
+2. Install backend dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Configure env
+3. Install frontend dependencies
+
+```bash
+pnpm install
+```
+
+4. Configure env
 
 ```bash
 cp .env.example .env
@@ -225,17 +249,28 @@ Optional keys:
 - `TRANSCRIPT_SENTIMENT_SEGMENT_*` segmentation controls in `.env.example`
 - `NEWS_*` and `SOCIAL_*` controls in `.env.example` for higher feed volume
 
-4. Start app
+5. Start both frontend and backend
 
 ```bash
-uvicorn finbert_site.main:app --reload
+pnpm dev
 ```
 
-5. Open [http://127.0.0.1:8000](http://127.0.0.1:8000)
+6. Open [http://127.0.0.1:3000](http://127.0.0.1:3000)
+
+Optional separate runs:
+
+```bash
+pnpm dev:web
+pnpm dev:api
+```
+
+The FastAPI HTML routes still exist for compatibility on `127.0.0.1:8000` but are deprecated.
 
 ## Test
 
 ```bash
+pnpm lint
+pnpm build
 pytest -q
 ```
 
