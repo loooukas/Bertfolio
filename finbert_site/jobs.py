@@ -30,6 +30,19 @@ class AnalyzeJob:
 class AnalyzeJobManager:
     """Simple in-memory job store with background execution."""
 
+    _OVERRIDABLE_SETTING_KEYS: tuple[str, ...] = (
+        "news_limit",
+        "news_pool_size",
+        "news_lookback_days",
+        "social_limit",
+        "social_pool_size",
+        "social_lookback_days",
+        "news_enable_alpha_vantage",
+        "news_enable_yahoo_finance",
+        "social_enable_reddit",
+        "social_enable_stocktwits",
+    )
+
     def __init__(self, *, settings: Settings, ttl_seconds: int = 900, max_workers: int = 2) -> None:
         self.settings = settings
         self.ttl_seconds = max(120, int(ttl_seconds))
@@ -172,16 +185,3 @@ class AnalyzeJobManager:
             if job is None:
                 return None
             return self._job_payload(job, include_result=include_result)
-    _OVERRIDABLE_SETTING_KEYS: tuple[str, ...] = (
-        "news_limit",
-        "news_pool_size",
-        "news_lookback_days",
-        "social_limit",
-        "social_pool_size",
-        "social_lookback_days",
-        "news_enable_alpha_vantage",
-        "news_enable_yahoo_finance",
-        "social_enable_reddit",
-        "social_enable_stocktwits",
-    )
-
