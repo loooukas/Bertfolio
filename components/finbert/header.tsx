@@ -182,7 +182,7 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
                   label="News Pool"
                   value={effectiveSettings.run_overrides.news_pool_size}
                   min={80}
-                  max={1800}
+                  max={1000}
                   onChange={(value) => updateRunSettings({ news_pool_size: value })}
                 />
                 <NumberInput
@@ -206,7 +206,7 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
                   label="Social Pool"
                   value={effectiveSettings.run_overrides.social_pool_size}
                   min={80}
-                  max={2000}
+                  max={1000}
                   onChange={(value) => updateRunSettings({ social_pool_size: value })}
                 />
                 <NumberInput

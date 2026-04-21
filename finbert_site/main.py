@@ -22,10 +22,10 @@ job_manager = AnalyzeJobManager(settings=settings)
 
 class AnalyzeRuntimeOverrides(BaseModel):
     news_limit: Optional[int] = Field(default=None, ge=10, le=120)
-    news_pool_size: Optional[int] = Field(default=None, ge=80, le=1800)
+    news_pool_size: Optional[int] = Field(default=None, ge=80, le=1000)
     news_lookback_days: Optional[int] = Field(default=None, ge=3, le=365)
     social_limit: Optional[int] = Field(default=None, ge=10, le=120)
-    social_pool_size: Optional[int] = Field(default=None, ge=80, le=2000)
+    social_pool_size: Optional[int] = Field(default=None, ge=80, le=1000)
     social_lookback_days: Optional[int] = Field(default=None, ge=3, le=365)
     news_enable_alpha_vantage: Optional[bool] = None
     news_enable_yahoo_finance: Optional[bool] = None

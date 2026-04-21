@@ -56,10 +56,10 @@ export function sanitizeAnalyzeRunOverrides(overrides?: Partial<AnalyzeRunOverri
   const incoming = { ...DEFAULT_UI_SETTINGS.run_overrides, ...(overrides || {}) }
   return {
     news_limit: clampInt(incoming.news_limit, 10, 120),
-    news_pool_size: clampInt(incoming.news_pool_size, 80, 1800),
+    news_pool_size: clampInt(incoming.news_pool_size, 80, 1000),
     news_lookback_days: clampInt(incoming.news_lookback_days, 3, 365),
     social_limit: clampInt(incoming.social_limit, 10, 120),
-    social_pool_size: clampInt(incoming.social_pool_size, 80, 2000),
+    social_pool_size: clampInt(incoming.social_pool_size, 80, 1000),
     social_lookback_days: clampInt(incoming.social_lookback_days, 3, 365),
     news_enable_alpha_vantage: Boolean(incoming.news_enable_alpha_vantage),
     news_enable_yahoo_finance: Boolean(incoming.news_enable_yahoo_finance),
