@@ -45,4 +45,4 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-exec next dev
+exec next dev --webpack

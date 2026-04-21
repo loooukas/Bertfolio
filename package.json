@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "bash ./scripts/dev.sh",
-    "dev:web": "next dev",
+    "dev:web": "next dev --webpack",
     "dev:api": ".venv/bin/python -m uvicorn finbert_site.main:app --reload --host 127.0.0.1 --port 8000 --reload-dir finbert_site --reload-dir scripts --reload-exclude '.next/*' --reload-exclude 'node_modules/*' --reload-exclude 'output/*' --reload-exclude 'public/*'",
     "build": "next build --webpack",
     "start": "next start",
