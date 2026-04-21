@@ -19,9 +19,15 @@ interface QuarterlyData {
 }
 
 interface FundamentalsData {
-  operating_context: string
   metrics: Metric[]
   quarterly_data: QuarterlyData[]
+  analyst_signals: Array<{
+    key: string
+    label: string
+    value: string
+    tone: "bullish" | "neutral" | "bearish" | "muted"
+    note?: string
+  }>
 }
 
 interface FundamentalsSectionProps {
@@ -100,16 +106,33 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
     ? latestQuarter.reported_eps > latestQuarter.eps_estimate 
     : false
 
+  const toneClass = (tone: "bullish" | "neutral" | "bearish" | "muted") => {
+    if (tone === "bullish") return "text-bullish"
+    if (tone === "bearish") return "text-bearish"
+    if (tone === "neutral") return "text-neutral"
+    return "text-muted-foreground"
+  }
+
   return (
     <div className="space-y-8">
-      {/* Operating Context */}
+      {/* Analyst Signals */}
       <div className="p-6 rounded-xl bg-card border border-border">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
-          Operating Context
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">
+          Analyst Signals
         </h3>
-        <p className="text-base text-foreground leading-relaxed">
-          {data.operating_context}
-        </p>
+        {data.analyst_signals.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Analyst consensus data is currently unavailable for this ticker.</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            {data.analyst_signals.map((signal) => (
+              <div key={signal.key} className="rounded-lg border border-border bg-secondary/30 p-4">
+                <div className="text-xs text-muted-foreground mb-1">{signal.label}</div>
+                <div className={`text-lg font-semibold ${toneClass(signal.tone)}`}>{signal.value}</div>
+                {signal.note && <div className="mt-1 text-xs text-muted-foreground">{signal.note}</div>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Key Metrics Grid */}

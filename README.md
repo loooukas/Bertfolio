@@ -21,6 +21,7 @@ The app is organized into exactly 5 primary sections:
 The frontend now follows the provided FinBERT reference design (dark institutional dashboard) with:
 
 - Top navigation (`Analysis`, `Charts Test`, `Docs`, settings icon, API online indicator)
+- Settings modal on the header cog with live controls for polling mode and display density
 - In-app docs route at `/docs` (wired from the top-nav Docs action)
 - Geist Sans / Geist Mono loaded from the local `geist` package (no remote font fetch required)
 - Analyze hero/input panel that fades out after a run starts to keep report focus high
@@ -30,14 +31,16 @@ The frontend now follows the provided FinBERT reference design (dark institution
 - Horizontal report tabs for the 5 canonical sections
 - Transcript-first deep-dive patterns:
   - quarter availability actions + structured transcript modal
+  - richer transcript coverage diagnostics (coverage ratio, confidence/evasiveness rollups, prepared vs Q&A block counts)
   - key-quote cards with speaker attribution from transcript evidence
   - speaker rollups with mention modal by transcript/quarter and disabled no-mention states
-  - Q&A pressure table plus filterable/sortable speaker block table
+  - filterable/sortable speaker block table
 - Market reaction drilldowns:
-  - expandable news items
-  - social card grid with detail modal
+  - two-column news card grid on desktop
+  - two-column social card grid on desktop with detail modal
   - sentiment distribution chart (news vs social)
 - Fundamentals workspace:
+  - analyst-signals summary cards (consensus rating, target stats, recommendation mean)
   - key metrics + highlights
   - dedicated revenue, net-income, and EPS-vs-estimate chart panels
 - Data audit workspace:
@@ -50,7 +53,8 @@ The frontend now follows the provided FinBERT reference design (dark institution
 Execution-role UI language (trader/risk/manager workflows) is removed from the primary interface. Legacy API fields remain for one migration window.
 
 The UI now keeps a full-screen progress experience until every section finishes, then reveals the full report in one pass.
-Job polling is intentionally slowed to a 1.8s interval for lower churn while preserving responsive progress updates.
+Progress stages now focus on actionable work only (`Market Reaction`, `Fundamentals`, `Transcript`, `Data Audit`).
+Polling cadence is user-configurable in the settings modal (`Fast`, `Balanced`, `Eco`).
 
 ## Quick Start (Single Command)
 
@@ -91,7 +95,7 @@ The dev launcher restarts any stale backend listener on `:8000` and scopes backe
 - Market reaction feed ranking improvements with 14-day lookback + recency weighting
 - News/social relevance filtering tightened to ticker/company-linked items
 - Social cards now show short excerpts only, with full-post modal view and top-right open-in-new-tab icon
-- News/social cards use 3-column desktop grids for cleaner scan density
+- News/social cards use 2-column desktop grids for cleaner scan density
 - Chart.js rendering with lazy-init per visible section and full-width responsive surfaces
 - Sentiment timeline panel removed from UI by design (per latest UX decision)
 - Canonical API section payloads + legacy compatibility contract
@@ -173,7 +177,7 @@ Social is now combined from:
 
 Selection behavior:
 
-- Pull larger pools (typically 100-200 candidates when available per source family)
+- Pull larger candidate pools (up to ~200 per source family when available)
 - Relevance-rank first, then apply dedupe, then keep top `*_LIMIT` rows
 - Apply source balancing in social output so one provider does not dominate the final list
 

@@ -4,7 +4,7 @@ import { useState } from "react"
 import { Newspaper, MessageCircle, ExternalLink, TrendingUp, TrendingDown, Minus, Clock } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 interface NewsItem {
   title: string
@@ -39,6 +39,7 @@ interface MarketReactionData {
 
 interface MarketReactionSectionProps {
   data: MarketReactionData
+  gridColumns?: 1 | 2
 }
 
 const getSentimentIcon = (sentiment: string) => {
@@ -73,8 +74,9 @@ const formatTime = (timestamp: string) => {
   })
 }
 
-export function MarketReactionSection({ data }: MarketReactionSectionProps) {
+export function MarketReactionSection({ data, gridColumns = 2 }: MarketReactionSectionProps) {
   const [selectedSocial, setSelectedSocial] = useState<SocialItem | null>(null)
+  const gridClass = gridColumns === 2 ? "grid grid-cols-1 xl:grid-cols-2 gap-3" : "space-y-3"
 
   const bullishCount = [...data.news_items, ...data.social_items].filter(
     (item) => item.sentiment_label === "bullish"
@@ -83,6 +85,8 @@ export function MarketReactionSection({ data }: MarketReactionSectionProps) {
     (item) => item.sentiment_label === "bearish"
   ).length
   const totalCount = data.news_count + data.social_count
+  const bullishPct = totalCount > 0 ? (bullishCount / totalCount) * 100 : 0
+  const bearishPct = totalCount > 0 ? (bearishCount / totalCount) * 100 : 0
 
   return (
     <div className="space-y-8">
@@ -119,16 +123,16 @@ export function MarketReactionSection({ data }: MarketReactionSectionProps) {
         <div className="mt-6">
           <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
             <span>Sentiment Distribution</span>
-            <span>{Math.round((bullishCount / totalCount) * 100)}% Bullish</span>
+            <span>{Math.round(bullishPct)}% Bullish</span>
           </div>
           <div className="h-3 rounded-full bg-secondary overflow-hidden flex">
             <div 
               className="h-full bg-bullish" 
-              style={{ width: `${(bullishCount / totalCount) * 100}%` }} 
+              style={{ width: `${bullishPct}%` }} 
             />
             <div 
               className="h-full bg-bearish" 
-              style={{ width: `${(bearishCount / totalCount) * 100}%` }} 
+              style={{ width: `${bearishPct}%` }} 
             />
           </div>
         </div>
@@ -148,11 +152,11 @@ export function MarketReactionSection({ data }: MarketReactionSectionProps) {
         </TabsList>
 
         {/* News Tab */}
-        <TabsContent value="news" className="space-y-3">
+        <TabsContent value="news" className={gridClass}>
           {data.news_items.map((item, index) => (
             <div
               key={index}
-              className="p-5 rounded-xl bg-card border border-border hover:border-ring transition-colors group"
+              className="h-full p-5 rounded-xl bg-card border border-border hover:border-ring transition-colors group"
             >
               <div className="flex items-start justify-between gap-4 mb-3">
                 <div className="flex-1">
@@ -201,12 +205,12 @@ export function MarketReactionSection({ data }: MarketReactionSectionProps) {
         </TabsContent>
 
         {/* Social Tab */}
-        <TabsContent value="social" className="space-y-3">
+        <TabsContent value="social" className={gridClass}>
           {data.social_items.map((item, index) => (
             <div
               key={index}
               onClick={() => setSelectedSocial(item)}
-              className="p-5 rounded-xl bg-card border border-border hover:border-ring transition-colors cursor-pointer group"
+              className="h-full p-5 rounded-xl bg-card border border-border hover:border-ring transition-colors cursor-pointer group"
             >
               <div className="flex items-start justify-between gap-4 mb-3">
                 <div className="flex-1">
@@ -276,6 +280,9 @@ export function MarketReactionSection({ data }: MarketReactionSectionProps) {
                   </Badge>
                 </div>
                 <DialogTitle className="text-lg">{selectedSocial.title}</DialogTitle>
+                <DialogDescription>
+                  Source post detail with full body text, timestamp, relevance score, and sentiment.
+                </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 <div className="p-4 rounded-lg bg-secondary/50 text-sm text-foreground leading-relaxed whitespace-pre-wrap">

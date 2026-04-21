@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { OverviewSection } from "./sections/overview-section"
 import { TranscriptSection } from "./sections/transcript-section"
@@ -9,9 +9,11 @@ import { FundamentalsSection } from "./sections/fundamentals-section"
 import { DataAuditSection } from "./sections/data-audit-section"
 import { FileText, BarChart3, TrendingUp, PieChart, Shield } from "lucide-react"
 import type { UIReportModel } from "@/lib/finbert/types"
+import type { UISettings } from "@/lib/finbert/ui-settings"
 
 interface ReportViewProps {
   report: UIReportModel
+  settings: UISettings
 }
 
 const tabs = [
@@ -22,8 +24,16 @@ const tabs = [
   { id: "audit", label: "Data Audit", icon: Shield },
 ]
 
-export function ReportView({ report }: ReportViewProps) {
+export function ReportView({ report, settings }: ReportViewProps) {
   const [activeTab, setActiveTab] = useState("overview")
+
+  useEffect(() => {
+    if (settings.auto_open_audit_on_warnings && report.data_audit.warnings.length > 0) {
+      setActiveTab("audit")
+      return
+    }
+    setActiveTab("overview")
+  }, [report, settings.auto_open_audit_on_warnings])
 
   return (
     <div className="space-y-6">
@@ -90,11 +100,15 @@ export function ReportView({ report }: ReportViewProps) {
         </TabsContent>
 
         <TabsContent value="transcript" className="mt-6">
-          <TranscriptSection data={report.transcript} />
+          <TranscriptSection
+            data={report.transcript}
+            quoteColumns={settings.quote_columns}
+            showCoverageDetails={settings.show_transcript_diagnostics}
+          />
         </TabsContent>
 
         <TabsContent value="market" className="mt-6">
-          <MarketReactionSection data={report.market_reaction} />
+          <MarketReactionSection data={report.market_reaction} gridColumns={settings.market_columns} />
         </TabsContent>
 
         <TabsContent value="fundamentals" className="mt-6">

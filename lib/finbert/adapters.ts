@@ -6,7 +6,6 @@ import type {
 } from "@/lib/finbert/types"
 
 export const DEFAULT_PROGRESS_STAGES: BackendJobProgressStage[] = [
-  { key: "overview", label: "Overview", status: "pending", progress: 0, message: "Waiting to start" },
   { key: "market_reaction", label: "Market Reaction", status: "pending", progress: 0, message: "Waiting" },
   { key: "fundamentals", label: "Fundamentals", status: "pending", progress: 0, message: "Waiting" },
   { key: "transcript", label: "Transcript", status: "pending", progress: 0, message: "Waiting" },
@@ -15,7 +14,7 @@ export const DEFAULT_PROGRESS_STAGES: BackendJobProgressStage[] = [
 
 export const DEFAULT_PROGRESS: BackendJobProgress = {
   percent: 0,
-  active_stage: "overview",
+  active_stage: "market_reaction",
   active_subtask: "Initializing analysis",
   stages: DEFAULT_PROGRESS_STAGES,
 }
@@ -314,6 +313,13 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
     fundamentals: {
       operating_context: report.fundamentals_workspace.operating_context,
       metrics: report.fundamentals_workspace.metrics.slice(0, 12),
+      analyst_signals: (report.fundamentals_workspace.analyst_signals || []).map((signal) => ({
+        key: signal.key,
+        label: signal.label,
+        value: signal.value,
+        tone: signal.tone,
+        note: signal.note || undefined,
+      })),
       quarterly_data: report.fundamentals_workspace.table.map((quarter) => ({
         quarter: quarter.quarter,
         revenue: quarter.revenue || 0,

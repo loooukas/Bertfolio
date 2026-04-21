@@ -136,6 +136,13 @@ export interface AnalysisResponseBackend {
   fundamentals_workspace: {
     operating_context: string
     metrics: Array<{ key: string; label: string; value: string }>
+    analyst_signals?: Array<{
+      key: string
+      label: string
+      value: string
+      tone: "bullish" | "neutral" | "bearish" | "muted"
+      note?: string | null
+    }>
     table: Array<{
       quarter: string
       revenue?: number | null
@@ -286,6 +293,13 @@ export interface UIReportModel {
   fundamentals: {
     operating_context: string
     metrics: Array<{ key: string; label: string; value: string }>
+    analyst_signals: Array<{
+      key: string
+      label: string
+      value: string
+      tone: "bullish" | "neutral" | "bearish" | "muted"
+      note?: string
+    }>
     quarterly_data: Array<{
       quarter: string
       revenue: number

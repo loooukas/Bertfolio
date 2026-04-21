@@ -288,6 +288,29 @@ def _openai_normalize(
         return None, f"OpenAI normalization failed: {exc}"
 
 
+def _should_try_openai_normalization(document: TranscriptDocument) -> bool:
+    section_count = len(document.sections)
+    if section_count <= 2:
+        return True
+
+    if document.extraction_confidence < 0.55:
+        return True
+
+    sparse_warning = any(
+        token in warning.lower()
+        for warning in document.parsing_warnings
+        for token in ("sparse", "empty", "could not")
+    )
+    if sparse_warning:
+        return True
+
+    unknown_speaker_count = sum(1 for section in document.sections if section.speaker.strip().lower() in {"", "unknown"})
+    if section_count > 0 and (unknown_speaker_count / section_count) >= 0.35:
+        return True
+
+    return False
+
+
 def normalize_transcript_document(
     *,
     ticker: str,
@@ -314,6 +337,9 @@ def normalize_transcript_document(
         parsing_warnings=parsing_warnings,
         participants=participants,
     )
+
+    if not _should_try_openai_normalization(deterministic):
+        return NormalizationResult(document=deterministic, warnings=[])
 
     normalized, error = _openai_normalize(deterministic, settings)
     if normalized is not None:

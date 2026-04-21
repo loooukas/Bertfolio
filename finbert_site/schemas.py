@@ -335,9 +335,18 @@ class MarketReactionSection(BaseModel):
     sparse_note: Optional[str] = None
 
 
+class AnalystSnapshot(BaseModel):
+    key: str
+    label: str
+    value: str
+    tone: Literal["bullish", "neutral", "bearish", "muted"] = "neutral"
+    note: Optional[str] = None
+
+
 class FundamentalsWorkspaceSection(BaseModel):
     operating_context: str
     metrics: list[CompactMetric]
+    analyst_signals: list[AnalystSnapshot] = Field(default_factory=list)
     table: list[FundamentalsSnapshot]
     trend_series: list[FundamentalsTrendPoint]
     chart_enabled: bool

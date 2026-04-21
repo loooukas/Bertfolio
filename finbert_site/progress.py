@@ -13,11 +13,10 @@ from typing import Any, Callable, Optional
 
 
 STAGE_DEFINITIONS: list[dict[str, Any]] = [
-    {"key": "overview", "label": "Overview", "weight": 10},
-    {"key": "market_reaction", "label": "Market Reaction", "weight": 20},
+    {"key": "market_reaction", "label": "Market Reaction", "weight": 30},
     {"key": "fundamentals", "label": "Fundamentals", "weight": 20},
-    {"key": "transcript", "label": "Transcript", "weight": 30},
-    {"key": "data_audit", "label": "Data Audit", "weight": 20},
+    {"key": "transcript", "label": "Transcript", "weight": 35},
+    {"key": "data_audit", "label": "Data Audit", "weight": 15},
 ]
 
 
@@ -249,4 +248,3 @@ class RunProgressTracker:
                 total_duration_ms=int((time.time() - self._created_at) * 1000),
             )
         self._notify()
-

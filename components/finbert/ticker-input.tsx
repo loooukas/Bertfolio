@@ -32,7 +32,7 @@ export function TickerInput({ onAnalyze, isLoading, currentTicker, onReset }: Ti
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" suppressHydrationWarning>
       {/* Hero Text */}
       <div className="max-w-2xl">
         <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-foreground text-balance">

@@ -33,6 +33,7 @@ from .progress import RunProgressTracker
 from .schemas import (
     AggregateScores,
     AnalysisResponse,
+    AnalystSnapshot,
     AnalystSignal,
     AuditTaskBreakdown,
     ChartsPayload,
@@ -419,6 +420,25 @@ def _format_market_cap(value: Optional[float]) -> str:
     if abs_value >= 1_000_000:
         return f"${value / 1_000_000:.2f}M"
     return f"${value:,.0f}"
+
+
+def _analyst_tone_from_recommendation(value: Optional[str]) -> str:
+    if not value:
+        return "neutral"
+    normalized = value.strip().lower()
+    if normalized in {"strong_buy", "buy", "outperform", "overweight"}:
+        return "bullish"
+    if normalized in {"strong_sell", "sell", "underperform", "underweight"}:
+        return "bearish"
+    if normalized in {"hold", "neutral"}:
+        return "neutral"
+    return "muted"
+
+
+def _display_recommendation(value: Optional[str]) -> str:
+    if not value:
+        return "n/a"
+    return value.replace("_", " ").strip().title()
 
 
 def _score_text(text: str, engine) -> dict[str, float | str]:
@@ -1263,15 +1283,7 @@ def build_analysis(
             )
         )
 
-    if progress is not None:
-        progress.start_stage(
-            "overview",
-            subtask="init",
-            message=f"Booting analysis context for {ticker.strip().upper() or ticker}.",
-        )
     symbol = _normalize_ticker(ticker)
-    if progress is not None:
-        progress.complete_stage("overview", message=f"Context initialized for {symbol}.")
 
     if progress is not None:
         progress.start_stage("market_reaction", subtask="fetch_feeds", message="Fetching news and social feeds.")
@@ -1601,6 +1613,63 @@ def build_analysis(
         for item in reversed(fundamentals.quarterly)
     ]
     fundamentals_chart_enabled = len(fundamentals_trend) >= 3
+    recommendation_key = str(fundamentals_dict.get("recommendation_key") or "").strip() or None
+    recommendation_mean = fundamentals_dict.get("recommendation_mean")
+    analyst_opinion_count = fundamentals_dict.get("analyst_opinion_count")
+    target_mean = fundamentals_dict.get("target_mean_price")
+    target_high = fundamentals_dict.get("target_high_price")
+    target_low = fundamentals_dict.get("target_low_price")
+    current_price = fundamentals_dict.get("current_price")
+
+    upside_pct: Optional[float] = None
+    if isinstance(target_mean, (int, float)) and isinstance(current_price, (int, float)) and current_price not in (0,):
+        try:
+            upside_pct = ((float(target_mean) - float(current_price)) / abs(float(current_price))) * 100.0
+        except Exception:
+            upside_pct = None
+
+    analyst_signals = [
+        AnalystSnapshot(
+            key="consensus_rating",
+            label="Consensus Rating",
+            value=_display_recommendation(recommendation_key),
+            tone=_analyst_tone_from_recommendation(recommendation_key),
+            note=(
+                f"{int(analyst_opinion_count)} analyst opinions"
+                if isinstance(analyst_opinion_count, (int, float)) and analyst_opinion_count > 0
+                else None
+            ),
+        ),
+        AnalystSnapshot(
+            key="target_mean",
+            label="Target Mean Price",
+            value=f"${float(target_mean):.2f}" if isinstance(target_mean, (int, float)) else "n/a",
+            tone="neutral",
+            note=(
+                f"{upside_pct:+.1f}% vs current"
+                if isinstance(upside_pct, (int, float))
+                else None
+            ),
+        ),
+        AnalystSnapshot(
+            key="target_range",
+            label="Target Range",
+            value=(
+                f"${float(target_low):.2f} - ${float(target_high):.2f}"
+                if isinstance(target_low, (int, float)) and isinstance(target_high, (int, float))
+                else "n/a"
+            ),
+            tone="muted",
+            note=None,
+        ),
+        AnalystSnapshot(
+            key="recommendation_mean",
+            label="Recommendation Mean",
+            value=f"{float(recommendation_mean):.2f}" if isinstance(recommendation_mean, (int, float)) else "n/a",
+            tone="neutral",
+            note="Lower generally indicates stronger buy conviction.",
+        ),
+    ]
 
     fundamentals_workspace = FundamentalsWorkspaceSection(
         operating_context=(
@@ -1626,6 +1695,7 @@ def build_analysis(
             CompactMetric(key="revenue_qoq", label="Revenue QoQ", value=_format_pct(fundamentals.revenue_qoq_growth_pct)),
             CompactMetric(key="eps_qoq", label="EPS QoQ", value=_format_pct(fundamentals.eps_qoq_growth_pct)),
         ],
+        analyst_signals=analyst_signals,
         table=fundamentals.quarterly,
         trend_series=fundamentals_trend,
         chart_enabled=fundamentals_chart_enabled,
@@ -1633,6 +1703,13 @@ def build_analysis(
     )
 
     warnings = transcript_warnings + news_warnings + social_warnings
+    if normalized_documents:
+        warnings = [warning for warning in warnings if not warning.lower().startswith("openai normalization failed:")]
+        transcript_discovery.fetch_failures = [
+            warning
+            for warning in transcript_discovery.fetch_failures
+            if "openai_fallback:unknown_error" not in warning
+        ]
 
     normalization_mode = (
         "openai"

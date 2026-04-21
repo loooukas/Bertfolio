@@ -5,7 +5,6 @@ import {
   ArrowUpDown,
   ChevronDown,
   Filter,
-  MessageSquare,
   Quote,
   User,
   CheckCircle2,
@@ -13,7 +12,7 @@ import {
   AlertCircle,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -84,6 +83,8 @@ interface TranscriptData {
 
 interface TranscriptSectionProps {
   data: TranscriptData
+  quoteColumns?: 1 | 2
+  showCoverageDetails?: boolean
 }
 
 type SortDirection = "asc" | "desc"
@@ -106,7 +107,11 @@ function sectionLabel(sectionType: string): string {
   return "Other"
 }
 
-export function TranscriptSection({ data }: TranscriptSectionProps) {
+export function TranscriptSection({
+  data,
+  quoteColumns = 2,
+  showCoverageDetails = true,
+}: TranscriptSectionProps) {
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>("all")
   const [selectedSection, setSelectedSection] = useState<string>("all")
   const [sortKey, setSortKey] = useState<SortKey>("speaker")
@@ -159,6 +164,20 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
   )
 
   const totalSpeakerMentions = speakerModalData.reduce((sum, item) => sum + item.mentions.length, 0)
+  const preparedBlocks = data.speaker_analysis.filter((row) => row.section_type === "prepared_remarks").length
+  const qaBlocks = data.speaker_analysis.filter((row) => row.section_type === "qa").length
+  const avgConfidence =
+    data.speaker_analysis.length > 0
+      ? data.speaker_analysis.reduce((sum, row) => sum + row.confidence, 0) / data.speaker_analysis.length
+      : 0
+  const avgEvasiveness =
+    data.speaker_analysis.length > 0
+      ? data.speaker_analysis.reduce((sum, row) => sum + row.evasiveness, 0) / data.speaker_analysis.length
+      : 0
+  const coveragePct =
+    data.transcript_count_requested > 0
+      ? (data.transcript_count_found / data.transcript_count_requested) * 100
+      : 0
 
   const openSpeakerModal = (speakerName: string) => {
     setActiveSpeaker(speakerName)
@@ -235,7 +254,39 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
             </Badge>
           </div>
           <p className="text-sm text-foreground leading-relaxed mb-4">{data.latest_summary}</p>
-          <div className="text-xs text-muted-foreground italic">{data.prepared_vs_qa_note}</div>
+          {showCoverageDetails && (
+            <>
+              <div className="mb-4 h-2 overflow-hidden rounded-full bg-secondary">
+                <div
+                  className="h-full bg-bullish transition-all"
+                  style={{ width: `${Math.max(0, Math.min(100, coveragePct))}%` }}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <div className="rounded-lg border border-border bg-secondary/40 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Coverage</div>
+                  <div className="text-base font-semibold text-foreground">
+                    {data.transcript_count_found}/{data.transcript_count_requested}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-border bg-secondary/40 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Speaker Blocks</div>
+                  <div className="text-base font-semibold text-foreground">{data.speaker_analysis.length}</div>
+                </div>
+                <div className="rounded-lg border border-border bg-secondary/40 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Confidence</div>
+                  <div className="text-base font-semibold text-foreground">{avgConfidence.toFixed(1)}</div>
+                </div>
+                <div className="rounded-lg border border-border bg-secondary/40 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Evasiveness</div>
+                  <div className="text-base font-semibold text-foreground">{avgEvasiveness.toFixed(1)}</div>
+                </div>
+              </div>
+              <div className="mt-3 text-xs text-muted-foreground">
+                {data.prepared_vs_qa_note} Prepared blocks: {preparedBlocks}; Q&A blocks: {qaBlocks}.
+              </div>
+            </>
+          )}
         </div>
 
         {/* Quarter Grid */}
@@ -260,7 +311,7 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
           <Quote className="w-4 h-4 text-muted-foreground" />
           <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Key Quotes</h3>
         </div>
-        <div className="space-y-4">
+        <div className={`grid gap-4 ${quoteColumns === 2 ? "grid-cols-1 xl:grid-cols-2" : "grid-cols-1"}`}>
           {data.key_quotes.map((quote, index) => (
             <div
               key={index}
@@ -278,23 +329,6 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
                 <span className="text-xs font-medium text-muted-foreground">{quote.speaker}</span>
               </div>
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Q&A Pressure Points */}
-      <div className="p-6 rounded-xl bg-card border border-border">
-        <div className="flex items-center gap-2 mb-4">
-          <MessageSquare className="w-4 h-4 text-muted-foreground" />
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-            Q&A Pressure Points
-          </h3>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {data.qa_pressure_points.map((point, index) => (
-            <Badge key={index} variant="outline" className="text-sm py-1.5 px-3">
-              {point}
-            </Badge>
           ))}
         </div>
       </div>
@@ -499,7 +533,9 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
             <DialogTitle className="text-lg">
               {activeSpeaker ? `${activeSpeaker} Mentions` : "Speaker Mentions"}
             </DialogTitle>
-            <p className="text-sm text-muted-foreground">{totalSpeakerMentions} total mentions across transcripts.</p>
+            <DialogDescription>
+              {totalSpeakerMentions} total mentions across transcripts.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">

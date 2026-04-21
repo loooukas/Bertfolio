@@ -736,6 +736,11 @@ def _news_relevance(
             score += 3.0 + (relevance * 4.0)
             break
 
+    related_tickers = item.get("relatedTickers") or item.get("related_tickers")
+    if isinstance(related_tickers, list):
+        if any(str(related).upper() == symbol.upper() for related in related_tickers):
+            score += 3.0
+
     if _contains_symbol(text, symbol):
         score += 2.5
 
@@ -881,9 +886,18 @@ def fetch_news_yahoo_finance(
         if not isinstance(item, dict):
             continue
 
-        title = str(item.get("title") or item.get("shortTitle") or "").strip()
-        summary = str(item.get("summary") or "").strip()
-        url = str(item.get("link") or item.get("url") or "").strip()
+        content = item.get("content") if isinstance(item.get("content"), dict) else {}
+        title = str(
+            item.get("title")
+            or item.get("shortTitle")
+            or content.get("title")
+            or content.get("shortTitle")
+            or ""
+        ).strip()
+        summary = str(item.get("summary") or content.get("summary") or content.get("description") or "").strip()
+        canonical_url = content.get("canonicalUrl") if isinstance(content, dict) else None
+        canonical_link = canonical_url.get("url") if isinstance(canonical_url, dict) else None
+        url = str(item.get("link") or item.get("url") or canonical_link or "").strip()
         if not title or not url:
             continue
 
@@ -894,13 +908,26 @@ def fetch_news_yahoo_finance(
                 published_dt = datetime.fromtimestamp(int(publish_epoch), tz=timezone.utc)
             except Exception:
                 published_dt = None
+        if published_dt is None and isinstance(content, dict):
+            published_raw = str(content.get("pubDate") or "").strip()
+            if published_raw:
+                try:
+                    parsed = datetime.fromisoformat(published_raw.replace("Z", "+00:00"))
+                    published_dt = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+                except Exception:
+                    published_dt = None
         if published_dt and published_dt < lookback_floor:
             continue
+
+        related_tickers = item.get("relatedTickers")
+        if related_tickers is None and isinstance(content, dict):
+            related_tickers = content.get("symbols")
+        relevance_item = {**item, "relatedTickers": related_tickers}
 
         relevance = _news_relevance(
             symbol=symbol,
             company_name=company_name,
-            item=item,
+            item=relevance_item,
             title=title,
             summary=summary,
         )
@@ -917,7 +944,11 @@ def fetch_news_yahoo_finance(
                     title=title,
                     summary=summary,
                     url=url,
-                    source=str(item.get("publisher") or "Yahoo Finance"),
+                    source=str(
+                        item.get("publisher")
+                        or (content.get("provider", {}) if isinstance(content, dict) else {}).get("displayName")
+                        or "Yahoo Finance"
+                    ),
                     time_published=published_dt.strftime("%Y%m%dT%H%M%S") if published_dt else None,
                     sentiment_score=0.0,
                     sentiment_label="neutral",
@@ -936,9 +967,6 @@ def fetch_news_yahoo_finance(
     deduped = _dedupe_news(strict)
     shown = deduped[:limit]
 
-    if not shown:
-        warnings.append(f"No Yahoo Finance news items returned for {symbol}")
-
     return shown, warnings, FeedFetchAudit(fetched_pool=len(strict), deduped_pool=len(deduped), displayed_count=len(shown))
 
 
@@ -950,8 +978,8 @@ def fetch_news_multi_source(
     company_name: Optional[str] = None,
     lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
 ) -> Tuple[list[NewsRecord], list[str], FeedFetchAudit]:
-    source_limit = max(limit * 3, 100, 1)
-    source_pool = max(pool_size, source_limit, 180)
+    source_limit = max(limit * 4, 120, 1)
+    source_pool = max(pool_size, source_limit, 220)
 
     alpha_records, alpha_warnings, alpha_audit = fetch_news_alpha_vantage(
         symbol=symbol,
@@ -988,6 +1016,8 @@ def fetch_news_multi_source(
     warnings: list[str] = []
     warnings.extend(alpha_warnings)
     warnings.extend(yahoo_warnings)
+    if shown:
+        warnings = [warning for warning in warnings if "No Yahoo Finance news items returned" not in warning]
     if not shown:
         warnings.append(f"No combined news items were available for {symbol}.")
 
@@ -1369,8 +1399,8 @@ def fetch_social_multi_source(
     company_name: Optional[str] = None,
     lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
 ) -> Tuple[list[SocialRecord], list[str], FeedFetchAudit]:
-    source_limit = max(limit * 3, 100, 1)
-    source_pool = max(pool_size, source_limit, 180)
+    source_limit = max(limit * 4, 120, 1)
+    source_pool = max(pool_size, source_limit, 220)
 
     reddit_records, reddit_warnings, reddit_audit = fetch_social_reddit(
         symbol=symbol,
@@ -1556,6 +1586,7 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
         "company_name": company_name,
         "currency": info.get("currency"),
         "market_cap": info.get("marketCap"),
+        "current_price": info.get("currentPrice") or info.get("regularMarketPrice"),
         "trailing_pe": info.get("trailingPE"),
         "forward_pe": info.get("forwardPE"),
         "debt_to_equity": info.get("debtToEquity"),
@@ -1568,6 +1599,12 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
         "return_on_equity": info.get("returnOnEquity"),
         "operating_margin": info.get("operatingMargins"),
         "free_cashflow": info.get("freeCashflow"),
+        "recommendation_key": info.get("recommendationKey"),
+        "recommendation_mean": info.get("recommendationMean"),
+        "analyst_opinion_count": info.get("numberOfAnalystOpinions"),
+        "target_mean_price": info.get("targetMeanPrice"),
+        "target_high_price": info.get("targetHighPrice"),
+        "target_low_price": info.get("targetLowPrice"),
         "quarterly": snapshots,
         "revenue_qoq_growth_pct": revenue_qoq,
         "eps_qoq_growth_pct": eps_qoq,

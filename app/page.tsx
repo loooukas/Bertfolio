@@ -7,6 +7,7 @@ import { JobProgress } from "@/components/finbert/job-progress"
 import { ReportView } from "@/components/finbert/report-view"
 import { EmptyState } from "@/components/finbert/empty-state"
 import { adaptAnalysisResponseToUI, adaptJobProgress, DEFAULT_PROGRESS } from "@/lib/finbert/adapters"
+import { DEFAULT_UI_SETTINGS, pollIntervalMs, type UISettings } from "@/lib/finbert/ui-settings"
 import { cn } from "@/lib/utils"
 import {
   createAnalyzeJob,
@@ -18,7 +19,7 @@ import type { BackendJobStatus, UIReportModel } from "@/lib/finbert/types"
 
 type PageStatus = BackendJobStatus | "idle"
 
-const POLL_INTERVAL_MS = 1800
+const UI_SETTINGS_STORAGE_KEY = "finbert-ui-settings-v1"
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -41,6 +42,7 @@ export default function HomePage() {
   const [report, setReport] = useState<UIReportModel | null>(null)
   const [errorMessage, setErrorMessage] = useState("")
   const [showReport, setShowReport] = useState(false)
+  const [uiSettings, setUiSettings] = useState<UISettings>(DEFAULT_UI_SETTINGS)
   const latestRunRef = useRef(0)
 
   useEffect(() => {
@@ -48,6 +50,30 @@ export default function HomePage() {
       latestRunRef.current += 1
     }
   }, [])
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(UI_SETTINGS_STORAGE_KEY)
+      if (!raw) {
+        return
+      }
+      const parsed = JSON.parse(raw) as Partial<UISettings>
+      setUiSettings({
+        ...DEFAULT_UI_SETTINGS,
+        ...parsed,
+      })
+    } catch {
+      setUiSettings(DEFAULT_UI_SETTINGS)
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(UI_SETTINGS_STORAGE_KEY, JSON.stringify(uiSettings))
+    } catch {
+      // no-op
+    }
+  }, [uiSettings])
 
   const handleAnalyze = async (inputTicker: string) => {
     const normalizedTicker = inputTicker.trim().toUpperCase()
@@ -76,7 +102,7 @@ export default function HomePage() {
 
       let latestJob = createdJob
       while (latestRunRef.current === runToken && (latestJob.status === "queued" || latestJob.status === "running")) {
-        await sleep(POLL_INTERVAL_MS)
+        await sleep(pollIntervalMs(uiSettings.polling_mode))
         if (latestRunRef.current !== runToken) {
           return
         }
@@ -138,7 +164,7 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header onHomeClick={handleReset} />
+      <Header onHomeClick={handleReset} settings={uiSettings} onSettingsChange={setUiSettings} />
       
       <main className="flex-1">
         {/* Input Section */}
@@ -173,7 +199,7 @@ export default function HomePage() {
           )}
           
           {jobStatus === "completed" && showReport && report && (
-            <ReportView report={report} />
+            <ReportView report={report} settings={uiSettings} />
           )}
           
           {jobStatus === "failed" && (
