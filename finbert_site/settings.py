@@ -54,10 +54,14 @@ class Settings:
     news_limit: int = int(os.getenv("NEWS_LIMIT", "50"))
     news_pool_size: int = int(os.getenv("NEWS_POOL_SIZE", "240"))
     news_lookback_days: int = int(os.getenv("NEWS_LOOKBACK_DAYS", "21"))
+    news_enable_alpha_vantage: bool = _env_bool("NEWS_ENABLE_ALPHA_VANTAGE", True)
+    news_enable_yahoo_finance: bool = _env_bool("NEWS_ENABLE_YAHOO_FINANCE", True)
 
     social_limit: int = int(os.getenv("SOCIAL_LIMIT", "50"))
     social_pool_size: int = int(os.getenv("SOCIAL_POOL_SIZE", "260"))
     social_lookback_days: int = int(os.getenv("SOCIAL_LOOKBACK_DAYS", "21"))
+    social_enable_reddit: bool = _env_bool("SOCIAL_ENABLE_REDDIT", True)
+    social_enable_stocktwits: bool = _env_bool("SOCIAL_ENABLE_STOCKTWITS", True)
 
 
 settings = Settings()

@@ -11,10 +11,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { DEFAULT_UI_SETTINGS, type PollingMode, type UISettings } from "@/lib/finbert/ui-settings"
+import {
+  DEFAULT_UI_SETTINGS,
+  sanitizeAnalyzeRunOverrides,
+  type AnalyzeRunOverrides,
+  type PollingMode,
+  type UISettings,
+} from "@/lib/finbert/ui-settings"
 
 interface HeaderProps {
   onHomeClick?: () => void
@@ -37,6 +44,19 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
       return
     }
     onSettingsChange({ ...effectiveSettings, ...patch })
+  }
+
+  const updateRunSettings = (patch: Partial<AnalyzeRunOverrides>) => {
+    if (!onSettingsChange) {
+      return
+    }
+    onSettingsChange({
+      ...effectiveSettings,
+      run_overrides: sanitizeAnalyzeRunOverrides({
+        ...effectiveSettings.run_overrides,
+        ...patch,
+      }),
+    })
   }
 
   return (
@@ -145,6 +165,86 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
               </Select>
             </div>
 
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <div className="text-sm font-medium text-foreground">Data Collection (Per Run)</div>
+              <p className="text-xs text-muted-foreground">
+                Increase pool sizes and lookback to scrape more candidates before dedupe/ranking. Defaults are tuned for fast local runs.
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <NumberInput
+                  label="News Kept"
+                  value={effectiveSettings.run_overrides.news_limit}
+                  min={10}
+                  max={120}
+                  onChange={(value) => updateRunSettings({ news_limit: value })}
+                />
+                <NumberInput
+                  label="News Pool"
+                  value={effectiveSettings.run_overrides.news_pool_size}
+                  min={80}
+                  max={1800}
+                  onChange={(value) => updateRunSettings({ news_pool_size: value })}
+                />
+                <NumberInput
+                  label="News Lookback Days"
+                  value={effectiveSettings.run_overrides.news_lookback_days}
+                  min={3}
+                  max={365}
+                  onChange={(value) => updateRunSettings({ news_lookback_days: value })}
+                />
+                <div className="rounded-md border border-border bg-secondary/30 p-3 text-xs text-muted-foreground">
+                  Scrape target formula: fetch up to source pool, dedupe, relevance-rank, then keep top N.
+                </div>
+                <NumberInput
+                  label="Social Kept"
+                  value={effectiveSettings.run_overrides.social_limit}
+                  min={10}
+                  max={120}
+                  onChange={(value) => updateRunSettings({ social_limit: value })}
+                />
+                <NumberInput
+                  label="Social Pool"
+                  value={effectiveSettings.run_overrides.social_pool_size}
+                  min={80}
+                  max={2000}
+                  onChange={(value) => updateRunSettings({ social_pool_size: value })}
+                />
+                <NumberInput
+                  label="Social Lookback Days"
+                  value={effectiveSettings.run_overrides.social_lookback_days}
+                  min={3}
+                  max={365}
+                  onChange={(value) => updateRunSettings({ social_lookback_days: value })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <div className="text-sm font-medium text-foreground">Feed Sources</div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <SourceToggle
+                  label="Alpha Vantage News"
+                  checked={effectiveSettings.run_overrides.news_enable_alpha_vantage}
+                  onCheckedChange={(checked) => updateRunSettings({ news_enable_alpha_vantage: checked })}
+                />
+                <SourceToggle
+                  label="Yahoo Finance News"
+                  checked={effectiveSettings.run_overrides.news_enable_yahoo_finance}
+                  onCheckedChange={(checked) => updateRunSettings({ news_enable_yahoo_finance: checked })}
+                />
+                <SourceToggle
+                  label="Reddit Social"
+                  checked={effectiveSettings.run_overrides.social_enable_reddit}
+                  onCheckedChange={(checked) => updateRunSettings({ social_enable_reddit: checked })}
+                />
+                <SourceToggle
+                  label="Stocktwits Social"
+                  checked={effectiveSettings.run_overrides.social_enable_stocktwits}
+                  onCheckedChange={(checked) => updateRunSettings({ social_enable_stocktwits: checked })}
+                />
+              </div>
+            </div>
+
             <div className="space-y-4">
               <div className="flex items-center justify-between rounded-lg border border-border p-3">
                 <div>
@@ -194,4 +294,61 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
       </Dialog>
     </header>
   )
+}
+
+function NumberInput({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  onChange: (value: number) => void
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Input
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => {
+          const next = Number(event.target.value)
+          if (!Number.isFinite(next)) {
+            return
+          }
+          onChange(clampInt(next, min, max))
+        }}
+      />
+      <div className="text-[11px] text-muted-foreground">
+        Range {min}-{max}
+      </div>
+    </div>
+  )
+}
+
+function SourceToggle({
+  label,
+  checked,
+  onCheckedChange,
+}: {
+  label: string
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-md border border-border bg-secondary/20 px-3 py-2">
+      <div className="text-xs text-foreground">{label}</div>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
+  )
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(value)))
 }

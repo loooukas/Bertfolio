@@ -21,8 +21,9 @@ The app is organized into exactly 5 primary sections:
 The frontend now follows the provided FinBERT reference design (dark institutional dashboard) with:
 
 - Top navigation (`Analysis`, `Charts Test`, `Docs`, settings icon, API online indicator)
-- Settings modal on the header cog with live controls for polling mode and display density
+- Settings modal on the header cog with live controls for polling mode, display density, and per-run news/social scrape depth
 - In-app docs route at `/docs` (wired from the top-nav Docs action)
+- Methodology deep-dive route at `/docs/model-methodology` with score formulas and interpretation bands
 - Geist Sans / Geist Mono loaded from the local `geist` package (no remote font fetch required)
 - Analyze hero/input panel that fades out after a run starts to keep report focus high
 - Header brand click reset (top-left FinBERT) to return to a fresh analysis start state
@@ -190,8 +191,17 @@ Current defaults in `.env.example`:
 
 - `NEWS_LIMIT=50`
 - `NEWS_POOL_SIZE=240`
+- `NEWS_ENABLE_ALPHA_VANTAGE=1`
+- `NEWS_ENABLE_YAHOO_FINANCE=1`
 - `SOCIAL_LIMIT=50`
 - `SOCIAL_POOL_SIZE=260`
+- `SOCIAL_ENABLE_REDDIT=1`
+- `SOCIAL_ENABLE_STOCKTWITS=1`
+
+Run-time overrides:
+
+- The frontend settings modal now sends runtime feed overrides per analysis job (`runtime_overrides`) so you can increase scrape depth without editing `.env`.
+- Override keys: `news_limit`, `news_pool_size`, `news_lookback_days`, `social_limit`, `social_pool_size`, `social_lookback_days`, and source toggles.
 
 ### Expanded Fundamentals Metrics
 
@@ -230,7 +240,19 @@ Legacy fields remain during migration:
 
 ### Async Progress API
 
-- `POST /api/analyze/jobs` with JSON body `{ "ticker": "AAPL" }`
+- `POST /api/analyze/jobs` with JSON body:
+
+```json
+{
+  "ticker": "AAPL",
+  "runtime_overrides": {
+    "news_limit": 60,
+    "news_pool_size": 500,
+    "social_limit": 60,
+    "social_pool_size": 700
+  }
+}
+```
 - `GET /api/analyze/jobs/{job_id}` for run status + progress stages/subtasks
 - `GET /api/analyze/jobs/{job_id}/result` for the completed report payload
 

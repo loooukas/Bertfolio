@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 import threading
@@ -22,6 +22,7 @@ class AnalyzeJob:
     updated_at: float
     status: str
     progress: dict[str, Any]
+    runtime_overrides: dict[str, Any]
     result: Optional[dict[str, Any]] = None
     error: Optional[str] = None
 
@@ -60,6 +61,7 @@ class AnalyzeJobManager:
             "created_at": self._iso(job.created_at),
             "updated_at": self._iso(job.updated_at),
             "progress": job.progress,
+            "runtime_overrides": job.runtime_overrides,
             "error": job.error,
         }
         if include_result:
@@ -81,6 +83,7 @@ class AnalyzeJobManager:
         ticker: str,
         tracker: RunProgressTracker,
         analysis_fn: Callable[..., Any],
+        runtime_overrides: Optional[dict[str, Any]] = None,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -91,7 +94,8 @@ class AnalyzeJobManager:
 
         tracker.mark_running()
         try:
-            result = analysis_fn(ticker=ticker, settings=self.settings, progress=tracker, run_id=job_id)
+            job_settings = self._settings_for_job(runtime_overrides)
+            result = analysis_fn(ticker=ticker, settings=job_settings, progress=tracker, run_id=job_id)
             serialized = result.model_dump() if hasattr(result, "model_dump") else result
             with self._lock:
                 job = self._jobs.get(job_id)
@@ -113,7 +117,25 @@ class AnalyzeJobManager:
                 job.updated_at = self._now()
             tracker.mark_failed(error_message)
 
-    def create_job(self, *, ticker: str, analysis_fn: Callable[..., Any]) -> dict[str, Any]:
+    def _settings_for_job(self, runtime_overrides: Optional[dict[str, Any]]) -> Settings:
+        if not runtime_overrides:
+            return self.settings
+        sanitized = {
+            key: value
+            for key, value in runtime_overrides.items()
+            if key in self._OVERRIDABLE_SETTING_KEYS
+        }
+        if not sanitized:
+            return self.settings
+        return replace(self.settings, **sanitized)
+
+    def create_job(
+        self,
+        *,
+        ticker: str,
+        analysis_fn: Callable[..., Any],
+        runtime_overrides: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         job_id = uuid.uuid4().hex[:12]
         created = self._now()
         tracker = RunProgressTracker(
@@ -128,6 +150,7 @@ class AnalyzeJobManager:
             updated_at=created,
             status="queued",
             progress=tracker.snapshot(),
+            runtime_overrides=dict(runtime_overrides or {}),
         )
         with self._lock:
             self._cleanup_locked()
@@ -138,6 +161,7 @@ class AnalyzeJobManager:
             ticker=ticker,
             tracker=tracker,
             analysis_fn=analysis_fn,
+            runtime_overrides=runtime_overrides,
         )
         return self._job_payload(job)
 
@@ -148,4 +172,16 @@ class AnalyzeJobManager:
             if job is None:
                 return None
             return self._job_payload(job, include_result=include_result)
+    _OVERRIDABLE_SETTING_KEYS: tuple[str, ...] = (
+        "news_limit",
+        "news_pool_size",
+        "news_lookback_days",
+        "social_limit",
+        "social_pool_size",
+        "social_lookback_days",
+        "news_enable_alpha_vantage",
+        "news_enable_yahoo_finance",
+        "social_enable_reddit",
+        "social_enable_stocktwits",
+    )
 

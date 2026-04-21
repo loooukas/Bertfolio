@@ -1190,6 +1190,8 @@ def build_sentiment_snapshot(ticker: str, settings: Settings) -> dict[str, Any]:
         pool_size=max(settings.news_pool_size, settings.news_limit),
         company_name=company_name,
         lookback_days=settings.news_lookback_days,
+        enable_alpha=settings.news_enable_alpha_vantage,
+        enable_yahoo=settings.news_enable_yahoo_finance,
     )
     social_records, social_warnings, _social_audit = fetch_social_multi_source(
         symbol,
@@ -1198,6 +1200,8 @@ def build_sentiment_snapshot(ticker: str, settings: Settings) -> dict[str, Any]:
         pool_size=max(settings.social_pool_size, settings.social_limit),
         company_name=company_name,
         lookback_days=settings.social_lookback_days,
+        enable_reddit=settings.social_enable_reddit,
+        enable_stocktwits=settings.social_enable_stocktwits,
     )
 
     warnings = news_warnings + social_warnings
@@ -1295,6 +1299,8 @@ def build_analysis(
         pool_size=max(settings.news_pool_size, settings.news_limit),
         company_name=symbol,
         lookback_days=settings.news_lookback_days,
+        enable_alpha=settings.news_enable_alpha_vantage,
+        enable_yahoo=settings.news_enable_yahoo_finance,
     )
     _record_task("news_fetch", "News Fetch", news_fetch_start, detail=f"{len(news_records)} records.")
 
@@ -1306,6 +1312,8 @@ def build_analysis(
         pool_size=max(settings.social_pool_size, settings.social_limit),
         company_name=symbol,
         lookback_days=settings.social_lookback_days,
+        enable_reddit=settings.social_enable_reddit,
+        enable_stocktwits=settings.social_enable_stocktwits,
     )
     _record_task("social_fetch", "Social Fetch", social_fetch_start, detail=f"{len(social_records)} records.")
 

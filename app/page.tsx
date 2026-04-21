@@ -7,7 +7,12 @@ import { JobProgress } from "@/components/finbert/job-progress"
 import { ReportView } from "@/components/finbert/report-view"
 import { EmptyState } from "@/components/finbert/empty-state"
 import { adaptAnalysisResponseToUI, adaptJobProgress, DEFAULT_PROGRESS } from "@/lib/finbert/adapters"
-import { DEFAULT_UI_SETTINGS, pollIntervalMs, type UISettings } from "@/lib/finbert/ui-settings"
+import {
+  DEFAULT_UI_SETTINGS,
+  pollIntervalMs,
+  sanitizeAnalyzeRunOverrides,
+  type UISettings,
+} from "@/lib/finbert/ui-settings"
 import { cn } from "@/lib/utils"
 import {
   createAnalyzeJob,
@@ -19,7 +24,7 @@ import type { BackendJobStatus, UIReportModel } from "@/lib/finbert/types"
 
 type PageStatus = BackendJobStatus | "idle"
 
-const UI_SETTINGS_STORAGE_KEY = "finbert-ui-settings-v1"
+const UI_SETTINGS_STORAGE_KEY = "finbert-ui-settings-v2"
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -61,6 +66,7 @@ export default function HomePage() {
       setUiSettings({
         ...DEFAULT_UI_SETTINGS,
         ...parsed,
+        run_overrides: sanitizeAnalyzeRunOverrides(parsed.run_overrides),
       })
     } catch {
       setUiSettings(DEFAULT_UI_SETTINGS)
@@ -92,7 +98,7 @@ export default function HomePage() {
     setShowReport(false)
 
     try {
-      const createdJob = await createAnalyzeJob(normalizedTicker)
+      const createdJob = await createAnalyzeJob(normalizedTicker, sanitizeAnalyzeRunOverrides(uiSettings.run_overrides))
       if (latestRunRef.current !== runToken) {
         return
       }

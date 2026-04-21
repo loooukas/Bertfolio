@@ -977,26 +977,37 @@ def fetch_news_multi_source(
     pool_size: int = 120,
     company_name: Optional[str] = None,
     lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+    enable_alpha: bool = True,
+    enable_yahoo: bool = True,
 ) -> Tuple[list[NewsRecord], list[str], FeedFetchAudit]:
     source_limit = max(limit * 4, 120, 1)
     source_pool = max(pool_size, source_limit, 220)
 
-    alpha_records, alpha_warnings, alpha_audit = fetch_news_alpha_vantage(
-        symbol=symbol,
-        settings=settings,
-        limit=source_limit,
-        pool_size=source_pool,
-        company_name=company_name,
-        lookback_days=lookback_days,
-    )
-    yahoo_records, yahoo_warnings, yahoo_audit = fetch_news_yahoo_finance(
-        symbol=symbol,
-        settings=settings,
-        limit=source_limit,
-        pool_size=source_pool,
-        company_name=company_name,
-        lookback_days=lookback_days,
-    )
+    alpha_records: list[NewsRecord] = []
+    alpha_warnings: list[str] = []
+    alpha_audit = FeedFetchAudit(0, 0, 0)
+    if enable_alpha:
+        alpha_records, alpha_warnings, alpha_audit = fetch_news_alpha_vantage(
+            symbol=symbol,
+            settings=settings,
+            limit=source_limit,
+            pool_size=source_pool,
+            company_name=company_name,
+            lookback_days=lookback_days,
+        )
+
+    yahoo_records: list[NewsRecord] = []
+    yahoo_warnings: list[str] = []
+    yahoo_audit = FeedFetchAudit(0, 0, 0)
+    if enable_yahoo:
+        yahoo_records, yahoo_warnings, yahoo_audit = fetch_news_yahoo_finance(
+            symbol=symbol,
+            settings=settings,
+            limit=source_limit,
+            pool_size=source_pool,
+            company_name=company_name,
+            lookback_days=lookback_days,
+        )
 
     combined = alpha_records + yahoo_records
     deduped = _dedupe_news(combined)
@@ -1014,6 +1025,8 @@ def fetch_news_multi_source(
     shown = deduped[:limit]
 
     warnings: list[str] = []
+    if not enable_alpha and not enable_yahoo:
+        warnings.append("Both news sources are disabled by runtime settings.")
     warnings.extend(alpha_warnings)
     warnings.extend(yahoo_warnings)
     if shown:
@@ -1160,7 +1173,9 @@ def fetch_social_reddit(
 
     children: list[dict[str, Any]] = []
     seen_post_keys: set[str] = set()
-    per_query_limit = max(25, min(100, max(pool_size, limit * 3) // max(len(query_specs), 1)))
+    target_per_query = max(pool_size, limit * 4) // max(len(query_specs), 1)
+    per_page_limit = max(25, min(100, target_per_query))
+    max_pages = max(1, min(4, (max(target_per_query, per_page_limit) + 99) // 100))
 
     try:
         for scope, query, extra_params in query_specs:
@@ -1171,39 +1186,48 @@ def fetch_social_reddit(
             else:
                 endpoint = "https://www.reddit.com/search.json"
 
-            params = {
-                "q": query,
-                "limit": str(per_query_limit),
-                **extra_params,
-            }
-            response = requests.get(
-                endpoint,
-                params=params,
-                headers={"User-Agent": "finbert-earnings-signals/1.0"},
-                timeout=settings.request_timeout_seconds,
-            )
-            if response.status_code != 200:
-                warnings.append(f"Reddit feed warning for {symbol} ({scope}): HTTP {response.status_code}")
-                continue
+            after_cursor: Optional[str] = None
+            for _ in range(max_pages):
+                params = {
+                    "q": query,
+                    "limit": str(per_page_limit),
+                    **extra_params,
+                }
+                if after_cursor:
+                    params["after"] = after_cursor
+                response = requests.get(
+                    endpoint,
+                    params=params,
+                    headers={"User-Agent": "finbert-earnings-signals/1.0"},
+                    timeout=settings.request_timeout_seconds,
+                )
+                if response.status_code != 200:
+                    warnings.append(f"Reddit feed warning for {symbol} ({scope}): HTTP {response.status_code}")
+                    break
 
-            payload = response.json()
-            data = payload.get("data", {})
-            scoped_children = data.get("children", [])
-            if not isinstance(scoped_children, list):
-                continue
+                payload = response.json()
+                data = payload.get("data", {})
+                scoped_children = data.get("children", [])
+                if not isinstance(scoped_children, list) or not scoped_children:
+                    break
 
-            for child in scoped_children:
-                if not isinstance(child, dict):
-                    continue
-                post = child.get("data", {})
-                if not isinstance(post, dict):
-                    continue
-                permalink = str(post.get("permalink") or "").strip()
-                unique_key = permalink or str(post.get("id") or "")
-                if not unique_key or unique_key in seen_post_keys:
-                    continue
-                seen_post_keys.add(unique_key)
-                children.append(child)
+                for child in scoped_children:
+                    if not isinstance(child, dict):
+                        continue
+                    post = child.get("data", {})
+                    if not isinstance(post, dict):
+                        continue
+                    permalink = str(post.get("permalink") or "").strip()
+                    unique_key = permalink or str(post.get("id") or "")
+                    if not unique_key or unique_key in seen_post_keys:
+                        continue
+                    seen_post_keys.add(unique_key)
+                    children.append(child)
+
+                after_raw = data.get("after")
+                after_cursor = str(after_raw).strip() if after_raw else ""
+                if not after_cursor or len(children) >= max(pool_size, limit * 6):
+                    break
 
         if not children:
             return [], [f"No Reddit social posts available for {symbol}"], FeedFetchAudit(0, 0, 0)
@@ -1398,26 +1422,37 @@ def fetch_social_multi_source(
     pool_size: int = 160,
     company_name: Optional[str] = None,
     lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+    enable_reddit: bool = True,
+    enable_stocktwits: bool = True,
 ) -> Tuple[list[SocialRecord], list[str], FeedFetchAudit]:
     source_limit = max(limit * 4, 120, 1)
     source_pool = max(pool_size, source_limit, 220)
 
-    reddit_records, reddit_warnings, reddit_audit = fetch_social_reddit(
-        symbol=symbol,
-        settings=settings,
-        limit=source_limit,
-        pool_size=source_pool,
-        company_name=company_name,
-        lookback_days=lookback_days,
-    )
-    stocktwits_records, stocktwits_warnings, stocktwits_audit = fetch_social_stocktwits(
-        symbol=symbol,
-        settings=settings,
-        limit=source_limit,
-        pool_size=source_pool,
-        company_name=company_name,
-        lookback_days=lookback_days,
-    )
+    reddit_records: list[SocialRecord] = []
+    reddit_warnings: list[str] = []
+    reddit_audit = FeedFetchAudit(0, 0, 0)
+    if enable_reddit:
+        reddit_records, reddit_warnings, reddit_audit = fetch_social_reddit(
+            symbol=symbol,
+            settings=settings,
+            limit=source_limit,
+            pool_size=source_pool,
+            company_name=company_name,
+            lookback_days=lookback_days,
+        )
+
+    stocktwits_records: list[SocialRecord] = []
+    stocktwits_warnings: list[str] = []
+    stocktwits_audit = FeedFetchAudit(0, 0, 0)
+    if enable_stocktwits:
+        stocktwits_records, stocktwits_warnings, stocktwits_audit = fetch_social_stocktwits(
+            symbol=symbol,
+            settings=settings,
+            limit=source_limit,
+            pool_size=source_pool,
+            company_name=company_name,
+            lookback_days=lookback_days,
+        )
 
     combined = reddit_records + stocktwits_records
     deduped = _dedupe_social(combined)
@@ -1442,6 +1477,8 @@ def fetch_social_multi_source(
             break
 
     warnings: list[str] = []
+    if not enable_reddit and not enable_stocktwits:
+        warnings.append("Both social sources are disabled by runtime settings.")
     warnings.extend(reddit_warnings)
     warnings.extend(stocktwits_warnings)
     if not shown:

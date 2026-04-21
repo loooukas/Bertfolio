@@ -6,7 +6,8 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Optional
 
 from .analysis import build_analysis, build_sentiment_snapshot
 from .jobs import AnalyzeJobManager
@@ -19,8 +20,22 @@ templates = Jinja2Templates(directory="templates")
 job_manager = AnalyzeJobManager(settings=settings)
 
 
+class AnalyzeRuntimeOverrides(BaseModel):
+    news_limit: Optional[int] = Field(default=None, ge=10, le=120)
+    news_pool_size: Optional[int] = Field(default=None, ge=80, le=1800)
+    news_lookback_days: Optional[int] = Field(default=None, ge=3, le=365)
+    social_limit: Optional[int] = Field(default=None, ge=10, le=120)
+    social_pool_size: Optional[int] = Field(default=None, ge=80, le=2000)
+    social_lookback_days: Optional[int] = Field(default=None, ge=3, le=365)
+    news_enable_alpha_vantage: Optional[bool] = None
+    news_enable_yahoo_finance: Optional[bool] = None
+    social_enable_reddit: Optional[bool] = None
+    social_enable_stocktwits: Optional[bool] = None
+
+
 class AnalyzeJobRequest(BaseModel):
     ticker: str
+    runtime_overrides: Optional[AnalyzeRuntimeOverrides] = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -56,7 +71,12 @@ def create_analyze_job(payload: AnalyzeJobRequest) -> dict:
     ticker = payload.ticker.strip().upper()
     if not ticker:
         raise HTTPException(status_code=400, detail="Ticker cannot be empty.")
-    return job_manager.create_job(ticker=ticker, analysis_fn=build_analysis)
+    runtime_overrides = (
+        payload.runtime_overrides.model_dump(exclude_none=True)
+        if payload.runtime_overrides is not None
+        else None
+    )
+    return job_manager.create_job(ticker=ticker, analysis_fn=build_analysis, runtime_overrides=runtime_overrides)
 
 
 @app.get("/api/analyze/jobs/{job_id}")

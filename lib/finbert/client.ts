@@ -1,4 +1,5 @@
 import type { AnalysisResponseBackend, BackendJobPayload } from "@/lib/finbert/types"
+import type { AnalyzeRunOverrides } from "@/lib/finbert/ui-settings"
 
 class FinbertClientError extends Error {
   status: number
@@ -30,11 +31,14 @@ async function parseResponse<T>(response: Response): Promise<T> {
   throw new FinbertClientError(message, response.status)
 }
 
-export async function createAnalyzeJob(ticker: string): Promise<BackendJobPayload> {
+export async function createAnalyzeJob(ticker: string, runtimeOverrides?: AnalyzeRunOverrides): Promise<BackendJobPayload> {
   const response = await fetch("/api/analyze/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ticker }),
+    body: JSON.stringify({
+      ticker,
+      runtime_overrides: runtimeOverrides || undefined,
+    }),
   })
   return parseResponse<BackendJobPayload>(response)
 }

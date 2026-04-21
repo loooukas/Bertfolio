@@ -1,3 +1,5 @@
+import Link from "next/link"
+
 export default function DocsPage() {
   return (
     <main className="mx-auto max-w-5xl space-y-8 px-4 py-10 sm:px-6 lg:px-8">
@@ -6,6 +8,19 @@ export default function DocsPage() {
         <p className="text-sm text-muted-foreground">
           Local runbook and product behavior notes for the root Next.js app + FastAPI backend.
         </p>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Methodology</h2>
+        <p className="text-sm text-muted-foreground">
+          Deep dive on every calculated number, score thresholds, and the exact weighting formulas used in the app.
+        </p>
+        <Link
+          href="/docs/model-methodology"
+          className="inline-flex items-center rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+        >
+          Open Model Methodology Guide
+        </Link>
       </section>
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
@@ -56,6 +71,9 @@ export default function DocsPage() {
         </div>
         <p className="text-sm text-muted-foreground">
           Social sources are currently Reddit + Stocktwits with source balancing; X/LinkedIn require separate provider APIs and are not enabled by default.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Runtime scrape depth and source toggles can now be changed in the top-right Settings modal per analysis run.
         </p>
       </section>
     </main>
