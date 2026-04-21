@@ -4,7 +4,7 @@ import { useState } from "react"
 import { Newspaper, MessageCircle, ExternalLink, TrendingUp, TrendingDown, Minus, Clock } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 interface NewsItem {
   title: string
@@ -262,7 +262,7 @@ export function MarketReactionSection({ data, gridColumns = 2 }: MarketReactionS
 
       {/* Social Detail Dialog */}
       <Dialog open={!!selectedSocial} onOpenChange={() => setSelectedSocial(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden">
           {selectedSocial && (
             <>
               <DialogHeader>
@@ -280,12 +280,9 @@ export function MarketReactionSection({ data, gridColumns = 2 }: MarketReactionS
                   </Badge>
                 </div>
                 <DialogTitle className="text-lg">{selectedSocial.title}</DialogTitle>
-                <DialogDescription>
-                  Source post detail with full body text, timestamp, relevance score, and sentiment.
-                </DialogDescription>
               </DialogHeader>
-              <div className="space-y-4">
-                <div className="p-4 rounded-lg bg-secondary/50 text-sm text-foreground leading-relaxed whitespace-pre-wrap">
+              <div className="max-h-[65vh] space-y-4 overflow-y-auto pr-1">
+                <div className="break-words whitespace-pre-wrap rounded-lg bg-secondary/50 p-4 text-sm leading-relaxed text-foreground">
                   {selectedSocial.body}
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground">

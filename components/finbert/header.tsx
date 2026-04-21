@@ -135,15 +135,19 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
       </div>
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Run & Display Settings</DialogTitle>
-            <DialogDescription>
-              Adjust how often the app polls the backend and how dense the report layout renders.
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className="w-[94vw] max-w-3xl h-[85vh] max-h-[85vh] overflow-hidden p-0">
+          <div className="flex h-full flex-col">
+            <div className="sticky top-0 z-20 border-b border-border bg-background px-6 py-4">
+              <DialogHeader>
+                <DialogTitle>Run & Display Settings</DialogTitle>
+                <DialogDescription>
+                  Adjust how often the app polls the backend and how dense the report layout renders.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
 
-          <div className="space-y-5">
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              <div className="space-y-5 pb-2">
             <div className="space-y-2">
               <Label htmlFor="polling-mode">Polling Mode</Label>
               <Select
@@ -192,9 +196,6 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
                   max={365}
                   onChange={(value) => updateRunSettings({ news_lookback_days: value })}
                 />
-                <div className="rounded-md border border-border bg-secondary/30 p-3 text-xs text-muted-foreground">
-                  Scrape target formula: fetch up to source pool, dedupe, relevance-rank, then keep top N.
-                </div>
                 <NumberInput
                   label="Social Kept"
                   value={effectiveSettings.run_overrides.social_limit}
@@ -288,6 +289,26 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
                   onCheckedChange={(checked) => updateSettings({ auto_open_audit_on_warnings: checked })}
                 />
               </div>
+            </div>
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 z-20 flex items-center justify-between border-t border-border bg-background px-6 py-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  if (!onSettingsChange) {
+                    return
+                  }
+                  onSettingsChange(DEFAULT_UI_SETTINGS)
+                }}
+              >
+                Reset Defaults
+              </Button>
+              <Button type="button" onClick={() => setSettingsOpen(false)}>
+                Done
+              </Button>
             </div>
           </div>
         </DialogContent>
