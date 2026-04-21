@@ -50,6 +50,12 @@ class Settings:
     transcript_sentiment_segment_overlap_sentences: int = int(
         os.getenv("TRANSCRIPT_SENTIMENT_SEGMENT_OVERLAP_SENTENCES", "1")
     )
+    transcript_feature_ai_enabled: bool = _env_bool("TRANSCRIPT_FEATURE_AI_ENABLED", True)
+    transcript_feature_ai_model: str = os.getenv("TRANSCRIPT_FEATURE_AI_MODEL", "gpt-4o-mini")
+    transcript_feature_ai_weight: float = float(os.getenv("TRANSCRIPT_FEATURE_AI_WEIGHT", "0.35"))
+    transcript_feature_ai_max_blocks: int = int(os.getenv("TRANSCRIPT_FEATURE_AI_MAX_BLOCKS", "80"))
+    transcript_feature_ai_batch_size: int = int(os.getenv("TRANSCRIPT_FEATURE_AI_BATCH_SIZE", "20"))
+    transcript_feature_ai_timeout_seconds: int = int(os.getenv("TRANSCRIPT_FEATURE_AI_TIMEOUT_SECONDS", "12"))
 
     news_limit: int = int(os.getenv("NEWS_LIMIT", "50"))
     news_pool_size: int = int(os.getenv("NEWS_POOL_SIZE", "240"))

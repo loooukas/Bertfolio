@@ -164,6 +164,24 @@ Defaults:
 - `TRANSCRIPT_SENTIMENT_SEGMENT_MIN=180`
 - `TRANSCRIPT_SENTIMENT_SEGMENT_OVERLAP_SENTENCES=1`
 
+### Hybrid Transcript Feature Classification
+
+Speaker communication metrics now use a hybrid pipeline:
+
+- Expanded weighted lexicons for forward/risk/hedge/specificity signals
+- Optional OpenAI block-level feature classification
+- Confidence-weighted blending of AI features into deterministic lexical features
+- Deterministic fallback when OpenAI is unavailable or times out
+
+Controls:
+
+- `TRANSCRIPT_FEATURE_AI_ENABLED=1`
+- `TRANSCRIPT_FEATURE_AI_MODEL=gpt-4o-mini`
+- `TRANSCRIPT_FEATURE_AI_WEIGHT=0.35`
+- `TRANSCRIPT_FEATURE_AI_MAX_BLOCKS=80`
+- `TRANSCRIPT_FEATURE_AI_BATCH_SIZE=20`
+- `TRANSCRIPT_FEATURE_AI_TIMEOUT_SECONDS=12`
+
 ### Expanded News + Social Coverage
 
 News is now combined from:
@@ -293,6 +311,7 @@ Optional keys:
 - `TRANSCRIPT_PIPELINE_FALLBACK_TO_LEGACY` (`1` or `0`)
 - `MOTLEY_*` discovery/scrape controls in `.env.example`
 - `TRANSCRIPT_SENTIMENT_SEGMENT_*` segmentation controls in `.env.example`
+- `TRANSCRIPT_FEATURE_AI_*` controls in `.env.example` for hybrid speaker-metric classification
 - `NEWS_*` and `SOCIAL_*` controls in `.env.example` for higher feed volume
 
 5. Start both frontend and backend

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
+import inspect
 import json
 import math
 import re
@@ -1461,11 +1462,22 @@ def build_analysis(
     )
 
     scoring_start = time.perf_counter()
+    feature_classifier_warnings: list[str] = []
+    speaker_analysis_signature = inspect.signature(build_speaker_analysis).parameters
+    supports_feature_classifier_kwargs = "settings" in speaker_analysis_signature
     for normalized in normalized_documents:
-        analysis_rows = build_speaker_analysis(
-            normalized.sections,
-            lambda text: _score_text_with_segmentation(text, engine, settings),
-        )
+        if supports_feature_classifier_kwargs:
+            analysis_rows = build_speaker_analysis(
+                normalized.sections,
+                lambda text: _score_text_with_segmentation(text, engine, settings),
+                settings=settings,
+                classifier_warnings=feature_classifier_warnings,
+            )
+        else:
+            analysis_rows = build_speaker_analysis(
+                normalized.sections,
+                lambda text: _score_text_with_segmentation(text, engine, settings),
+            )
         filtered_rows = _exclude_operator_rows(analysis_rows)
         speaker_analysis_by_url[normalized.source_url or f"doc-{len(speaker_analysis_by_url)}"] = filtered_rows
         all_speaker_analysis_raw.extend(filtered_rows)
@@ -1710,7 +1722,7 @@ def build_analysis(
         sparse_note=None if fundamentals_chart_enabled else UI_COPY.empty_states["fundamentals_chart"],
     )
 
-    warnings = transcript_warnings + news_warnings + social_warnings
+    warnings = list(dict.fromkeys(transcript_warnings + news_warnings + social_warnings + feature_classifier_warnings))
     if normalized_documents:
         warnings = [warning for warning in warnings if not warning.lower().startswith("openai normalization failed:")]
         transcript_discovery.fetch_failures = [

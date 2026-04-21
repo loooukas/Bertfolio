@@ -39,14 +39,20 @@ export default function ModelMethodologyPage() {
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
         <h2 className="text-xl font-semibold text-foreground">Transcript Metric Formulas</h2>
         <p className="text-sm text-muted-foreground">
-          Transcript sections are parsed into speaker blocks, then each block is scored using lexical densities and FinBERT directional output.
+          Transcript sections are parsed into speaker blocks. FinBERT provides directional sentiment, and communication metrics are computed from a
+          hybrid feature pipeline (weighted lexicons plus optional OpenAI feature classification).
         </p>
         <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
-          confidence = clamp(48 + numeric_density*45 - hedge_density*35, 0, 100){"\n"}
-          evasiveness = clamp(25 + hedge_density*60 + (1-numeric_density)*20, 0, 100){"\n"}
-          specificity = clamp(30 + numeric_density*60, 0, 100){"\n"}
-          forward_looking_strength = clamp(25 + forward_density*80, 0, 100){"\n"}
-          risk_language_intensity = clamp(20 + risk_density*90, 0, 100){"\n"}
+          forward_density = blend(lex_forward_density, ai_forward_density, ai_weight*ai_confidence){"\n"}
+          risk_density = blend(lex_risk_density, ai_risk_density, ai_weight*ai_confidence){"\n"}
+          hedge_density = blend(lex_hedge_density, ai_hedge_density, ai_weight*ai_confidence){"\n"}
+          specificity_density = blend(lex_specificity_density, ai_specificity_density, ai_weight*ai_confidence){"\n"}
+          blended_numeric_density = 0.65*numeric_density + 0.35*specificity_density{"\n"}
+          confidence = clamp(42 + 36*blended_numeric_density + 24*specificity_density + 10*forward_density - 42*hedge_density - 8*risk_density, 0, 100){"\n"}
+          evasiveness = clamp(20 + 58*hedge_density + 16*(1-blended_numeric_density) + 12*risk_density - 8*specificity_density, 0, 100){"\n"}
+          specificity = clamp(24 + 44*blended_numeric_density + 38*specificity_density - 12*hedge_density, 0, 100){"\n"}
+          forward_looking_strength = clamp(18 + 82*forward_density - 8*hedge_density, 0, 100){"\n"}
+          risk_language_intensity = clamp(15 + 88*risk_density + 8*hedge_density, 0, 100){"\n"}
           sentiment_direction = clamp(directional_score, -1, 1)
         </div>
         <p className="text-sm text-muted-foreground">
@@ -57,16 +63,40 @@ export default function ModelMethodologyPage() {
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
         <h2 className="text-xl font-semibold text-foreground">Topic Labeling</h2>
         <p className="text-sm text-muted-foreground">
-          Topic labels are assigned by deterministic keyword-hit scoring over the block text. The highest-hit topic wins.
+          Topic labels are assigned by weighted lexical scoring and may be overridden by OpenAI block classification when classifier confidence is
+          strong enough. If no topic score clears threshold, label defaults to <code>general</code>.
         </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 text-sm">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
           <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">demand</div>
           <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">margins</div>
           <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">guidance</div>
           <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">capex</div>
           <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">costs</div>
+          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">pricing</div>
+          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">competition</div>
+          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">regulation</div>
+          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">ai</div>
+          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">macro</div>
+          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">supply_chain</div>
+          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">cashflow</div>
           <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">general (fallback)</div>
         </div>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">FinBERT vs Engineered Metrics</h2>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>
+            FinBERT natively provides <code>positive</code>, <code>neutral</code>, and <code>negative</code> probabilities and derived directional score.
+          </li>
+          <li>
+            Confidence/evasiveness/specificity/forward/risk/topic are engineered from transcript language features and optional AI feature classifier
+            outputs; FinBERT does not natively output those fields.
+          </li>
+          <li>
+            When OpenAI classifier is unavailable, the system remains fully deterministic with weighted lexical features.
+          </li>
+        </ul>
       </section>
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
@@ -198,7 +228,12 @@ export default function ModelMethodologyPage() {
           <li>Scores are model-derived indicators, not investment advice.</li>
           <li>Provider coverage varies by ticker and recency window; low counts reduce confidence.</li>
           <li>
-            OpenAI normalization is opportunistic and only used when deterministic parsing quality is weak; deterministic parsing remains the default path.
+            OpenAI normalization is opportunistic and only used when deterministic parsing quality is weak; deterministic parsing remains the default
+            path.
+          </li>
+          <li>
+            Hybrid feature classification is confidence-weighted and bounded; OpenAI feature output cannot fully override deterministic transcript
+            scoring.
           </li>
         </ul>
       </section>
