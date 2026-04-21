@@ -21,6 +21,7 @@ The app is organized into exactly 5 primary sections:
 The frontend now follows the provided FinBERT reference design (dark institutional dashboard) with:
 
 - Top navigation (`Analysis`, `Charts Test`, `Docs`, settings icon, API online indicator)
+- Geist Sans / Geist Mono loaded from the local `geist` package (no remote font fetch required)
 - Report header that shows company, ticker chip, analysis version, overall signal, and score
 - Full-screen real progress overlay with stage descriptions and running/complete/error states
 - Horizontal report tabs for the 5 canonical sections
@@ -65,6 +66,8 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
 - Next.js frontend (`127.0.0.1:3000`)
 - FastAPI backend (`127.0.0.1:8000`)
+
+The dev launcher restarts any stale backend listener on `:8000` and scopes backend `--reload` watching to `finbert_site/` + `scripts/` to avoid `.next` reload thrash.
 
 ## Backend/UI Routing Notes
 

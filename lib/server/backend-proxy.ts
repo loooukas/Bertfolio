@@ -34,22 +34,46 @@ function copyRequestHeaders(request: NextRequest): Headers {
   return headers
 }
 
+function backendUnavailableResponse(path: string, error: unknown): Response {
+  const baseUrl = backendBaseUrl()
+  const detail =
+    error instanceof Error && error.message.trim()
+      ? error.message
+      : "Failed to reach backend service."
+  return Response.json(
+    {
+      detail: `Backend unavailable at ${baseUrl}${path}. ${detail}`,
+      backend_url: baseUrl,
+      path,
+    },
+    { status: 503 },
+  )
+}
+
 export async function proxyGet(request: NextRequest, path: string): Promise<Response> {
-  const response = await fetch(createTargetUrl(request, path), {
-    method: "GET",
-    headers: copyRequestHeaders(request),
-    cache: "no-store",
-  })
-  return new Response(response.body, { status: response.status, headers: copyResponseHeaders(response) })
+  try {
+    const response = await fetch(createTargetUrl(request, path), {
+      method: "GET",
+      headers: copyRequestHeaders(request),
+      cache: "no-store",
+    })
+    return new Response(response.body, { status: response.status, headers: copyResponseHeaders(response) })
+  } catch (error) {
+    return backendUnavailableResponse(path, error)
+  }
 }
 
 export async function proxyPost(request: NextRequest, path: string): Promise<Response> {
-  const body = await request.text()
-  const response = await fetch(createTargetUrl(request, path), {
-    method: "POST",
-    headers: copyRequestHeaders(request),
-    body,
-    cache: "no-store",
-  })
-  return new Response(response.body, { status: response.status, headers: copyResponseHeaders(response) })
+  try {
+    const body = await request.text()
+    const response = await fetch(createTargetUrl(request, path), {
+      method: "POST",
+      headers: copyRequestHeaders(request),
+      body,
+      cache: "no-store",
+    })
+    return new Response(response.body, { status: response.status, headers: copyResponseHeaders(response) })
+  } catch (error) {
+    return backendUnavailableResponse(path, error)
+  }
 }
