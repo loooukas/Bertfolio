@@ -226,6 +226,13 @@ def _extract_json_from_text(content: str) -> str:
     return content
 
 
+def _chat_compatible_model(model_name: str) -> str:
+    normalized = (model_name or "").strip().lower()
+    if normalized.startswith("gpt-5"):
+        return "gpt-4o-mini"
+    return model_name
+
+
 def _openai_normalize(
     deterministic_document: TranscriptDocument,
     settings: Settings,
@@ -250,7 +257,7 @@ def _openai_normalize(
                 "Content-Type": "application/json",
             },
             json={
-                "model": settings.openai_normalizer_model,
+                "model": _chat_compatible_model(settings.openai_normalizer_model),
                 "temperature": 0,
                 "response_format": {"type": "json_object"},
                 "messages": [

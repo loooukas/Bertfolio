@@ -1,16 +1,24 @@
 "use client"
 
 import Link from "next/link"
-import { Activity, BarChart3, FileText, Settings } from "lucide-react"
+import { Activity, FileText, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
-export function Header() {
+interface HeaderProps {
+  onHomeClick?: () => void
+}
+
+export function Header({ onHomeClick }: HeaderProps) {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
           {/* Logo and Brand */}
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onHomeClick}
+            className="flex items-center gap-3 rounded-md px-1 py-1 text-left transition-colors hover:bg-secondary/50"
+          >
             <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary">
               <Activity className="w-5 h-5 text-primary-foreground" />
             </div>
@@ -22,16 +30,26 @@ export function Header() {
                 Earnings Signals
               </span>
             </div>
-          </div>
+          </button>
 
           {/* Navigation */}
           <nav className="hidden md:flex items-center gap-1">
-            <Link 
-              href="/" 
-              className="px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary rounded-md transition-colors"
-            >
-              Analysis
-            </Link>
+            {onHomeClick ? (
+              <button
+                type="button"
+                onClick={onHomeClick}
+                className="px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary rounded-md transition-colors"
+              >
+                Analysis
+              </button>
+            ) : (
+              <Link
+                href="/"
+                className="px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary rounded-md transition-colors"
+              >
+                Analysis
+              </Link>
+            )}
             <Link 
               href="/charts-test" 
               className="px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary rounded-md transition-colors"
@@ -42,9 +60,11 @@ export function Header() {
 
           {/* Actions */}
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" className="hidden sm:flex gap-2">
+            <Button asChild variant="ghost" size="sm" className="hidden sm:flex gap-2">
+              <Link href="/docs">
               <FileText className="w-4 h-4" />
               <span>Docs</span>
+              </Link>
             </Button>
             <Button variant="ghost" size="icon" className="w-9 h-9">
               <Settings className="w-4 h-4" />

@@ -1,8 +1,19 @@
 "use client"
 
-import { useState } from "react"
-import { User, MessageSquare, CheckCircle2, XCircle, AlertCircle, ChevronDown, Quote, Filter } from "lucide-react"
+import { useMemo, useState } from "react"
+import {
+  ArrowUpDown,
+  ChevronDown,
+  Filter,
+  MessageSquare,
+  Quote,
+  User,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+} from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -39,6 +50,24 @@ interface QuarterStatus {
   status: "found" | "not_found" | "error"
 }
 
+interface TranscriptDocumentSection {
+  section_type: "prepared_remarks" | "qa" | "other"
+  speaker: string
+  speaker_role?: string
+  text: string
+  order_index: number
+}
+
+interface TranscriptDocument {
+  id: string
+  label: string
+  source: string
+  source_url?: string
+  title?: string
+  published_date?: string
+  sections: TranscriptDocumentSection[]
+}
+
 interface TranscriptData {
   availability: "available" | "partial" | "missing"
   transcript_count_requested: number
@@ -50,24 +79,124 @@ interface TranscriptData {
   speaker_analysis: SpeakerAnalysis[]
   speaker_rollup: SpeakerRollup[]
   quarter_status: QuarterStatus[]
+  transcripts: TranscriptDocument[]
 }
 
 interface TranscriptSectionProps {
   data: TranscriptData
 }
 
+type SortDirection = "asc" | "desc"
+type SortKey =
+  | "speaker"
+  | "section_type"
+  | "sentiment_direction"
+  | "confidence"
+  | "evasiveness"
+  | "specificity"
+  | "topic_label"
+
+function sectionLabel(sectionType: string): string {
+  if (sectionType === "prepared_remarks") {
+    return "Prepared"
+  }
+  if (sectionType === "qa") {
+    return "Q&A"
+  }
+  return "Other"
+}
+
 export function TranscriptSection({ data }: TranscriptSectionProps) {
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>("all")
   const [selectedSection, setSelectedSection] = useState<string>("all")
-  const [expandedSpeaker, setExpandedSpeaker] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<SortKey>("speaker")
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc")
+  const [activeSpeaker, setActiveSpeaker] = useState<string | null>(null)
+  const [activeTranscriptId, setActiveTranscriptId] = useState<string | null>(null)
 
   const speakers = [...new Set(data.speaker_analysis.map((s) => s.speaker))]
-  
+
   const filteredAnalysis = data.speaker_analysis.filter((item) => {
     if (selectedSpeaker !== "all" && item.speaker !== selectedSpeaker) return false
     if (selectedSection !== "all" && item.section_type !== selectedSection) return false
     return true
   })
+
+  const sortedAnalysis = useMemo(() => {
+    const sorted = [...filteredAnalysis]
+    sorted.sort((a, b) => {
+      const directionFactor = sortDirection === "asc" ? 1 : -1
+      if (sortKey === "speaker" || sortKey === "section_type" || sortKey === "topic_label") {
+        const left = sortKey === "section_type" ? sectionLabel(a.section_type) : String(a[sortKey])
+        const right = sortKey === "section_type" ? sectionLabel(b.section_type) : String(b[sortKey])
+        return left.localeCompare(right) * directionFactor
+      }
+      const left = Number(a[sortKey] || 0)
+      const right = Number(b[sortKey] || 0)
+      return (left - right) * directionFactor
+    })
+    return sorted
+  }, [filteredAnalysis, sortDirection, sortKey])
+
+  const speakerModalData = useMemo(() => {
+    if (!activeSpeaker) {
+      return []
+    }
+    const speakerKey = activeSpeaker.trim().toLowerCase()
+    return data.transcripts.map((transcript) => {
+      const mentions = transcript.sections.filter(
+        (section) => section.speaker.trim().toLowerCase() === speakerKey,
+      )
+      return {
+        transcript,
+        mentions,
+      }
+    })
+  }, [activeSpeaker, data.transcripts])
+
+  const selectedTranscriptMentions = speakerModalData.find(
+    (item) => item.transcript.id === activeTranscriptId,
+  )
+
+  const totalSpeakerMentions = speakerModalData.reduce((sum, item) => sum + item.mentions.length, 0)
+
+  const openSpeakerModal = (speakerName: string) => {
+    setActiveSpeaker(speakerName)
+    const speakerKey = speakerName.trim().toLowerCase()
+    const withCounts = data.transcripts.map((transcript) => ({
+      id: transcript.id,
+      count: transcript.sections.filter(
+        (section) => section.speaker.trim().toLowerCase() === speakerKey,
+      ).length,
+    }))
+    const firstWithMentions = withCounts.find((item) => item.count > 0)
+    setActiveTranscriptId(firstWithMentions?.id || withCounts[0]?.id || null)
+  }
+
+  const closeSpeakerModal = () => {
+    setActiveSpeaker(null)
+    setActiveTranscriptId(null)
+  }
+
+  const toggleSort = (nextSortKey: SortKey) => {
+    if (sortKey === nextSortKey) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))
+      return
+    }
+    setSortKey(nextSortKey)
+    setSortDirection("asc")
+  }
+
+  const renderSortIndicator = (key: SortKey) => {
+    if (sortKey !== key) {
+      return <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground/60" />
+    }
+    return (
+      <span className="text-[11px] leading-none text-muted-foreground">
+        {sortDirection === "asc" ? "↑" : "↓"}
+      </span>
+    )
+  }
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -98,19 +227,15 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
             <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
               Transcript Coverage
             </h3>
-            <Badge 
+            <Badge
               variant={data.availability === "available" ? "default" : "secondary"}
               className={data.availability === "available" ? "bg-bullish/10 text-bullish border-bullish/20" : ""}
             >
               {data.availability === "available" ? "Full Coverage" : data.availability === "partial" ? "Partial" : "Missing"}
             </Badge>
           </div>
-          <p className="text-sm text-foreground leading-relaxed mb-4">
-            {data.latest_summary}
-          </p>
-          <div className="text-xs text-muted-foreground italic">
-            {data.prepared_vs_qa_note}
-          </div>
+          <p className="text-sm text-foreground leading-relaxed mb-4">{data.latest_summary}</p>
+          <div className="text-xs text-muted-foreground italic">{data.prepared_vs_qa_note}</div>
         </div>
 
         {/* Quarter Grid */}
@@ -120,10 +245,7 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
           </h3>
           <div className="space-y-2">
             {data.quarter_status.map((q) => (
-              <div 
-                key={q.quarter}
-                className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary/50"
-              >
+              <div key={q.quarter} className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary/50">
                 <span className="text-sm font-mono text-foreground">{q.quarter}</span>
                 {getStatusIcon(q.status)}
               </div>
@@ -136,25 +258,21 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
       <div className="p-6 rounded-xl bg-card border border-border">
         <div className="flex items-center gap-2 mb-4">
           <Quote className="w-4 h-4 text-muted-foreground" />
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-            Key Quotes
-          </h3>
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Key Quotes</h3>
         </div>
         <div className="space-y-4">
           {data.key_quotes.map((quote, index) => (
-            <div 
+            <div
               key={index}
               className={`p-4 rounded-lg border-l-2 ${
-                quote.sentiment === "bullish" 
-                  ? "border-l-bullish bg-bullish/5" 
-                  : quote.sentiment === "bearish" 
-                  ? "border-l-bearish bg-bearish/5" 
-                  : "border-l-neutral bg-neutral/5"
+                quote.sentiment === "bullish"
+                  ? "border-l-bullish bg-bullish/5"
+                  : quote.sentiment === "bearish"
+                    ? "border-l-bearish bg-bearish/5"
+                    : "border-l-neutral bg-neutral/5"
               }`}
             >
-              <p className="text-sm text-foreground italic mb-2">
-                {`"${quote.text}"`}
-              </p>
+              <p className="text-sm text-foreground italic mb-2">{`"${quote.text}"`}</p>
               <div className="flex items-center gap-2">
                 <User className="w-3 h-3 text-muted-foreground" />
                 <span className="text-xs font-medium text-muted-foreground">{quote.speaker}</span>
@@ -183,48 +301,16 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
 
       {/* Speaker Analysis */}
       <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <h3 className="text-lg font-semibold text-foreground">Speaker Analysis</h3>
-          
-          {/* Filters */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Filter:</span>
-            </div>
-            <Select value={selectedSpeaker} onValueChange={setSelectedSpeaker}>
-              <SelectTrigger className="w-40 h-9">
-                <SelectValue placeholder="Speaker" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Speakers</SelectItem>
-                {speakers.map((speaker) => (
-                  <SelectItem key={speaker} value={speaker}>{speaker}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={selectedSection} onValueChange={setSelectedSection}>
-              <SelectTrigger className="w-40 h-9">
-                <SelectValue placeholder="Section" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Sections</SelectItem>
-                <SelectItem value="prepared_remarks">Prepared Remarks</SelectItem>
-                <SelectItem value="qa">Q&A</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        <h3 className="text-lg font-semibold text-foreground">Speaker Analysis</h3>
 
         {/* Speaker Rollup Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {data.speaker_rollup.map((speaker) => (
-            <div
+            <button
               key={speaker.speaker}
-              className={`p-5 rounded-xl bg-card border border-border transition-all cursor-pointer ${
-                expandedSpeaker === speaker.speaker ? "ring-2 ring-primary/20" : "hover:border-ring"
-              }`}
-              onClick={() => setExpandedSpeaker(expandedSpeaker === speaker.speaker ? null : speaker.speaker)}
+              type="button"
+              className="p-5 rounded-xl bg-card border border-border transition-all text-left hover:border-ring"
+              onClick={() => openSpeakerModal(speaker.speaker)}
             >
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
@@ -238,16 +324,15 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
                     </div>
                   </div>
                 </div>
-                <ChevronDown className={`w-5 h-5 text-muted-foreground transition-transform ${
-                  expandedSpeaker === speaker.speaker ? "rotate-180" : ""
-                }`} />
+                <ChevronDown className="w-5 h-5 text-muted-foreground" />
               </div>
 
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">Sentiment</div>
                   <div className={`text-lg font-semibold ${getSentimentColor(speaker.avg_sentiment_direction)}`}>
-                    {speaker.avg_sentiment_direction > 0 ? "+" : ""}{(speaker.avg_sentiment_direction * 100).toFixed(0)}
+                    {speaker.avg_sentiment_direction > 0 ? "+" : ""}
+                    {(speaker.avg_sentiment_direction * 100).toFixed(0)}
                   </div>
                 </div>
                 <div>
@@ -256,78 +341,214 @@ export function TranscriptSection({ data }: TranscriptSectionProps) {
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">Evasiveness</div>
-                  <div className={`text-lg font-semibold ${speaker.avg_evasiveness > 30 ? "text-bearish" : "text-foreground"}`}>
+                  <div
+                    className={`text-lg font-semibold ${
+                      speaker.avg_evasiveness > 30 ? "text-bearish" : "text-foreground"
+                    }`}
+                  >
                     {speaker.avg_evasiveness}
                   </div>
                 </div>
               </div>
-            </div>
+            </button>
           ))}
         </div>
 
         {/* Detailed Analysis Table */}
-        <div className="rounded-xl border border-border overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-secondary/50 border-b border-border">
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Speaker</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Section</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Sentiment</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Confidence</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Evasiveness</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Specificity</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Topic</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filteredAnalysis.map((item, index) => (
-                  <tr key={index} className="bg-card hover:bg-secondary/30 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center">
-                          <User className="w-3 h-3 text-muted-foreground" />
-                        </div>
-                        <span className="text-sm font-medium text-foreground">{item.speaker}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant="outline" className="text-xs">
-                        {item.section_type === "prepared_remarks" ? "Prepared" : "Q&A"}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`text-sm font-mono font-medium ${getSentimentColor(item.sentiment_direction)}`}>
-                        {item.sentiment_direction > 0 ? "+" : ""}{(item.sentiment_direction * 100).toFixed(0)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <Progress value={item.confidence} className="w-16 h-1.5" />
-                        <span className="text-sm text-muted-foreground">{item.confidence}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <Progress value={item.evasiveness} className="w-16 h-1.5" />
-                        <span className={`text-sm ${item.evasiveness > 30 ? "text-bearish" : "text-muted-foreground"}`}>
-                          {item.evasiveness}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-muted-foreground">{item.specificity}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-muted-foreground">{item.topic_label}</span>
-                    </td>
+        <div className="space-y-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h4 className="text-sm font-medium text-foreground">Speaker Block Analysis</h4>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Filter:</span>
+              </div>
+              <Select value={selectedSpeaker} onValueChange={setSelectedSpeaker}>
+                <SelectTrigger className="w-40 h-9">
+                  <SelectValue placeholder="Speaker" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Speakers</SelectItem>
+                  {speakers.map((speaker) => (
+                    <SelectItem key={speaker} value={speaker}>
+                      {speaker}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={selectedSection} onValueChange={setSelectedSection}>
+                <SelectTrigger className="w-40 h-9">
+                  <SelectValue placeholder="Section" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Sections</SelectItem>
+                  <SelectItem value="prepared_remarks">Prepared Remarks</SelectItem>
+                  <SelectItem value="qa">Q&A</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-secondary/50 border-b border-border">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleSort("speaker")}>
+                        <span>Speaker</span>
+                        {renderSortIndicator("speaker")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleSort("section_type")}>
+                        <span>Section</span>
+                        {renderSortIndicator("section_type")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1"
+                        onClick={() => toggleSort("sentiment_direction")}
+                      >
+                        <span>Sentiment</span>
+                        {renderSortIndicator("sentiment_direction")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleSort("confidence")}>
+                        <span>Confidence</span>
+                        {renderSortIndicator("confidence")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleSort("evasiveness")}>
+                        <span>Evasiveness</span>
+                        {renderSortIndicator("evasiveness")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleSort("specificity")}>
+                        <span>Specificity</span>
+                        {renderSortIndicator("specificity")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <button type="button" className="inline-flex items-center gap-1" onClick={() => toggleSort("topic_label")}>
+                        <span>Topic</span>
+                        {renderSortIndicator("topic_label")}
+                      </button>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {sortedAnalysis.map((item, index) => (
+                    <tr key={index} className="bg-card hover:bg-secondary/30 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center">
+                            <User className="w-3 h-3 text-muted-foreground" />
+                          </div>
+                          <span className="text-sm font-medium text-foreground">{item.speaker}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant="outline" className="text-xs">
+                          {sectionLabel(item.section_type)}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`text-sm font-mono font-medium ${getSentimentColor(item.sentiment_direction)}`}>
+                          {item.sentiment_direction > 0 ? "+" : ""}
+                          {(item.sentiment_direction * 100).toFixed(0)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <Progress value={item.confidence} className="w-16 h-1.5" />
+                          <span className="text-sm text-muted-foreground">{item.confidence}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <Progress value={item.evasiveness} className="w-16 h-1.5" />
+                          <span className={`text-sm ${item.evasiveness > 30 ? "text-bearish" : "text-muted-foreground"}`}>
+                            {item.evasiveness}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-sm text-muted-foreground">{item.specificity}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-sm text-muted-foreground">{item.topic_label}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
+
+      <Dialog open={!!activeSpeaker} onOpenChange={(open) => (!open ? closeSpeakerModal() : undefined)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="text-lg">
+              {activeSpeaker ? `${activeSpeaker} Mentions` : "Speaker Mentions"}
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground">{totalSpeakerMentions} total mentions across transcripts.</p>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              {speakerModalData.map((item) => {
+                const mentionCount = item.mentions.length
+                const selected = item.transcript.id === activeTranscriptId
+                return (
+                  <button
+                    key={item.transcript.id}
+                    type="button"
+                    disabled={mentionCount === 0}
+                    onClick={() => setActiveTranscriptId(item.transcript.id)}
+                    className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                      selected
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border bg-secondary/30 text-muted-foreground"
+                    } ${mentionCount === 0 ? "cursor-not-allowed opacity-50" : "hover:border-ring hover:text-foreground"}`}
+                  >
+                    {item.transcript.label} ({mentionCount})
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="max-h-[52vh] overflow-y-auto rounded-lg border border-border bg-card p-4">
+              {!selectedTranscriptMentions || selectedTranscriptMentions.mentions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No mentions for this speaker in the selected transcript.</p>
+              ) : (
+                <div className="space-y-3">
+                  {selectedTranscriptMentions.mentions.map((mention) => (
+                    <div key={`${mention.order_index}-${mention.section_type}`} className="rounded-lg border border-border p-3">
+                      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                        <Badge variant="outline" className="text-[11px]">
+                          {sectionLabel(mention.section_type)}
+                        </Badge>
+                        <span>
+                          {selectedTranscriptMentions.transcript.label} • Segment {mention.order_index + 1}
+                        </span>
+                      </div>
+                      <p className="text-sm leading-relaxed text-foreground whitespace-pre-wrap">{mention.text}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

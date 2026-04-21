@@ -322,8 +322,12 @@ def _rerank_quotes_with_openai(
     if not settings.openai_api_key or len(candidates) < 3:
         return candidates[:limit]
 
+    model_name = settings.openai_normalizer_model
+    if model_name.strip().lower().startswith("gpt-5"):
+        model_name = "gpt-4o-mini"
+
     payload = {
-        "model": settings.openai_normalizer_model,
+        "model": model_name,
         "temperature": 0,
         "response_format": {"type": "json_object"},
         "messages": [

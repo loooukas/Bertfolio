@@ -117,6 +117,58 @@ function safeProgress(stage?: BackendJobProgress): BackendJobProgress {
   }
 }
 
+function normalizeQuoteText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function quarterLabelFromDate(dateRaw?: string | null): string | null {
+  if (!dateRaw) {
+    return null
+  }
+  const date = new Date(dateRaw)
+  if (Number.isNaN(date.valueOf())) {
+    return null
+  }
+  const month = date.getUTCMonth() + 1
+  const quarter = Math.floor((month - 1) / 3) + 1
+  return `Q${quarter} ${date.getUTCFullYear()}`
+}
+
+function quarterLabelFromTitle(titleRaw?: string | null): string | null {
+  if (!titleRaw) {
+    return null
+  }
+  const title = titleRaw.trim()
+  if (!title) {
+    return null
+  }
+  const matched = title.match(/\bQ([1-4])\s*(?:FY)?\s*(20\d{2})\b/i)
+  if (!matched) {
+    return null
+  }
+  return `Q${matched[1]} ${matched[2]}`
+}
+
+function transcriptLabelFromMetadata(
+  titleRaw: string | null | undefined,
+  publishedDateRaw: string | null | undefined,
+  index: number,
+): string {
+  const fromTitle = quarterLabelFromTitle(titleRaw)
+  if (fromTitle) {
+    return fromTitle
+  }
+  const fromDate = quarterLabelFromDate(publishedDateRaw)
+  if (fromDate) {
+    return fromDate
+  }
+  return `Transcript ${index + 1}`
+}
+
 export function adaptJobProgress(progress?: BackendJobProgress): BackendJobProgress {
   return safeProgress(progress)
 }
@@ -131,13 +183,33 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
   const quotesFromStrings =
     report.transcript.key_quotes.length > 0
       ? report.transcript.key_quotes
-      : report.transcript.speaker_analysis.flatMap((row) => [])
+      : report.transcript.speaker_analysis.flatMap((row) => row.evidence_snippets || [])
 
-  const keyQuotes = quotesFromStrings.slice(0, 8).map((text) => ({
-    speaker: "Management",
-    text,
-    sentiment: quoteSentimentFromScore(avgSpeakerDirection),
-  }))
+  const quoteSpeakerCandidates = report.transcript.speaker_analysis.flatMap((row) => {
+    const snippets = row.evidence_snippets || []
+    return snippets.map((snippet) => ({
+      speaker: row.speaker,
+      normalized: normalizeQuoteText(snippet),
+    }))
+  })
+
+  const keyQuotes = quotesFromStrings.slice(0, 8).map((text) => {
+    const normalizedQuote = normalizeQuoteText(text)
+    const directMatch = quoteSpeakerCandidates.find((candidate) => candidate.normalized === normalizedQuote)
+    const fuzzyMatch =
+      directMatch ||
+      quoteSpeakerCandidates.find(
+        (candidate) =>
+          candidate.normalized.length >= 24 &&
+          (candidate.normalized.includes(normalizedQuote) || normalizedQuote.includes(candidate.normalized)),
+      )
+
+    return {
+      speaker: fuzzyMatch?.speaker || "Management",
+      text,
+      sentiment: quoteSentimentFromScore(avgSpeakerDirection),
+    }
+  })
 
   const speakerRows = report.transcript.speaker_analysis.map((row) => ({
     speaker: row.speaker,
@@ -160,6 +232,25 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
     (report.data_audit.dedupe_counts.news_deduped || 0) +
     (report.data_audit.dedupe_counts.social_deduped || 0) +
     (report.data_audit.dedupe_counts.deduped || 0)
+
+  const transcriptDocs = report.transcript.transcripts.map((doc, index) => {
+    const label = transcriptLabelFromMetadata(doc.title, doc.published_date, index)
+    return {
+      id: doc.source_url || `transcript-${index + 1}`,
+      label,
+      source: doc.source,
+      source_url: doc.source_url || undefined,
+      title: doc.title || undefined,
+      published_date: doc.published_date || undefined,
+      sections: doc.sections.map((section) => ({
+        section_type: section.section_type,
+        speaker: section.speaker,
+        speaker_role: section.speaker_role || undefined,
+        text: section.text,
+        order_index: section.order_index,
+      })),
+    }
+  })
 
   return {
     ticker: report.ticker,
@@ -192,6 +283,7 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
         quarter: quarter.quarter,
         status: quarter.status,
       })),
+      transcripts: transcriptDocs,
     },
     market_reaction: {
       balance_summary: report.market_reaction.balance_summary,

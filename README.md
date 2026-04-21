@@ -21,14 +21,18 @@ The app is organized into exactly 5 primary sections:
 The frontend now follows the provided FinBERT reference design (dark institutional dashboard) with:
 
 - Top navigation (`Analysis`, `Charts Test`, `Docs`, settings icon, API online indicator)
+- In-app docs route at `/docs` (wired from the top-nav Docs action)
 - Geist Sans / Geist Mono loaded from the local `geist` package (no remote font fetch required)
+- Analyze hero/input panel that fades out after a run starts to keep report focus high
+- Header brand click reset (top-left FinBERT) to return to a fresh analysis start state
 - Report header that shows company, ticker chip, analysis version, overall signal, and score
 - Full-screen real progress overlay with stage descriptions and running/complete/error states
 - Horizontal report tabs for the 5 canonical sections
 - Transcript-first deep-dive patterns:
   - quarter availability actions + structured transcript modal
-  - key-quote cards with sentiment tone
-  - Q&A pressure table, speaker rollups, and filterable/sortable speaker table
+  - key-quote cards with speaker attribution from transcript evidence
+  - speaker rollups with mention modal by transcript/quarter and disabled no-mention states
+  - Q&A pressure table plus filterable/sortable speaker block table
 - Market reaction drilldowns:
   - expandable news items
   - social card grid with detail modal
@@ -167,10 +171,23 @@ Social is now combined from:
 - Reddit
 - Stocktwits
 
+Selection behavior:
+
+- Pull larger pools (typically 100-200 candidates when available per source family)
+- Relevance-rank first, then apply dedupe, then keep top `*_LIMIT` rows
+- Apply source balancing in social output so one provider does not dominate the final list
+
 Volume controls:
 
 - `NEWS_LIMIT`, `NEWS_POOL_SIZE`, `NEWS_LOOKBACK_DAYS`
 - `SOCIAL_LIMIT`, `SOCIAL_POOL_SIZE`, `SOCIAL_LOOKBACK_DAYS`
+
+Current defaults in `.env.example`:
+
+- `NEWS_LIMIT=50`
+- `NEWS_POOL_SIZE=240`
+- `SOCIAL_LIMIT=50`
+- `SOCIAL_POOL_SIZE=260`
 
 ### Expanded Fundamentals Metrics
 

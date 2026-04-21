@@ -61,6 +61,12 @@ export interface AnalysisResponseBackend {
       risk_language_intensity: number
       topic_label: string
       segment_char_count?: number
+      evidence_snippets?: string[]
+      segment_diagnostics?: {
+        transcript_source?: string
+        transcript_title?: string
+        transcript_published_date?: string
+      } | null
     }>
     speaker_rollup: Array<{
       speaker: string
@@ -74,6 +80,31 @@ export interface AnalysisResponseBackend {
       quarter: string
       status: "found" | "not_found" | "error"
       detail?: string | null
+    }>
+    transcripts: Array<{
+      ticker: string
+      company_name?: string | null
+      source: string
+      source_url?: string | null
+      title?: string | null
+      published_date?: string | null
+      has_full_transcript: boolean
+      extraction_confidence: number
+      parsing_warnings: string[]
+      participants: Array<{
+        name: string
+        role?: string | null
+      }>
+      sections: Array<{
+        section_type: "prepared_remarks" | "qa" | "other"
+        speaker: string
+        speaker_role?: string | null
+        text: string
+        order_index: number
+        evidence_snippets: string[]
+      }>
+      key_quotes: string[]
+      normalization_mode: "openai" | "deterministic_degraded"
     }>
   }
   market_reaction: {
@@ -209,6 +240,21 @@ export interface UIReportModel {
     quarter_status: Array<{
       quarter: string
       status: "found" | "not_found" | "error"
+    }>
+    transcripts: Array<{
+      id: string
+      label: string
+      source: string
+      source_url?: string
+      title?: string
+      published_date?: string
+      sections: Array<{
+        section_type: "prepared_remarks" | "qa" | "other"
+        speaker: string
+        speaker_role?: string
+        text: string
+        order_index: number
+      }>
     }>
   }
   market_reaction: {

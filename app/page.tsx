@@ -7,6 +7,7 @@ import { JobProgress } from "@/components/finbert/job-progress"
 import { ReportView } from "@/components/finbert/report-view"
 import { EmptyState } from "@/components/finbert/empty-state"
 import { adaptAnalysisResponseToUI, adaptJobProgress, DEFAULT_PROGRESS } from "@/lib/finbert/adapters"
+import { cn } from "@/lib/utils"
 import {
   createAnalyzeJob,
   FinbertClientError,
@@ -133,14 +134,23 @@ export default function HomePage() {
     setShowReport(false)
   }
 
+  const showAnalyzeInput = jobStatus === "idle" || jobStatus === "failed"
+
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
+      <Header onHomeClick={handleReset} />
       
       <main className="flex-1">
-        {/* Input Section - Always visible */}
-        <section className="border-b border-border">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Input Section */}
+        <section
+          className={cn(
+            "border-b transition-all duration-300 ease-out",
+            showAnalyzeInput
+              ? "max-h-[520px] border-border opacity-100"
+              : "pointer-events-none max-h-0 overflow-hidden border-transparent opacity-0",
+          )}
+        >
+          <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
             <TickerInput 
               onAnalyze={handleAnalyze} 
               isLoading={jobStatus === "running" || jobStatus === "queued"}

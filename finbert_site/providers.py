@@ -146,6 +146,7 @@ class NewsRecord:
     time_published: Optional[str]
     sentiment_score: float
     sentiment_label: str
+    relevance_score: float = 0.0
 
 
 @dataclass
@@ -832,6 +833,7 @@ def fetch_news_alpha_vantage(
                     time_published=item.get("time_published"),
                     sentiment_score=score,
                     sentiment_label=label,
+                    relevance_score=relevance,
                 ),
             )
         )
@@ -919,6 +921,7 @@ def fetch_news_yahoo_finance(
                     time_published=published_dt.strftime("%Y%m%dT%H%M%S") if published_dt else None,
                     sentiment_score=0.0,
                     sentiment_label="neutral",
+                    relevance_score=relevance,
                 ),
             )
         )
@@ -947,8 +950,8 @@ def fetch_news_multi_source(
     company_name: Optional[str] = None,
     lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
 ) -> Tuple[list[NewsRecord], list[str], FeedFetchAudit]:
-    source_limit = max(limit, 1)
-    source_pool = max(pool_size, source_limit)
+    source_limit = max(limit * 3, 100, 1)
+    source_pool = max(pool_size, source_limit, 180)
 
     alpha_records, alpha_warnings, alpha_audit = fetch_news_alpha_vantage(
         symbol=symbol,
@@ -970,7 +973,7 @@ def fetch_news_multi_source(
     combined = alpha_records + yahoo_records
     deduped = _dedupe_news(combined)
 
-    # Keep the most recent items after dedupe.
+    # Keep highest relevance first, then recency.
     def _news_sort_key(record: NewsRecord) -> datetime:
         parsed = _safe_parse_date(record.time_published)
         if parsed is None:
@@ -979,7 +982,7 @@ def fetch_news_multi_source(
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed
 
-    deduped.sort(key=_news_sort_key, reverse=True)
+    deduped.sort(key=lambda record: (record.relevance_score, _news_sort_key(record)), reverse=True)
     shown = deduped[:limit]
 
     warnings: list[str] = []
@@ -1004,20 +1007,43 @@ def _finance_relevance_score(
     title: str,
     body: str,
     subreddit: Optional[str],
+    company_name: Optional[str] = None,
 ) -> float:
     text = f"{title} {body}".lower()
     symbol_l = symbol.lower()
 
     score = 0.0
-    score += 3.0 * len(re.findall(rf"\b{re.escape(symbol_l)}\b", text))
-    score += 2.0 * text.count(f"${symbol_l}")
+    ticker_hits = len(re.findall(rf"\b{re.escape(symbol_l)}\b", text))
+    cash_ticker_hits = text.count(f"${symbol_l}")
+    score += 3.2 * ticker_hits
+    score += 4.0 * cash_ticker_hits
+
+    company_hits = 0
+    if company_name:
+        normalized_company = company_name.lower().strip()
+        if normalized_company and normalized_company in text:
+            company_hits += 2
+        company_hits += sum(1 for token in _company_tokens(company_name) if token in text)
+        score += min(company_hits, 5) * 1.1
 
     for term in _FINANCE_TERMS:
         if term in text:
-            score += 0.4
+            score += 0.32
 
     if subreddit:
         score += _FINANCE_SUBREDDIT_WEIGHTS.get(subreddit.lower(), 0.0)
+
+    if ticker_hits + cash_ticker_hits == 0 and company_hits == 0:
+        return 0.0
+
+    if ticker_hits + cash_ticker_hits <= 1 and company_hits == 0:
+        score -= 0.7
+
+    if "http://" in text or "https://" in text:
+        score -= 0.15
+
+    if score <= 0:
+        return 0.0
 
     return score
 
@@ -1087,29 +1113,69 @@ def fetch_social_reddit(
     lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
 ) -> Tuple[list[SocialRecord], list[str], FeedFetchAudit]:
     warnings: list[str] = []
-    query = f"\"{symbol}\" OR \"${symbol}\" OR \"{symbol} stock\" OR \"{symbol} earnings\""
-    endpoint = "https://www.reddit.com/search.json"
+    symbol_query = f"\"{symbol}\" OR \"${symbol}\" OR \"{symbol} stock\" OR \"{symbol} earnings\" OR \"{symbol} guidance\""
+    company_query = None
+    if company_name:
+        company_query = (
+            f"\"{company_name}\" AND (earnings OR guidance OR stock OR revenue OR analyst OR valuation)"
+        )
+
+    query_specs: list[tuple[str, str, dict[str, str]]] = [
+        ("global-symbol", symbol_query, {"sort": "new", "t": "month"}),
+        ("stocks-symbol", symbol_query, {"sort": "relevance", "t": "year", "restrict_sr": "1"}),
+        ("investing-symbol", symbol_query, {"sort": "relevance", "t": "year", "restrict_sr": "1"}),
+    ]
+    if company_query:
+        query_specs.append(("global-company", company_query, {"sort": "relevance", "t": "year"}))
+
+    children: list[dict[str, Any]] = []
+    seen_post_keys: set[str] = set()
+    per_query_limit = max(25, min(100, max(pool_size, limit * 3) // max(len(query_specs), 1)))
 
     try:
-        response = requests.get(
-            endpoint,
-            params={
-                "q": query,
-                "sort": "new",
-                "limit": str(max(pool_size, limit * 2)),
-                "type": "link",
-                "t": "month",
-            },
-            headers={"User-Agent": "finbert-earnings-signals/1.0"},
-            timeout=settings.request_timeout_seconds,
-        )
-        if response.status_code != 200:
-            return [], [f"Reddit social feed error for {symbol}: HTTP {response.status_code}"], FeedFetchAudit(0, 0, 0)
+        for scope, query, extra_params in query_specs:
+            if scope.startswith("stocks-"):
+                endpoint = "https://www.reddit.com/r/stocks/search.json"
+            elif scope.startswith("investing-"):
+                endpoint = "https://www.reddit.com/r/investing/search.json"
+            else:
+                endpoint = "https://www.reddit.com/search.json"
 
-        payload = response.json()
-        data = payload.get("data", {})
-        children = data.get("children", [])
-        if not isinstance(children, list):
+            params = {
+                "q": query,
+                "limit": str(per_query_limit),
+                **extra_params,
+            }
+            response = requests.get(
+                endpoint,
+                params=params,
+                headers={"User-Agent": "finbert-earnings-signals/1.0"},
+                timeout=settings.request_timeout_seconds,
+            )
+            if response.status_code != 200:
+                warnings.append(f"Reddit feed warning for {symbol} ({scope}): HTTP {response.status_code}")
+                continue
+
+            payload = response.json()
+            data = payload.get("data", {})
+            scoped_children = data.get("children", [])
+            if not isinstance(scoped_children, list):
+                continue
+
+            for child in scoped_children:
+                if not isinstance(child, dict):
+                    continue
+                post = child.get("data", {})
+                if not isinstance(post, dict):
+                    continue
+                permalink = str(post.get("permalink") or "").strip()
+                unique_key = permalink or str(post.get("id") or "")
+                if not unique_key or unique_key in seen_post_keys:
+                    continue
+                seen_post_keys.add(unique_key)
+                children.append(child)
+
+        if not children:
             return [], [f"No Reddit social posts available for {symbol}"], FeedFetchAudit(0, 0, 0)
 
         records: list[SocialRecord] = []
@@ -1142,9 +1208,17 @@ def fetch_social_reddit(
                 continue
 
             url = f"https://www.reddit.com{permalink}" if permalink else "https://www.reddit.com"
-            relevance = _finance_relevance_score(symbol, title, body, subreddit)
+            relevance = _finance_relevance_score(
+                symbol=symbol,
+                title=title,
+                body=body,
+                subreddit=subreddit,
+                company_name=company_name,
+            )
+            if relevance <= 0:
+                continue
             recency = _recency_weight(created_dt, lookback_days)
-            relevance = round(relevance + (recency * 2.0), 3)
+            relevance = round(relevance + (recency * 2.4), 3)
 
             body_for_excerpt = body if body else title
 
@@ -1163,9 +1237,9 @@ def fetch_social_reddit(
 
         records.sort(key=lambda r: (r.relevance_score, r.created_utc or 0), reverse=True)
         deduped = _dedupe_social(records)
-        ranked = [record for record in deduped if record.relevance_score >= max(_MIN_SOCIAL_RELEVANCE, 2.2)]
+        ranked = [record for record in deduped if record.relevance_score >= max(_MIN_SOCIAL_RELEVANCE, 2.6)]
         if len(ranked) < max(3, min(limit, 5)):
-            ranked = [record for record in deduped if record.relevance_score >= _MIN_SOCIAL_RELEVANCE]
+            ranked = [record for record in deduped if record.relevance_score >= max(_MIN_SOCIAL_RELEVANCE, 1.8)]
         if len(ranked) < max(2, limit // 3):
             ranked = deduped
 
@@ -1241,7 +1315,15 @@ def fetch_social_stocktwits(
             else:
                 url = f"https://stocktwits.com/symbol/{symbol}"
 
-            relevance = _finance_relevance_score(symbol, title, body, "stocktwits")
+            relevance = _finance_relevance_score(
+                symbol=symbol,
+                title=title,
+                body=body,
+                subreddit="stocktwits",
+                company_name=company_name,
+            )
+            if relevance <= 0:
+                continue
             recency = _recency_weight(created_dt, lookback_days)
             relevance = round(relevance + (recency * 1.8), 3)
 
@@ -1264,7 +1346,7 @@ def fetch_social_stocktwits(
 
         records.sort(key=lambda r: (r.relevance_score, r.created_utc or 0), reverse=True)
         deduped = _dedupe_social(records)
-        ranked = [record for record in deduped if record.relevance_score >= max(_MIN_SOCIAL_RELEVANCE, 1.9)]
+        ranked = [record for record in deduped if record.relevance_score >= max(_MIN_SOCIAL_RELEVANCE, 2.1)]
         if len(ranked) < max(3, min(limit, 5)):
             ranked = [record for record in deduped if record.relevance_score >= _MIN_SOCIAL_RELEVANCE]
         if len(ranked) < max(2, limit // 3):
@@ -1287,8 +1369,8 @@ def fetch_social_multi_source(
     company_name: Optional[str] = None,
     lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
 ) -> Tuple[list[SocialRecord], list[str], FeedFetchAudit]:
-    source_limit = max(limit, 1)
-    source_pool = max(pool_size, source_limit)
+    source_limit = max(limit * 3, 100, 1)
+    source_pool = max(pool_size, source_limit, 180)
 
     reddit_records, reddit_warnings, reddit_audit = fetch_social_reddit(
         symbol=symbol,
@@ -1309,8 +1391,25 @@ def fetch_social_multi_source(
 
     combined = reddit_records + stocktwits_records
     deduped = _dedupe_social(combined)
-    deduped.sort(key=lambda record: (record.created_utc or 0, record.relevance_score), reverse=True)
-    shown = deduped[:limit]
+    deduped.sort(key=lambda record: (record.relevance_score, record.created_utc or 0), reverse=True)
+
+    source_buckets: dict[str, list[SocialRecord]] = {}
+    for record in deduped:
+        source_buckets.setdefault(record.source, []).append(record)
+
+    shown: list[SocialRecord] = []
+    while len(shown) < limit:
+        added = False
+        for source in sorted(source_buckets.keys()):
+            bucket = source_buckets[source]
+            if not bucket:
+                continue
+            shown.append(bucket.pop(0))
+            added = True
+            if len(shown) >= limit:
+                break
+        if not added:
+            break
 
     warnings: list[str] = []
     warnings.extend(reddit_warnings)

@@ -2,12 +2,7 @@
 
 import { TrendingUp, TrendingDown } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart"
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, LineChart, Line, CartesianGrid, Legend, Tooltip } from "recharts"
+import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, LineChart, Line, CartesianGrid, Tooltip } from "recharts"
 
 interface Metric {
   key: string
@@ -35,11 +30,11 @@ interface FundamentalsSectionProps {
 
 const chartConfig = {
   revenue: {
-    label: "Revenue ($B)",
+    label: "Revenue",
     color: "var(--chart-1)",
   },
   net_income: {
-    label: "Net Income ($B)",
+    label: "Net Income",
     color: "var(--chart-2)",
   },
   reported_eps: {
@@ -50,6 +45,47 @@ const chartConfig = {
     label: "EPS Estimate",
     color: "var(--muted-foreground)",
   },
+}
+
+function formatCompactCurrency(value?: number | null): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "n/a"
+  }
+  const absolute = Math.abs(value)
+  const sign = value < 0 ? "-" : ""
+  if (absolute >= 1_000_000_000_000) {
+    return `${sign}$${(absolute / 1_000_000_000_000).toFixed(2)}T`
+  }
+  if (absolute >= 1_000_000_000) {
+    return `${sign}$${(absolute / 1_000_000_000).toFixed(2)}B`
+  }
+  if (absolute >= 1_000_000) {
+    return `${sign}$${(absolute / 1_000_000).toFixed(2)}M`
+  }
+  if (absolute >= 1_000) {
+    return `${sign}$${(absolute / 1_000).toFixed(1)}K`
+  }
+  return `${sign}$${absolute.toFixed(0)}`
+}
+
+function formatAxisCurrency(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "$0"
+  }
+  const absolute = Math.abs(value)
+  if (absolute >= 1_000_000_000_000) {
+    return `$${(value / 1_000_000_000_000).toFixed(1)}T`
+  }
+  if (absolute >= 1_000_000_000) {
+    return `$${(value / 1_000_000_000).toFixed(1)}B`
+  }
+  if (absolute >= 1_000_000) {
+    return `$${(value / 1_000_000).toFixed(0)}M`
+  }
+  if (absolute >= 1_000) {
+    return `$${(value / 1_000).toFixed(0)}K`
+  }
+  return `$${value.toFixed(0)}`
 }
 
 export function FundamentalsSection({ data }: FundamentalsSectionProps) {
@@ -98,7 +134,7 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
         <div className="p-5 rounded-xl bg-card border border-border">
           <div className="text-xs text-muted-foreground mb-2">Revenue</div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-foreground">${latestQuarter?.revenue}B</span>
+            <span className="text-2xl font-bold text-foreground">{formatCompactCurrency(latestQuarter?.revenue)}</span>
             <div className={`flex items-center gap-1 text-sm ${revenueChange >= 0 ? "text-bullish" : "text-bearish"}`}>
               {revenueChange >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
               <span>{Math.abs(revenueChange).toFixed(1)}%</span>
@@ -110,7 +146,7 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
         <div className="p-5 rounded-xl bg-card border border-border">
           <div className="text-xs text-muted-foreground mb-2">Net Income</div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-foreground">${latestQuarter?.net_income}B</span>
+            <span className="text-2xl font-bold text-foreground">{formatCompactCurrency(latestQuarter?.net_income)}</span>
           </div>
           <div className="text-xs text-muted-foreground mt-1">{latestQuarter?.quarter}</div>
         </div>
@@ -162,7 +198,7 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
                   tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
                   axisLine={{ stroke: 'var(--border)' }}
                   tickLine={false}
-                  tickFormatter={(value) => `$${value}B`}
+                  tickFormatter={formatAxisCurrency}
                 />
                 <Tooltip
                   content={({ active, payload, label }) => {
@@ -172,7 +208,7 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
                           <p className="text-sm font-medium text-foreground mb-2">{label}</p>
                           {payload.map((entry, index) => (
                             <p key={index} className="text-sm text-muted-foreground">
-                              {entry.name}: <span className="font-mono text-foreground">${entry.value}B</span>
+                              {entry.name}: <span className="font-mono text-foreground">{formatCompactCurrency(Number(entry.value))}</span>
                             </p>
                           ))}
                         </div>
@@ -285,10 +321,10 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
                       <span className="text-sm font-mono font-medium text-foreground">{quarter.quarter}</span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span className="text-sm font-mono text-foreground">${quarter.revenue}B</span>
+                      <span className="text-sm font-mono text-foreground">{formatCompactCurrency(quarter.revenue)}</span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span className="text-sm font-mono text-foreground">${quarter.net_income}B</span>
+                      <span className="text-sm font-mono text-foreground">{formatCompactCurrency(quarter.net_income)}</span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className="text-sm font-mono text-foreground">${quarter.reported_eps}</span>

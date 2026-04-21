@@ -54,6 +54,7 @@ export function TickerInput({ onAnalyze, isLoading, currentTicker, onReset }: Ti
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value.toUpperCase())}
             disabled={isLoading}
+            suppressHydrationWarning
             className="pl-10 pr-4 h-12 text-base bg-secondary border-border focus:border-ring"
           />
           {inputValue && !isLoading && (
