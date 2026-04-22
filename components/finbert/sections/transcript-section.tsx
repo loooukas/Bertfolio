@@ -194,7 +194,6 @@ function MetricHelp({ copy }: { copy: string }) {
 export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails = true }: TranscriptSectionProps) {
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>("all")
   const [selectedSection, setSelectedSection] = useState<string>("all")
-  const [selectedRollupTopic, setSelectedRollupTopic] = useState<string>("all")
   const [selectedRollupRole, setSelectedRollupRole] = useState<SpeakerRoleFilter>("all")
   const [sortKey, setSortKey] = useState<SortKey>("speaker")
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc")
@@ -206,41 +205,37 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
 
   const speakers = [...new Set(data.speaker_analysis.map((s) => s.speaker))]
 
-  const speakerTopics = useMemo(() => {
-    const unique = new Set(
-      data.speaker_rollup
-        .map((row) => row.dominant_topic)
-        .filter((topic) => String(topic || "").trim().length > 0),
-    )
-    return [...unique].sort((a, b) => formatTopicLabel(a).localeCompare(formatTopicLabel(b)))
-  }, [data.speaker_rollup])
-
   const speakerRolesBySpeaker = useMemo(() => {
-    const bySpeaker = new Map<string, Set<Exclude<SpeakerRoleFilter, "all">>>()
+    const roleCountsBySpeaker = new Map<string, { analyst: number; management: number }>()
     for (const transcript of data.transcripts) {
       for (const section of transcript.sections) {
         const role = normalizeSpeakerRole(section.speaker_role)
         if (!role) continue
         const speakerKey = normalizeSpeakerKey(section.speaker)
         if (!speakerKey) continue
-        const existing = bySpeaker.get(speakerKey) || new Set<Exclude<SpeakerRoleFilter, "all">>()
-        existing.add(role)
-        bySpeaker.set(speakerKey, existing)
+        const existing = roleCountsBySpeaker.get(speakerKey) || { analyst: 0, management: 0 }
+        existing[role] += 1
+        roleCountsBySpeaker.set(speakerKey, existing)
       }
     }
-    return bySpeaker
+
+    const dominantRoleBySpeaker = new Map<string, Exclude<SpeakerRoleFilter, "all">>()
+    for (const [speakerKey, counts] of roleCountsBySpeaker.entries()) {
+      if (counts.analyst === 0 && counts.management === 0) continue
+      dominantRoleBySpeaker.set(speakerKey, counts.analyst > counts.management ? "analyst" : "management")
+    }
+    return dominantRoleBySpeaker
   }, [data.transcripts])
 
   const filteredSpeakerRollup = useMemo(() => {
     return data.speaker_rollup.filter((speaker) => {
-      if (selectedRollupTopic !== "all" && speaker.dominant_topic !== selectedRollupTopic) return false
       if (selectedRollupRole !== "all") {
-        const roles = speakerRolesBySpeaker.get(normalizeSpeakerKey(speaker.speaker))
-        if (!roles || !roles.has(selectedRollupRole)) return false
+        const role = speakerRolesBySpeaker.get(normalizeSpeakerKey(speaker.speaker))
+        if (role !== selectedRollupRole) return false
       }
       return true
     })
-  }, [data.speaker_rollup, selectedRollupRole, selectedRollupTopic, speakerRolesBySpeaker])
+  }, [data.speaker_rollup, selectedRollupRole, speakerRolesBySpeaker])
 
   const filteredAnalysis = data.speaker_analysis.filter((item) => {
     if (selectedSpeaker !== "all" && item.speaker !== selectedSpeaker) return false
@@ -538,17 +533,6 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                   <Filter className="h-4 w-4 text-muted-foreground" />
                   <span className="text-sm text-muted-foreground">Filter:</span>
                 </div>
-                <Select value={selectedRollupTopic} onValueChange={setSelectedRollupTopic}>
-                  <SelectTrigger className="h-9 w-40">
-                    <SelectValue placeholder="Topic" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Topics</SelectItem>
-                    {speakerTopics.map((topic) => (
-                      <SelectItem key={topic} value={topic}>{formatTopicLabel(topic)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
                 <Select
                   value={selectedRollupRole}
                   onValueChange={(value) => setSelectedRollupRole(value as SpeakerRoleFilter)}
@@ -567,7 +551,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
 
             {filteredSpeakerRollup.length === 0 ? (
               <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
-                No speakers match the selected topic/role filters.
+                No speakers match the selected role filter.
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
