@@ -50,9 +50,6 @@ export function JobProgress({ ticker, progress, status }: JobProgressProps) {
         <h2 className="text-2xl font-semibold text-foreground">
           Analyzing <span className="font-mono text-primary">{ticker}</span>
         </h2>
-        <p className="mt-2 text-muted-foreground">
-          {progress.active_subtask || "Preparing analysis pipeline..."}
-        </p>
       </div>
 
       {/* Overall Progress */}

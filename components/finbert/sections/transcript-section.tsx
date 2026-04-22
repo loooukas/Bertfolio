@@ -660,7 +660,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
         </div>
 
         <Dialog open={!!activeSpeaker} onOpenChange={(open) => (!open ? closeSpeakerModal() : undefined)}>
-          <DialogContent className="max-h-[85vh] max-w-4xl overflow-hidden">
+          <DialogContent className="max-h-[85vh] w-[95vw] max-w-[95vw] overflow-hidden sm:max-w-[1320px]">
             <DialogHeader>
               <DialogTitle className="text-lg">{activeSpeaker ? `${activeSpeaker} Mentions` : "Speaker Mentions"}</DialogTitle>
               <DialogDescription>{totalSpeakerMentions} total mentions across transcripts.</DialogDescription>
@@ -726,7 +726,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
         </Dialog>
 
         <Dialog open={!!activeQuarter} onOpenChange={(open) => (!open ? closeQuarterModal() : undefined)}>
-          <DialogContent className="max-h-[90vh] w-[99vw] max-w-[1760px] overflow-hidden sm:w-[98vw]">
+          <DialogContent className="max-h-[90vh] w-[96vw] max-w-[96vw] overflow-hidden sm:max-w-[1760px]">
             <DialogHeader>
               <DialogTitle className="text-lg">
                 {activeQuarter ? `${activeQuarter} Transcript` : "Quarter Transcript"}
@@ -848,7 +848,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
         </Dialog>
 
         <Dialog open={activeBlockIndex !== null} onOpenChange={(open) => (!open ? closeBlockModal() : undefined)}>
-          <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
+          <DialogContent className="max-h-[85vh] w-[94vw] max-w-[94vw] overflow-hidden sm:max-w-[1280px]">
             <DialogHeader>
               <DialogTitle className="text-lg">Speaker Block Detail</DialogTitle>
               <DialogDescription>
