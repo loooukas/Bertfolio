@@ -726,7 +726,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
         </Dialog>
 
         <Dialog open={!!activeQuarter} onOpenChange={(open) => (!open ? closeQuarterModal() : undefined)}>
-          <DialogContent className="max-h-[90vh] w-[92vw] max-w-[92vw] overflow-hidden">
+          <DialogContent className="max-h-[90vh] w-[98vw] max-w-[1600px] overflow-hidden sm:w-[96vw]">
             <DialogHeader>
               <DialogTitle className="text-lg">
                 {activeQuarter ? `${activeQuarter} Transcript` : "Quarter Transcript"}

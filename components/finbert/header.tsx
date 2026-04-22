@@ -19,6 +19,7 @@ import { Switch } from "@/components/ui/switch"
 import {
   DEFAULT_UI_SETTINGS,
   sanitizeAnalyzeRunOverrides,
+  sanitizeUISettings,
   type AnalyzeRunOverrides,
   type PollingMode,
   type UISettings,
@@ -38,26 +39,28 @@ function pollingModeLabel(mode: PollingMode): string {
 
 export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps) {
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const effectiveSettings = useMemo(() => settings || DEFAULT_UI_SETTINGS, [settings])
+  const effectiveSettings = useMemo(() => sanitizeUISettings(settings), [settings])
 
   const updateSettings = (patch: Partial<UISettings>) => {
     if (!onSettingsChange) {
       return
     }
-    onSettingsChange({ ...effectiveSettings, ...patch })
+    onSettingsChange(sanitizeUISettings({ ...effectiveSettings, ...patch }))
   }
 
   const updateRunSettings = (patch: Partial<AnalyzeRunOverrides>) => {
     if (!onSettingsChange) {
       return
     }
-    onSettingsChange({
-      ...effectiveSettings,
-      run_overrides: sanitizeAnalyzeRunOverrides({
-        ...effectiveSettings.run_overrides,
-        ...patch,
+    onSettingsChange(
+      sanitizeUISettings({
+        ...effectiveSettings,
+        run_overrides: sanitizeAnalyzeRunOverrides({
+          ...effectiveSettings.run_overrides,
+          ...patch,
+        }),
       }),
-    })
+    )
   }
 
   return (

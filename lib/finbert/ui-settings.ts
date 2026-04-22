@@ -60,6 +60,30 @@ export function pollIntervalMs(mode: PollingMode): number {
   return 1800
 }
 
+export function sanitizeUISettings(settings?: Partial<UISettings> | null): UISettings {
+  const incoming = settings || {}
+  const pollingMode = incoming.polling_mode
+  const marketColumns = incoming.market_columns
+  const quoteColumns = incoming.quote_columns
+
+  return {
+    polling_mode: pollingMode === "fast" || pollingMode === "eco" || pollingMode === "balanced"
+      ? pollingMode
+      : DEFAULT_UI_SETTINGS.polling_mode,
+    market_columns: marketColumns === 1 || marketColumns === 2 ? marketColumns : DEFAULT_UI_SETTINGS.market_columns,
+    quote_columns: quoteColumns === 1 || quoteColumns === 2 ? quoteColumns : DEFAULT_UI_SETTINGS.quote_columns,
+    show_transcript_diagnostics:
+      typeof incoming.show_transcript_diagnostics === "boolean"
+        ? incoming.show_transcript_diagnostics
+        : DEFAULT_UI_SETTINGS.show_transcript_diagnostics,
+    auto_open_audit_on_warnings:
+      typeof incoming.auto_open_audit_on_warnings === "boolean"
+        ? incoming.auto_open_audit_on_warnings
+        : DEFAULT_UI_SETTINGS.auto_open_audit_on_warnings,
+    run_overrides: sanitizeAnalyzeRunOverrides(incoming.run_overrides),
+  }
+}
+
 export function sanitizeAnalyzeRunOverrides(overrides?: Partial<AnalyzeRunOverrides>): AnalyzeRunOverrides {
   const incoming = { ...DEFAULT_UI_SETTINGS.run_overrides, ...(overrides || {}) }
   return {

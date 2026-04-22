@@ -11,6 +11,7 @@ import {
   DEFAULT_UI_SETTINGS,
   pollIntervalMs,
   sanitizeAnalyzeRunOverrides,
+  sanitizeUISettings,
   type UISettings,
 } from "@/lib/finbert/ui-settings"
 import { cn } from "@/lib/utils"
@@ -63,11 +64,7 @@ export default function HomePage() {
         return
       }
       const parsed = JSON.parse(raw) as Partial<UISettings>
-      setUiSettings({
-        ...DEFAULT_UI_SETTINGS,
-        ...parsed,
-        run_overrides: sanitizeAnalyzeRunOverrides(parsed.run_overrides),
-      })
+      setUiSettings(sanitizeUISettings(parsed))
     } catch {
       setUiSettings(DEFAULT_UI_SETTINGS)
     }
@@ -170,7 +167,11 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header onHomeClick={handleReset} settings={uiSettings} onSettingsChange={setUiSettings} />
+      <Header
+        onHomeClick={handleReset}
+        settings={uiSettings}
+        onSettingsChange={(next) => setUiSettings(sanitizeUISettings(next))}
+      />
       
       <main className="flex-1">
         {/* Input Section */}
