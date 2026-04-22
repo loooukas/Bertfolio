@@ -38,13 +38,14 @@ class Settings:
     motley_sitemap_lookback_months: int = int(os.getenv("MOTLEY_SITEMAP_LOOKBACK_MONTHS", "24"))
     motley_author_max_pages: int = int(os.getenv("MOTLEY_AUTHOR_MAX_PAGES", "0"))
     motley_scrape_count: int = int(os.getenv("MOTLEY_SCRAPE_COUNT", "4"))
-    motley_scrape_cache_mode: str = os.getenv("MOTLEY_SCRAPE_CACHE_MODE", "refresh")
+    motley_scrape_cache_mode: str = os.getenv("MOTLEY_SCRAPE_CACHE_MODE", "use")
     motley_scrape_cache_dir: str = os.getenv("MOTLEY_SCRAPE_CACHE_DIR", "output/openai_motley_cache")
-    motley_discovery_cache_mode: str = os.getenv("MOTLEY_DISCOVERY_CACHE_MODE", "refresh")
+    motley_discovery_cache_mode: str = os.getenv("MOTLEY_DISCOVERY_CACHE_MODE", "use")
     motley_discovery_cache_dir: str = os.getenv(
         "MOTLEY_DISCOVERY_CACHE_DIR",
         "output/openai_motley_discovery_cache",
     )
+    use_cache: bool = _env_bool("USE_CACHE", True)
 
     transcript_sentiment_segment_chars: int = int(os.getenv("TRANSCRIPT_SENTIMENT_SEGMENT_CHARS", "650"))
     transcript_sentiment_segment_max: int = int(os.getenv("TRANSCRIPT_SENTIMENT_SEGMENT_MAX", "1000"))

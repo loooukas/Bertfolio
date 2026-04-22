@@ -7,6 +7,7 @@ export interface AnalyzeRunOverrides {
   social_limit: number
   social_pool_size: number
   social_lookback_days: number
+  use_cache: boolean
   score_weight_transcript: number
   score_weight_fundamentals: number
   score_weight_news: number
@@ -39,6 +40,7 @@ export const DEFAULT_UI_SETTINGS: UISettings = {
     social_limit: 50,
     social_pool_size: 260,
     social_lookback_days: 30,
+    use_cache: true,
     score_weight_transcript: 40,
     score_weight_fundamentals: 35,
     score_weight_news: 15,
@@ -93,6 +95,7 @@ export function sanitizeAnalyzeRunOverrides(overrides?: Partial<AnalyzeRunOverri
     social_limit: clampInt(incoming.social_limit, 10, 120),
     social_pool_size: clampInt(incoming.social_pool_size, 80, 1000),
     social_lookback_days: clampInt(incoming.social_lookback_days, 3, 365),
+    use_cache: Boolean(incoming.use_cache),
     score_weight_transcript: clampInt(incoming.score_weight_transcript, 0, 100),
     score_weight_fundamentals: clampInt(incoming.score_weight_fundamentals, 0, 100),
     score_weight_news: clampInt(incoming.score_weight_news, 0, 100),

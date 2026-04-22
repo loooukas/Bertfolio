@@ -292,6 +292,19 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
               </div>
             </div>
 
+            <div className="flex items-center justify-between rounded-lg border border-border p-3">
+              <div>
+                <div className="text-sm font-medium text-foreground">Use Transcript Cache</div>
+                <div className="text-xs text-muted-foreground">
+                  Reuse cached discovery/scrape results when available to reduce runtime.
+                </div>
+              </div>
+              <Switch
+                checked={effectiveSettings.run_overrides.use_cache}
+                onCheckedChange={(checked) => updateRunSettings({ use_cache: checked })}
+              />
+            </div>
+
             <div className="space-y-4">
               <div className="flex items-center justify-between rounded-lg border border-border p-3">
                 <div>

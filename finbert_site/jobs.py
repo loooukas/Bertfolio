@@ -37,6 +37,7 @@ class AnalyzeJobManager:
         "social_limit",
         "social_pool_size",
         "social_lookback_days",
+        "use_cache",
         "score_weight_transcript",
         "score_weight_fundamentals",
         "score_weight_news",

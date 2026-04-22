@@ -353,6 +353,14 @@ def _fetch_transcripts_motley_cli(
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY is required for transcript pipeline mode 'motley_cli'.")
 
+    def _cache_mode_for_run(configured_mode: str) -> str:
+        if not getattr(settings, "use_cache", True):
+            return "off"
+        normalized = str(configured_mode or "use").strip().lower()
+        if normalized not in {"refresh", "use", "off"}:
+            return "use"
+        return "use" if normalized == "off" else normalized
+
     discovery_report = discover_last_quarter_links(
         ticker=symbol,
         api_key=settings.openai_api_key,
@@ -363,7 +371,7 @@ def _fetch_transcripts_motley_cli(
         discovery_mode=settings.motley_discovery_mode,
         sitemap_lookback_months=settings.motley_sitemap_lookback_months,
         author_max_pages=settings.motley_author_max_pages,
-        discovery_cache_mode=settings.motley_discovery_cache_mode,
+        discovery_cache_mode=_cache_mode_for_run(settings.motley_discovery_cache_mode),
         discovery_cache_dir=settings.motley_discovery_cache_dir,
         log_fn=log_fn,
     )
@@ -375,7 +383,7 @@ def _fetch_transcripts_motley_cli(
         api_key=settings.openai_api_key,
         model=settings.openai_search_model,
         retry_attempts=settings.motley_openai_retries,
-        cache_mode=settings.motley_scrape_cache_mode,
+        cache_mode=_cache_mode_for_run(settings.motley_scrape_cache_mode),
         cache_dir=settings.motley_scrape_cache_dir,
         log_fn=log_fn,
     )
