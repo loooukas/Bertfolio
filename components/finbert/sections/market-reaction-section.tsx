@@ -11,7 +11,7 @@ interface NewsItem {
   summary: string
   url: string
   source: string
-  time_published: string
+  time_published?: string | null
   sentiment_score: number
   sentiment_label: "bullish" | "bearish" | "neutral"
 }
@@ -23,7 +23,7 @@ interface SocialItem {
   excerpt: string
   url: string
   subreddit?: string
-  created_utc: string
+  created_utc?: string | null
   relevance_score: number
   sentiment_score: number
   sentiment_label: "bullish" | "bearish" | "neutral"
@@ -64,8 +64,14 @@ const getSentimentBadgeClass = (sentiment: string) => {
   }
 }
 
-const formatTime = (timestamp: string) => {
+const formatTime = (timestamp?: string | null): string | null => {
+  if (!timestamp) {
+    return null
+  }
   const date = new Date(timestamp)
+  if (Number.isNaN(date.valueOf()) || date.getUTCFullYear() < 2000) {
+    return null
+  }
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -77,6 +83,7 @@ const formatTime = (timestamp: string) => {
 export function MarketReactionSection({ data, gridColumns = 2 }: MarketReactionSectionProps) {
   const [selectedSocial, setSelectedSocial] = useState<SocialItem | null>(null)
   const gridClass = gridColumns === 2 ? "grid grid-cols-1 xl:grid-cols-2 gap-3" : "space-y-3"
+  const selectedCreatedLabel = formatTime(selectedSocial?.created_utc)
 
   const combinedItems = [...data.news_items, ...data.social_items]
   const bullishCount = combinedItems.filter((item) => item.sentiment_label === "bullish").length
@@ -167,110 +174,120 @@ export function MarketReactionSection({ data, gridColumns = 2 }: MarketReactionS
 
         {/* News Tab */}
         <TabsContent value="news" className={gridClass}>
-          {data.news_items.map((item, index) => (
-            <div
-              key={index}
-              className="h-full p-5 rounded-xl bg-card border border-border hover:border-ring transition-colors group"
-            >
-              <div className="flex items-start justify-between gap-4 mb-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="outline" className="text-xs">
-                      {item.source}
-                    </Badge>
-                    <Badge className={`text-xs ${getSentimentBadgeClass(item.sentiment_label)}`}>
-                      {getSentimentIcon(item.sentiment_label)}
-                      <span className="ml-1 capitalize">{item.sentiment_label}</span>
-                    </Badge>
+          {data.news_items.map((item, index) => {
+            const publishedLabel = formatTime(item.time_published)
+            return (
+              <div
+                key={index}
+                className="h-full p-5 rounded-xl bg-card border border-border hover:border-ring transition-colors group flex flex-col"
+              >
+                <div className="flex items-start justify-between gap-4 mb-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge variant="outline" className="text-xs">
+                        {item.source}
+                      </Badge>
+                      <Badge className={`text-xs ${getSentimentBadgeClass(item.sentiment_label)}`}>
+                        {getSentimentIcon(item.sentiment_label)}
+                        <span className="ml-1 capitalize">{item.sentiment_label}</span>
+                      </Badge>
+                    </div>
+                    <h4 className="text-base font-medium text-foreground group-hover:text-primary transition-colors">
+                      {item.title}
+                    </h4>
                   </div>
-                  <h4 className="text-base font-medium text-foreground group-hover:text-primary transition-colors">
-                    {item.title}
-                  </h4>
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-shrink-0 p-2 rounded-lg bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
                 </div>
-                <a
-                  href={item.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-shrink-0 p-2 rounded-lg bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                </a>
+                <p className="text-sm text-muted-foreground leading-relaxed mb-3">
+                  {item.summary}
+                </p>
+                <div className="mt-auto flex items-center gap-4 text-xs text-muted-foreground">
+                  {publishedLabel && (
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      <span>{publishedLabel}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1">
+                    <span>Score:</span>
+                    <span className={`font-mono ${
+                      item.sentiment_score > 0.3 ? "text-bullish" : 
+                      item.sentiment_score < -0.3 ? "text-bearish" : "text-neutral"
+                    }`}>
+                      {item.sentiment_score > 0 ? "+" : ""}{(item.sentiment_score * 100).toFixed(0)}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <p className="text-sm text-muted-foreground leading-relaxed mb-3">
-                {item.summary}
-              </p>
-              <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  <span>{formatTime(item.time_published)}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span>Score:</span>
-                  <span className={`font-mono ${
-                    item.sentiment_score > 0.3 ? "text-bullish" : 
-                    item.sentiment_score < -0.3 ? "text-bearish" : "text-neutral"
-                  }`}>
-                    {item.sentiment_score > 0 ? "+" : ""}{(item.sentiment_score * 100).toFixed(0)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </TabsContent>
 
         {/* Social Tab */}
         <TabsContent value="social" className={gridClass}>
-          {data.social_items.map((item, index) => (
-            <div
-              key={index}
-              onClick={() => setSelectedSocial(item)}
-              className="h-full p-5 rounded-xl bg-card border border-border hover:border-ring transition-colors cursor-pointer group"
-            >
-              <div className="flex items-start justify-between gap-4 mb-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="outline" className="text-xs">
-                      {item.source}
-                    </Badge>
-                    {item.subreddit && (
-                      <Badge variant="outline" className="text-xs font-mono">
-                        r/{item.subreddit}
+          {data.social_items.map((item, index) => {
+            const createdLabel = formatTime(item.created_utc)
+            return (
+              <div
+                key={index}
+                onClick={() => setSelectedSocial(item)}
+                className="h-full p-5 rounded-xl bg-card border border-border hover:border-ring transition-colors cursor-pointer group flex flex-col"
+              >
+                <div className="flex items-start justify-between gap-4 mb-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge variant="outline" className="text-xs">
+                        {item.source}
                       </Badge>
-                    )}
-                    <Badge className={`text-xs ${getSentimentBadgeClass(item.sentiment_label)}`}>
-                      {getSentimentIcon(item.sentiment_label)}
-                      <span className="ml-1 capitalize">{item.sentiment_label}</span>
-                    </Badge>
+                      {item.subreddit && (
+                        <Badge variant="outline" className="text-xs font-mono">
+                          r/{item.subreddit}
+                        </Badge>
+                      )}
+                      <Badge className={`text-xs ${getSentimentBadgeClass(item.sentiment_label)}`}>
+                        {getSentimentIcon(item.sentiment_label)}
+                        <span className="ml-1 capitalize">{item.sentiment_label}</span>
+                      </Badge>
+                    </div>
+                    <h4 className="text-base font-medium text-foreground group-hover:text-primary transition-colors">
+                      {item.title}
+                    </h4>
                   </div>
-                  <h4 className="text-base font-medium text-foreground group-hover:text-primary transition-colors">
-                    {item.title}
-                  </h4>
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed mb-3 line-clamp-2">
+                  {item.excerpt}
+                </p>
+                <div className="mt-auto flex items-center gap-4 text-xs text-muted-foreground">
+                  {createdLabel && (
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      <span>{createdLabel}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1">
+                    <span>Relevance:</span>
+                    <span className="font-mono">{(item.relevance_score * 100).toFixed(0)}%</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span>Sentiment:</span>
+                    <span className={`font-mono ${
+                      item.sentiment_score > 0.3 ? "text-bullish" : 
+                      item.sentiment_score < -0.3 ? "text-bearish" : "text-neutral"
+                    }`}>
+                      {item.sentiment_score > 0 ? "+" : ""}{(item.sentiment_score * 100).toFixed(0)}
+                    </span>
+                  </div>
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground leading-relaxed mb-3 line-clamp-2">
-                {item.excerpt}
-              </p>
-              <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  <span>{formatTime(item.created_utc)}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span>Relevance:</span>
-                  <span className="font-mono">{(item.relevance_score * 100).toFixed(0)}%</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span>Sentiment:</span>
-                  <span className={`font-mono ${
-                    item.sentiment_score > 0.3 ? "text-bullish" : 
-                    item.sentiment_score < -0.3 ? "text-bearish" : "text-neutral"
-                  }`}>
-                    {item.sentiment_score > 0 ? "+" : ""}{(item.sentiment_score * 100).toFixed(0)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </TabsContent>
       </Tabs>
 
@@ -301,7 +318,7 @@ export function MarketReactionSection({ data, gridColumns = 2 }: MarketReactionS
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-4">
-                    <span>{formatTime(selectedSocial.created_utc)}</span>
+                    {selectedCreatedLabel && <span>{selectedCreatedLabel}</span>}
                     <span>Relevance: {(selectedSocial.relevance_score * 100).toFixed(0)}%</span>
                     <span>Sentiment: {(selectedSocial.sentiment_score * 100).toFixed(0)}</span>
                   </div>

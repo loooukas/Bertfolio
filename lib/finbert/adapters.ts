@@ -75,19 +75,62 @@ function normalizeSentimentLabel(label: string): "bullish" | "bearish" | "neutra
   return "neutral"
 }
 
-function formatIsoTime(input?: string | null): string {
-  if (!input) {
-    return new Date(0).toISOString()
+function parseCompactTimestamp(input: string): Date | null {
+  const compact = input.trim()
+  const matched = compact.match(
+    /^(\d{4})(\d{2})(\d{2})(?:[T\s]?(\d{2})(\d{2})(\d{2}))?$/,
+  )
+  if (!matched) {
+    return null
   }
-  const parsed = new Date(input)
-  return Number.isNaN(parsed.valueOf()) ? new Date(0).toISOString() : parsed.toISOString()
+  const [, y, m, d, hh = "00", mm = "00", ss = "00"] = matched
+  const year = Number(y)
+  const month = Number(m)
+  const day = Number(d)
+  const hour = Number(hh)
+  const minute = Number(mm)
+  const second = Number(ss)
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute) ||
+    !Number.isFinite(second)
+  ) {
+    return null
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
+    return null
+  }
+  const parsed = new Date(Date.UTC(year, month - 1, day, hour, minute, second))
+  if (Number.isNaN(parsed.valueOf()) || parsed.getUTCFullYear() < 2000) {
+    return null
+  }
+  return parsed
 }
 
-function formatCreatedUtc(input?: number | null): string {
-  if (typeof input !== "number" || !Number.isFinite(input) || input <= 0) {
-    return new Date(0).toISOString()
+function formatIsoTime(input?: string | null): string | null {
+  if (!input) {
+    return null
   }
-  return new Date(input * 1000).toISOString()
+  const parsed = new Date(input)
+  if (!Number.isNaN(parsed.valueOf()) && parsed.getUTCFullYear() >= 2000) {
+    return parsed.toISOString()
+  }
+  const compactParsed = parseCompactTimestamp(input)
+  return compactParsed ? compactParsed.toISOString() : null
+}
+
+function formatCreatedUtc(input?: number | null): string | null {
+  if (typeof input !== "number" || !Number.isFinite(input) || input <= 0) {
+    return null
+  }
+  const parsed = new Date(input * 1000)
+  if (Number.isNaN(parsed.valueOf()) || parsed.getUTCFullYear() < 2000) {
+    return null
+  }
+  return parsed.toISOString()
 }
 
 function quoteSentimentFromScore(score: number): "bullish" | "bearish" | "neutral" {

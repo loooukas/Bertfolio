@@ -302,7 +302,7 @@ export interface UIReportModel {
       summary: string
       url: string
       source: string
-      time_published: string
+      time_published?: string | null
       sentiment_score: number
       sentiment_label: "bullish" | "bearish" | "neutral"
     }>
@@ -313,7 +313,7 @@ export interface UIReportModel {
       excerpt: string
       url: string
       subreddit?: string
-      created_utc: string
+      created_utc?: string | null
       relevance_score: number
       sentiment_score: number
       sentiment_label: "bullish" | "bearish" | "neutral"
