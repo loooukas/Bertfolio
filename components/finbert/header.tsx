@@ -308,32 +308,19 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
             <div className="space-y-4">
               <div className="flex items-center justify-between rounded-lg border border-border p-3">
                 <div>
-                  <div className="text-sm font-medium text-foreground">Two-column market cards</div>
-                  <div className="text-xs text-muted-foreground">News/social feeds use a compact 2-column grid.</div>
+                  <div className="text-sm font-medium text-foreground">Two-column market + key quotes</div>
+                  <div className="text-xs text-muted-foreground">
+                    Apply a denser 2-column layout to market cards and transcript key quotes.
+                  </div>
                 </div>
                 <Switch
-                  checked={effectiveSettings.market_columns === 2}
-                  onCheckedChange={(checked) => updateSettings({ market_columns: checked ? 2 : 1 })}
-                />
-              </div>
-              <div className="flex items-center justify-between rounded-lg border border-border p-3">
-                <div>
-                  <div className="text-sm font-medium text-foreground">Two-column key quotes</div>
-                  <div className="text-xs text-muted-foreground">Transcript key quotes render in a denser grid.</div>
-                </div>
-                <Switch
-                  checked={effectiveSettings.quote_columns === 2}
-                  onCheckedChange={(checked) => updateSettings({ quote_columns: checked ? 2 : 1 })}
-                />
-              </div>
-              <div className="flex items-center justify-between rounded-lg border border-border p-3">
-                <div>
-                  <div className="text-sm font-medium text-foreground">Transcript diagnostics</div>
-                  <div className="text-xs text-muted-foreground">Show richer coverage and section diagnostics.</div>
-                </div>
-                <Switch
-                  checked={effectiveSettings.show_transcript_diagnostics}
-                  onCheckedChange={(checked) => updateSettings({ show_transcript_diagnostics: checked })}
+                  checked={effectiveSettings.market_columns === 2 && effectiveSettings.quote_columns === 2}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      market_columns: checked ? 2 : 1,
+                      quote_columns: checked ? 2 : 1,
+                    })
+                  }
                 />
               </div>
               <div className="flex items-center justify-between rounded-lg border border-border p-3">

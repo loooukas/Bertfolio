@@ -74,10 +74,8 @@ export function sanitizeUISettings(settings?: Partial<UISettings> | null): UISet
       : DEFAULT_UI_SETTINGS.polling_mode,
     market_columns: marketColumns === 1 || marketColumns === 2 ? marketColumns : DEFAULT_UI_SETTINGS.market_columns,
     quote_columns: quoteColumns === 1 || quoteColumns === 2 ? quoteColumns : DEFAULT_UI_SETTINGS.quote_columns,
-    show_transcript_diagnostics:
-      typeof incoming.show_transcript_diagnostics === "boolean"
-        ? incoming.show_transcript_diagnostics
-        : DEFAULT_UI_SETTINGS.show_transcript_diagnostics,
+    // Transcript diagnostics are intentionally always on.
+    show_transcript_diagnostics: true,
     auto_open_audit_on_warnings:
       typeof incoming.auto_open_audit_on_warnings === "boolean"
         ? incoming.auto_open_audit_on_warnings

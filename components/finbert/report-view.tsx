@@ -103,7 +103,7 @@ export function ReportView({ report, settings }: ReportViewProps) {
           <TranscriptSection
             data={report.transcript}
             quoteColumns={settings.quote_columns}
-            showCoverageDetails={settings.show_transcript_diagnostics}
+            showCoverageDetails={true}
           />
         </TabsContent>
 
