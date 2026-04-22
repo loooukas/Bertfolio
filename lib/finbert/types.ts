@@ -28,6 +28,25 @@ export interface BackendJobPayload {
   result?: AnalysisResponseBackend
 }
 
+export interface CacheRunSummary {
+  ticker: string
+  updated_at: string
+  analysis_version: string
+  transcripts_found: number
+  transcript_labels: string[]
+}
+
+export interface CacheRunListResponse {
+  runs: CacheRunSummary[]
+}
+
+export interface CachedRunResponse {
+  ticker: string
+  updated_at: string
+  analysis_version: string
+  result: AnalysisResponseBackend
+}
+
 export interface AnalysisResponseBackend {
   analysis_version: string
   ticker: string

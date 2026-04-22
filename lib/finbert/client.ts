@@ -1,4 +1,9 @@
-import type { AnalysisResponseBackend, BackendJobPayload } from "@/lib/finbert/types"
+import type {
+  AnalysisResponseBackend,
+  BackendJobPayload,
+  CachedRunResponse,
+  CacheRunListResponse,
+} from "@/lib/finbert/types"
 import type { AnalyzeRunOverrides } from "@/lib/finbert/ui-settings"
 
 class FinbertClientError extends Error {
@@ -62,6 +67,21 @@ export async function getAnalyzeReport(ticker: string): Promise<AnalysisResponse
 export async function checkBackendHealth(): Promise<{ status: string }> {
   const response = await fetch("/api/health")
   return parseResponse<{ status: string }>(response)
+}
+
+export async function getCacheRuns(): Promise<CacheRunListResponse> {
+  const response = await fetch("/api/cache-runs")
+  return parseResponse<CacheRunListResponse>(response)
+}
+
+export async function getCachedRun(ticker: string): Promise<CachedRunResponse> {
+  const response = await fetch(`/api/cache-runs/${encodeURIComponent(ticker)}`)
+  return parseResponse<CachedRunResponse>(response)
+}
+
+export async function deleteCachedRun(ticker: string): Promise<{ deleted: boolean; ticker: string }> {
+  const response = await fetch(`/api/cache-runs/${encodeURIComponent(ticker)}`, { method: "DELETE" })
+  return parseResponse<{ deleted: boolean; ticker: string }>(response)
 }
 
 export { FinbertClientError }

@@ -10,7 +10,13 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from .analysis import build_analysis, build_sentiment_snapshot
-from .analysis_cache import load_cached_analysis, write_cached_analysis
+from .analysis_cache import (
+    delete_cached_analysis,
+    list_cached_analysis_summaries,
+    load_cached_analysis,
+    load_cached_analysis_envelope,
+    write_cached_analysis,
+)
 from .jobs import AnalyzeJobManager
 from .settings import settings
 
@@ -124,3 +130,44 @@ def analyze_snapshot(ticker: str = Query(..., min_length=1, max_length=12)) -> d
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}") from exc
+
+
+@app.get("/api/cache-runs")
+def list_cache_runs() -> dict[str, list[dict]]:
+    runs = list_cached_analysis_summaries(cache_dir=settings.analysis_result_cache_dir)
+    return {"runs": runs}
+
+
+@app.get("/api/cache-runs/{ticker}")
+def get_cache_run(ticker: str) -> dict:
+    symbol = ticker.strip().upper()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Ticker cannot be empty.")
+
+    envelope = load_cached_analysis_envelope(cache_dir=settings.analysis_result_cache_dir, ticker=symbol)
+    if envelope is None:
+        raise HTTPException(status_code=404, detail=f"No cached run found for {symbol}.")
+
+    result = envelope.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=422, detail=f"Cached run for {symbol} is malformed.")
+
+    return {
+        "ticker": symbol,
+        "updated_at": str(envelope.get("updated_at") or ""),
+        "analysis_version": str(envelope.get("analysis_version") or ""),
+        "result": result,
+    }
+
+
+@app.delete("/api/cache-runs/{ticker}")
+def delete_cache_run(ticker: str) -> dict[str, object]:
+    symbol = ticker.strip().upper()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Ticker cannot be empty.")
+
+    deleted = delete_cached_analysis(cache_dir=settings.analysis_result_cache_dir, ticker=symbol)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"No cached run found for {symbol}.")
+
+    return {"deleted": True, "ticker": symbol}

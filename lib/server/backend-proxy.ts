@@ -77,3 +77,16 @@ export async function proxyPost(request: NextRequest, path: string): Promise<Res
     return backendUnavailableResponse(path, error)
   }
 }
+
+export async function proxyDelete(request: NextRequest, path: string): Promise<Response> {
+  try {
+    const response = await fetch(createTargetUrl(request, path), {
+      method: "DELETE",
+      headers: copyRequestHeaders(request),
+      cache: "no-store",
+    })
+    return new Response(response.body, { status: response.status, headers: copyResponseHeaders(response) })
+  } catch (error) {
+    return backendUnavailableResponse(path, error)
+  }
+}

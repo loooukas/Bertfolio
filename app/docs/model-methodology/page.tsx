@@ -114,7 +114,11 @@ export default function ModelMethodologyPage() {
           <li>Data collection knobs: <code>news/social pool size</code>, <code>kept limits</code>, <code>lookback days</code>.</li>
           <li>
             Cache toggle: <code>use_cache</code> enables/disables full report cache reuse per ticker. When disabled, the run
-            recomputes and overwrites the cached report for that ticker.
+            recomputes and overwrites the cached report for that ticker. UI default is off.
+          </li>
+          <li>
+            Cache Runs tab: browse cached reports instantly (ticker, transcript labels, run timestamp) and delete stale cached
+            runs from local storage.
           </li>
           <li>Source toggles: Alpha Vantage/Yahoo for news, Reddit/Stocktwits for social.</li>
           <li>

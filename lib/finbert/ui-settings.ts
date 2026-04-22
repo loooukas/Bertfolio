@@ -40,7 +40,7 @@ export const DEFAULT_UI_SETTINGS: UISettings = {
     social_limit: 50,
     social_pool_size: 260,
     social_lookback_days: 30,
-    use_cache: true,
+    use_cache: false,
     score_weight_transcript: 40,
     score_weight_fundamentals: 35,
     score_weight_news: 15,
