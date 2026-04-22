@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 interface SpeakerAnalysis {
@@ -450,10 +451,13 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
           </div>
         </div>
 
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-foreground">Speaker Analysis</h3>
+        <Tabs defaultValue="speaker" className="space-y-4">
+          <TabsList className="bg-secondary/50">
+            <TabsTrigger value="speaker">Speaker Analysis</TabsTrigger>
+            <TabsTrigger value="block">Block Analysis</TabsTrigger>
+          </TabsList>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <TabsContent value="speaker" className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {data.speaker_rollup.map((speaker) => (
               <div
                 key={speaker.speaker}
@@ -511,11 +515,10 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                 </div>
               </div>
             ))}
-          </div>
+          </TabsContent>
 
-          <div className="space-y-3">
+          <TabsContent value="block" className="space-y-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <h4 className="text-sm font-medium text-foreground">Speaker Block Analysis</h4>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
                   <Filter className="h-4 w-4 text-muted-foreground" />
@@ -656,8 +659,8 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                 </table>
               </div>
             </div>
-          </div>
-        </div>
+          </TabsContent>
+        </Tabs>
 
         <Dialog open={!!activeSpeaker} onOpenChange={(open) => (!open ? closeSpeakerModal() : undefined)}>
           <DialogContent className="max-h-[85vh] w-[95vw] max-w-[95vw] overflow-hidden sm:max-w-[1320px]">
