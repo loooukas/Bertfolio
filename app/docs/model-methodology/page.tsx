@@ -24,6 +24,8 @@ export default function ModelMethodologyPage() {
           <li>Directional sentiment scores are normalized to <code>-1</code> to <code>+1</code>.</li>
           <li>UI score badges typically show unit scores multiplied by <code>100</code>.</li>
           <li>Confidence, evasiveness, outlook strength, and specificity are <code>0-100</code> metrics.</li>
+          <li>Speaker/block diagnostics can include management and analysts.</li>
+          <li>Company-facing transcript aggregates are management-only and exclude analyst/operator/moderator blocks.</li>
           <li>Transcript coverage shows <code>found / requested</code> quarter capture.</li>
         </ul>
       </section>
@@ -70,6 +72,10 @@ export default function ModelMethodologyPage() {
         <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
           overall = transcript*0.40 + fundamentals*0.35 + news*0.15 + social*0.10
         </div>
+        <p className="text-sm text-muted-foreground">
+          Transcript component in this blend is computed from management-only speaker blocks. Analyst/operator/moderator blocks are excluded from
+          overview and overall company-facing transcript scoring.
+        </p>
         <p className="text-sm text-muted-foreground">Fundamentals blend:</p>
         <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
           growth_signal = clamp_unit((revenue_qoq_growth*0.55 + eps_qoq_growth*0.45) / 50.0){"\n"}
@@ -84,8 +90,9 @@ export default function ModelMethodologyPage() {
         <h2 className="text-xl font-semibold text-foreground">Executive Summary Generation</h2>
         <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
           <li>Executive summary is an OpenAI-required quality step for full analysis.</li>
-          <li>Target output is exactly 5-6 analyst-style sentences with confidence/evasiveness/outlook + market/fundamental context.</li>
+          <li>Target output is exactly 5-6 analyst-style sentences with management-only confidence/evasiveness/outlook + market/fundamental context.</li>
           <li>Summary is rendered as one coherent paragraph and should start with the company name/ticker context.</li>
+          <li>Key takeaways and executive-summary transcript commentary use management-only transcript aggregates.</li>
           <li>
             If generation fails, the summary section is hidden and Data Audit receives an actionable warning with failure cause.
           </li>

@@ -898,13 +898,47 @@ def _build_transcript_quarter_status(raw_records: list[TranscriptRecord]) -> lis
     return [f"{record.year}-Q{record.quarter}" for record in raw_records]
 
 
+def _normalize_speaker_role(value: Optional[str]) -> str:
+    lowered = (value or "").strip().lower()
+    if not lowered:
+        return ""
+    if lowered in {"operator", "moderator", "host"}:
+        return "operator"
+    if lowered in {"analyst", "research"}:
+        return "analyst"
+    if lowered in {"management", "executive"}:
+        return "management"
+    return lowered
+
+
+def _is_management_role(value: Optional[str]) -> bool:
+    return _normalize_speaker_role(value) == "management"
+
+
 def _is_operator_speaker_name(name: str) -> bool:
     lowered = (name or "").strip().lower()
-    return lowered == "operator" or lowered.startswith("operator ")
+    return (
+        lowered == "operator"
+        or lowered.startswith("operator ")
+        or lowered == "moderator"
+        or lowered.startswith("moderator ")
+    )
 
 
 def _exclude_operator_rows(rows: list[TranscriptSpeakerAnalysis]) -> list[TranscriptSpeakerAnalysis]:
-    return [row for row in rows if not _is_operator_speaker_name(row.speaker)]
+    filtered: list[TranscriptSpeakerAnalysis] = []
+    for row in rows:
+        role = _normalize_speaker_role(row.speaker_role)
+        if role == "operator":
+            continue
+        if _is_operator_speaker_name(row.speaker):
+            continue
+        filtered.append(row)
+    return filtered
+
+
+def _management_only_rows(rows: list[TranscriptSpeakerAnalysis]) -> list[TranscriptSpeakerAnalysis]:
+    return [row for row in rows if _is_management_role(row.speaker_role)]
 
 
 def _build_speaker_rollup(rows: list[TranscriptSpeakerAnalysis]) -> list[TranscriptSpeakerRollup]:
@@ -1016,16 +1050,16 @@ def _classify_audit_messages(messages: list[str]) -> tuple[list[str], list[str],
 
 
 def _aggregate_scores(
-    transcript_speaker_analysis: list[TranscriptSpeakerAnalysis],
+    management_speaker_analysis: list[TranscriptSpeakerAnalysis],
     fundamentals: FundamentalsSummary,
     news_avg_sentiment: float,
     social_avg_sentiment: float,
 ) -> AggregateScores:
-    if transcript_speaker_analysis:
-        avg_directional = mean(s.sentiment_direction for s in transcript_speaker_analysis)
-        avg_outlook = mean(s.forward_looking_strength for s in transcript_speaker_analysis)
-        avg_confidence = mean(s.confidence for s in transcript_speaker_analysis)
-        avg_evasive = mean(s.evasiveness for s in transcript_speaker_analysis)
+    if management_speaker_analysis:
+        avg_directional = mean(s.sentiment_direction for s in management_speaker_analysis)
+        avg_outlook = mean(s.forward_looking_strength for s in management_speaker_analysis)
+        avg_confidence = mean(s.confidence for s in management_speaker_analysis)
+        avg_evasive = mean(s.evasiveness for s in management_speaker_analysis)
     else:
         avg_directional = 0.0
         avg_outlook = 50.0
@@ -1240,7 +1274,7 @@ def _build_legacy_transcript_results(
 ) -> list[TranscriptResult]:
     out: list[TranscriptResult] = []
     for doc in normalized_docs:
-        analysis_rows = speaker_analysis_by_url.get(doc.source_url or "", [])
+        analysis_rows = _management_only_rows(speaker_analysis_by_url.get(doc.source_url or "", []))
         directional = mean(a.sentiment_direction for a in analysis_rows) if analysis_rows else 0.0
         confidence = mean(a.confidence for a in analysis_rows) if analysis_rows else 45.0
         outlook = mean(a.forward_looking_strength for a in analysis_rows) if analysis_rows else 45.0
@@ -1266,6 +1300,7 @@ def _build_legacy_transcript_results(
             for row in analysis_rows
             if row.evasiveness >= 55 and row.evidence_snippets
         ][:4]
+        decision_quotes = [snippet for row in analysis_rows for snippet in row.evidence_snippets[:1]][:4] or doc.key_quotes[:4]
 
         out.append(
             TranscriptResult(
@@ -1286,7 +1321,7 @@ def _build_legacy_transcript_results(
                 bullish_signals=bullish_signals,
                 bearish_signals=bearish_signals,
                 evasive_signals=evasive_signals,
-                decision_relevant_quotes=doc.key_quotes[:4],
+                decision_relevant_quotes=decision_quotes,
             )
         )
     return out
@@ -1716,7 +1751,9 @@ def build_analysis(
     normalized_documents: list[TranscriptDocument] = []
     normalization_warnings: list[str] = []
     speaker_analysis_by_url: dict[str, list[TranscriptSpeakerAnalysis]] = {}
+    management_speaker_analysis_by_url: dict[str, list[TranscriptSpeakerAnalysis]] = {}
     all_speaker_analysis_raw: list[TranscriptSpeakerAnalysis] = []
+    management_speaker_analysis_raw: list[TranscriptSpeakerAnalysis] = []
 
     if progress is not None:
         progress.start_stage(
@@ -1786,10 +1823,26 @@ def build_analysis(
                 lambda text: _score_text_with_segmentation(text, engine, settings),
             )
         filtered_rows = _exclude_operator_rows(analysis_rows)
+        section_role_index: dict[tuple[str, str, int], Optional[str]] = {}
+        section_role_by_speaker_and_type: dict[tuple[str, str], Optional[str]] = {}
+        for section in normalized.sections:
+            section_role_index[(section.speaker.strip().lower(), section.section_type, int(section.order_index))] = section.speaker_role
+            section_role_by_speaker_and_type[(section.speaker.strip().lower(), section.section_type)] = section.speaker_role
         for row in filtered_rows:
             row.transcript_source_url = normalized.source_url
+            if not row.speaker_role:
+                row.speaker_role = section_role_index.get(
+                    (row.speaker.strip().lower(), row.section_type, int(row.order_index))
+                )
+            if not row.speaker_role:
+                row.speaker_role = section_role_by_speaker_and_type.get((row.speaker.strip().lower(), row.section_type))
+        management_rows = _management_only_rows(filtered_rows)
         speaker_analysis_by_url[normalized.source_url or f"doc-{len(speaker_analysis_by_url)}"] = filtered_rows
+        management_speaker_analysis_by_url[normalized.source_url or f"doc-{len(management_speaker_analysis_by_url)}"] = (
+            management_rows
+        )
         all_speaker_analysis_raw.extend(filtered_rows)
+        management_speaker_analysis_raw.extend(management_rows)
         if progress is not None and normalized_documents:
             progress.update_stage(
                 "transcript_sentiment_speaker_scoring",
@@ -1810,9 +1863,11 @@ def build_analysis(
         )
 
     all_speaker_analysis = all_speaker_analysis_raw
+    management_speaker_analysis = management_speaker_analysis_raw
     speaker_rollup = _build_speaker_rollup(all_speaker_analysis)
+    management_speaker_rollup = _build_speaker_rollup(management_speaker_analysis)
 
-    transcript_summary, transcript_takeaways, pressure_points = summarize_transcript_findings(all_speaker_analysis)
+    transcript_summary, transcript_takeaways, pressure_points = summarize_transcript_findings(management_speaker_analysis)
 
     prepared_count = sum(1 for row in all_speaker_analysis if row.section_type == "prepared_remarks")
     qa_count = sum(1 for row in all_speaker_analysis if row.section_type == "qa")
@@ -1864,10 +1919,26 @@ def build_analysis(
         ),
     )
 
-    transcript_direction = mean(row.sentiment_direction for row in all_speaker_analysis) if all_speaker_analysis else 0.0
-    forward_strength = mean(row.forward_looking_strength for row in all_speaker_analysis) if all_speaker_analysis else 45.0
-    confidence_score = mean(row.confidence for row in all_speaker_analysis) if all_speaker_analysis else 45.0
-    evasiveness_score = mean(row.evasiveness for row in all_speaker_analysis) if all_speaker_analysis else 40.0
+    transcript_direction = (
+        mean(row.sentiment_direction for row in management_speaker_analysis)
+        if management_speaker_analysis
+        else 0.0
+    )
+    forward_strength = (
+        mean(row.forward_looking_strength for row in management_speaker_analysis)
+        if management_speaker_analysis
+        else 45.0
+    )
+    confidence_score = (
+        mean(row.confidence for row in management_speaker_analysis)
+        if management_speaker_analysis
+        else 45.0
+    )
+    evasiveness_score = (
+        mean(row.evasiveness for row in management_speaker_analysis)
+        if management_speaker_analysis
+        else 40.0
+    )
 
     recommendation_mean = fundamentals_dict.get("recommendation_mean")
     target_mean = fundamentals_dict.get("target_mean_price")
@@ -1886,7 +1957,7 @@ def build_analysis(
     analyst_signal = _analyst_signal(recommendation_mean, upside_pct)
     fundamentals_signal = _fundamentals_blended_signal(growth_signal, analyst_signal)
 
-    transcript_component = transcript_direction if normalized_documents else 0.0
+    transcript_component = transcript_direction if management_speaker_analysis else 0.0
     overall_score = _clamp_unit(
         transcript_component * score_weights.get("transcript", 0.40)
         + fundamentals_signal * score_weights.get("fundamentals", 0.35)
@@ -1897,23 +1968,23 @@ def build_analysis(
     overall_label = _label_from_sentiment_score(overall_score)
 
     forward_leader = (
-        max(all_speaker_analysis, key=lambda row: row.forward_looking_strength)
-        if all_speaker_analysis
+        max(management_speaker_analysis, key=lambda row: row.forward_looking_strength)
+        if management_speaker_analysis
         else None
     )
     evasive_leader = (
-        max(all_speaker_analysis, key=lambda row: row.evasiveness)
-        if all_speaker_analysis
+        max(management_speaker_analysis, key=lambda row: row.evasiveness)
+        if management_speaker_analysis
         else None
     )
-    dominant_topic = speaker_rollup[0].dominant_topic if speaker_rollup else "general"
-    dominant_speaker = speaker_rollup[0].speaker if speaker_rollup else "management team"
+    dominant_topic = management_speaker_rollup[0].dominant_topic if management_speaker_rollup else "general"
+    dominant_speaker = management_speaker_rollup[0].speaker if management_speaker_rollup else "management team"
     transcript_bias_label = _stance_from_score(transcript_direction)
     news_bias_label = _stance_from_score(news_avg)
     social_bias_label = _stance_from_score(social_avg)
 
     overview_takeaways: list[str] = []
-    if all_speaker_analysis:
+    if management_speaker_analysis:
         overview_takeaways.extend(
             [
                 (
@@ -1933,7 +2004,7 @@ def build_analysis(
         )
     else:
         overview_takeaways.append(
-            "Transcript-derived speaker metrics are unavailable in this run, so interpretation leans on market and fundamentals signals."
+            "Management-labeled transcript metrics are unavailable in this run, so interpretation leans on market and fundamentals signals."
         )
 
     overview_takeaways.extend(
@@ -2154,6 +2225,11 @@ def build_analysis(
     parsing_warnings = [warning for doc in normalized_documents for warning in doc.parsing_warnings]
     parsing_warnings.extend(normalization_warnings)
 
+    if all_speaker_analysis and not management_speaker_analysis:
+        provider_warnings.append(
+            "No management-labeled speaker blocks were detected; company-facing transcript aggregates are withheld from non-management speech."
+        )
+
     missing_items: list[str] = []
     if not normalized_documents:
         missing_items.append("No transcript documents were successfully normalized.")
@@ -2272,9 +2348,9 @@ def build_analysis(
             message=f"Data audit/report assembly completed with {len(task_breakdown)} tracked tasks.",
         )
 
-    aggregate = _aggregate_scores(all_speaker_analysis, fundamentals, news_avg, social_avg)
+    aggregate = _aggregate_scores(management_speaker_analysis, fundamentals, news_avg, social_avg)
 
-    transcript_results = _build_legacy_transcript_results(normalized_documents, speaker_analysis_by_url)
+    transcript_results = _build_legacy_transcript_results(normalized_documents, management_speaker_analysis_by_url)
     analyst_team, research_team, trader_plan, risk_management, manager_decision = _build_legacy_fields(
         aggregate=aggregate,
         transcript_results=transcript_results,

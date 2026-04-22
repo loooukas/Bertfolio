@@ -41,6 +41,7 @@ export default function DocsPage() {
           <li>Clicking the top-left FinBERT brand resets to a fresh homepage state so you can analyze another ticker.</li>
           <li>Transcript key quotes now attempt speaker attribution from real transcript evidence before fallback labels.</li>
           <li>Speaker cards open a modal showing every mention by transcript, with per-transcript mention-count buttons.</li>
+          <li>Speaker/block diagnostics include analysts + management, but company-facing transcript aggregates are management-only.</li>
           <li>Transcript table filters now live by the table and all table headers are sortable ascending/descending.</li>
           <li>Fundamentals values auto-scale to K/M/B/T for cards, charts, and tables.</li>
         </ul>

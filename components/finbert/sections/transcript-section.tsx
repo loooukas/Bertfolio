@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 
 interface SpeakerAnalysis {
   speaker: string
+  speaker_role?: string
   section_type: string
   order_index?: number
   transcript_source_url?: string
@@ -129,7 +130,7 @@ function normalizeSpeakerRole(value?: string | null): Exclude<SpeakerRoleFilter,
   const role = String(value || "").trim().toLowerCase()
   if (!role) return null
   if (role === "analyst") return "analyst"
-  if (role === "management" || role === "operator") return "management"
+  if (role === "management") return "management"
   return null
 }
 
@@ -207,6 +208,15 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
 
   const speakerRolesBySpeaker = useMemo(() => {
     const roleCountsBySpeaker = new Map<string, { analyst: number; management: number }>()
+    for (const row of data.speaker_analysis) {
+      const role = normalizeSpeakerRole(row.speaker_role)
+      if (!role) continue
+      const speakerKey = normalizeSpeakerKey(row.speaker)
+      if (!speakerKey) continue
+      const existing = roleCountsBySpeaker.get(speakerKey) || { analyst: 0, management: 0 }
+      existing[role] += 1
+      roleCountsBySpeaker.set(speakerKey, existing)
+    }
     for (const transcript of data.transcripts) {
       for (const section of transcript.sections) {
         const role = normalizeSpeakerRole(section.speaker_role)
@@ -315,11 +325,13 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
   const selectedQuarterTranscript =
     activeQuarterTranscripts.find((item) => item.id === activeQuarterTranscriptId) || activeQuarterTranscripts[0] || null
 
-  const avgConfidence = data.speaker_analysis.length > 0
-    ? data.speaker_analysis.reduce((sum, row) => sum + row.confidence, 0) / data.speaker_analysis.length
+  const managementAnalysisRows = data.speaker_analysis.filter((row) => normalizeSpeakerRole(row.speaker_role) === "management")
+
+  const avgConfidence = managementAnalysisRows.length > 0
+    ? managementAnalysisRows.reduce((sum, row) => sum + row.confidence, 0) / managementAnalysisRows.length
     : 0
-  const avgEvasiveness = data.speaker_analysis.length > 0
-    ? data.speaker_analysis.reduce((sum, row) => sum + row.evasiveness, 0) / data.speaker_analysis.length
+  const avgEvasiveness = managementAnalysisRows.length > 0
+    ? managementAnalysisRows.reduce((sum, row) => sum + row.evasiveness, 0) / managementAnalysisRows.length
     : 0
   const coveragePct = data.transcript_count_requested > 0
     ? (data.transcript_count_found / data.transcript_count_requested) * 100
@@ -455,12 +467,16 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                     <div className="text-base font-semibold text-foreground">{data.speaker_analysis.length}</div>
                   </div>
                   <div className="rounded-lg border border-border bg-secondary/40 p-3">
-                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Confidence</div>
-                    <div className="text-base font-semibold text-foreground">{avgConfidence.toFixed(1)}</div>
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Confidence (Mgmt)</div>
+                    <div className="text-base font-semibold text-foreground">
+                      {managementAnalysisRows.length > 0 ? avgConfidence.toFixed(1) : "n/a"}
+                    </div>
                   </div>
                   <div className="rounded-lg border border-border bg-secondary/40 p-3">
-                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Evasiveness</div>
-                    <div className="text-base font-semibold text-foreground">{avgEvasiveness.toFixed(1)}</div>
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Evasiveness (Mgmt)</div>
+                    <div className="text-base font-semibold text-foreground">
+                      {managementAnalysisRows.length > 0 ? avgEvasiveness.toFixed(1) : "n/a"}
+                    </div>
                   </div>
                 </div>
               </>

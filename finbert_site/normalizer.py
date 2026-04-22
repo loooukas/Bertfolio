@@ -631,9 +631,57 @@ def _sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
-def _guess_role(speaker: str) -> str | None:
+def _normalize_name_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").strip().lower()).strip()
+
+
+def _role_from_participant_title(value: str | None) -> str | None:
+    lowered = (value or "").strip().lower()
+    if not lowered:
+        return None
+    if "operator" in lowered or "moderator" in lowered:
+        return "operator"
+    if "analyst" in lowered:
+        return "analyst"
+    if any(
+        token in lowered
+        for token in [
+            "chief",
+            "ceo",
+            "cfo",
+            "coo",
+            "cao",
+            "cto",
+            "president",
+            "chairman",
+            "chairwoman",
+            "executive",
+            "founder",
+            "vice president",
+            "svp",
+            "evp",
+            "director",
+            "treasurer",
+            "investor relations",
+            "corporate secretary",
+        ]
+    ):
+        return "management"
+    return None
+
+
+def _guess_role(
+    speaker: str,
+    participant_role_by_name: dict[str, str] | None = None,
+) -> str | None:
+    speaker_key = _normalize_name_key(speaker)
+    if participant_role_by_name and speaker_key:
+        participant_role = participant_role_by_name.get(speaker_key)
+        if participant_role:
+            return participant_role
+
     lowered = speaker.lower()
-    if "operator" in lowered:
+    if "operator" in lowered or "moderator" in lowered:
         return "operator"
     if "analyst" in lowered:
         return "analyst"
@@ -684,6 +732,16 @@ def deterministic_document_from_text(
     current_role = None
     current_buffer: list[str] = []
     current_section_type = section_type
+    participant_role_by_name: dict[str, str] = {}
+
+    for participant in participants:
+        name = str(participant.get("name") or "").strip()
+        if not name:
+            continue
+        inferred = _role_from_participant_title(str(participant.get("role") or ""))
+        if not inferred:
+            continue
+        participant_role_by_name[_normalize_name_key(name)] = inferred
 
     def flush_current() -> None:
         nonlocal order_idx, current_speaker, current_role, current_buffer, current_section_type
@@ -715,7 +773,7 @@ def deterministic_document_from_text(
         if match:
             flush_current()
             current_speaker = match[0]
-            current_role = _guess_role(current_speaker)
+            current_role = _guess_role(current_speaker, participant_role_by_name)
             current_section_type = section_type
             current_buffer = [match[1]]
             continue
@@ -1204,6 +1262,7 @@ def build_speaker_analysis(
         results.append(
             TranscriptSpeakerAnalysis(
                 speaker=block.speaker,
+                speaker_role=block.speaker_role,
                 section_type=block.section_type,
                 order_index=block.order_index,
                 sentiment_direction=_clamp(directional, -1.0, 1.0),
@@ -1225,9 +1284,9 @@ def build_speaker_analysis(
 def summarize_transcript_findings(speaker_analysis: list[TranscriptSpeakerAnalysis]) -> tuple[str, list[str], list[str]]:
     if not speaker_analysis:
         return (
-            "No transcript blocks were available to summarize.",
+            "No management speaker blocks were available to summarize communication quality.",
             [],
-            ["No transcript-derived pressure points were detected due to missing speaker blocks."],
+            ["No management pressure points were detected due to missing management speaker blocks."],
         )
 
     avg_confidence = mean(item.confidence for item in speaker_analysis)
@@ -1252,7 +1311,7 @@ def summarize_transcript_findings(speaker_analysis: list[TranscriptSpeakerAnalys
     ]
 
     summary = (
-        "Transcript analysis highlights communication quality more than directional score. "
+        "Management transcript analysis highlights communication quality more than directional score. "
         f"Confidence averaged {avg_confidence:.1f}, while evasiveness averaged {avg_evasive:.1f}."
     )
 

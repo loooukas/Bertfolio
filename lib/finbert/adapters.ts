@@ -216,6 +216,7 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
 
   const speakerRows = report.transcript.speaker_analysis.map((row) => ({
     speaker: row.speaker,
+    speaker_role: row.speaker_role || undefined,
     section_type: row.section_type,
     order_index: typeof row.order_index === "number" ? row.order_index : undefined,
     transcript_source_url: row.transcript_source_url || undefined,

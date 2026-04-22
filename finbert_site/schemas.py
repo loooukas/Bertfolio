@@ -270,6 +270,7 @@ class TranscriptSectionBlock(BaseModel):
 
 class TranscriptSpeakerAnalysis(BaseModel):
     speaker: str
+    speaker_role: Optional[str] = None
     section_type: Literal["prepared_remarks", "qa", "other"]
     order_index: int = Field(ge=0, default=0)
     transcript_source_url: Optional[str] = None

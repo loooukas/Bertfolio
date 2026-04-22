@@ -71,6 +71,7 @@ export interface AnalysisResponseBackend {
     qa_pressure_points: string[]
     speaker_analysis: Array<{
       speaker: string
+      speaker_role?: string | null
       section_type: "prepared_remarks" | "qa" | "other"
       order_index?: number
       transcript_source_url?: string | null
@@ -250,6 +251,7 @@ export interface UIReportModel {
     qa_pressure_points: string[]
     speaker_analysis: Array<{
       speaker: string
+      speaker_role?: string
       section_type: "prepared_remarks" | "qa" | "other"
       order_index?: number
       transcript_source_url?: string

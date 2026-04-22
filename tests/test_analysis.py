@@ -414,6 +414,177 @@ def test_operator_rows_are_excluded_from_transcript_analysis(monkeypatch):
     assert "Tim Cook" in speakers
 
 
+def test_company_facing_transcript_aggregates_use_management_rows_only(monkeypatch):
+    transcript_record = TranscriptRecord(
+        symbol="AAPL",
+        year=2026,
+        quarter=1,
+        date="2026-01-29",
+        content="Prepared Remarks\nTim Cook: Demand remained strong.\nQuestions and Answers\nAnalyst: weak question",
+        source="motley_fool",
+        source_url="https://example.com/transcript",
+        title="Apple (AAPL) Q1 2026 Earnings Call Transcript",
+        extraction_confidence=0.9,
+        parsing_warnings=[],
+        participants=[{"name": "Tim Cook", "role": "Chief Executive Officer"}],
+    )
+
+    transcript_diag = TranscriptFetchDiagnostics(
+        requested_quarters=["2026-Q1"],
+        found_quarters=["2026-Q1"],
+        missing_quarters=[],
+        errors=[],
+        outcomes=[TranscriptFetchOutcome("2026-Q1", "found")],
+    )
+
+    transcript_discovery = TranscriptDiscoveryAudit(
+        pages_scanned=1,
+        candidates_total=1,
+        transcript_like_count=1,
+        match_filtered_count=1,
+        selected_count=1,
+        discarded_near_matches=[],
+        fetch_failures=[],
+        playwright_fallback_used=False,
+    )
+
+    monkeypatch.setattr(
+        analysis,
+        "fetch_transcripts_motley_fool",
+        lambda symbol, company_name, settings, target_count=4: (
+            [transcript_record],
+            [],
+            transcript_diag,
+            transcript_discovery,
+        ),
+    )
+    monkeypatch.setattr(
+        analysis,
+        "fetch_news_multi_source",
+        lambda *args, **kwargs: ([], [], FeedFetchAudit(0, 0, 0)),
+    )
+    monkeypatch.setattr(
+        analysis,
+        "fetch_social_multi_source",
+        lambda *args, **kwargs: ([], [], FeedFetchAudit(0, 0, 0)),
+    )
+    monkeypatch.setattr(
+        analysis,
+        "fetch_fundamentals",
+        lambda symbol: {
+            "company_name": "Apple Inc",
+            "currency": "USD",
+            "market_cap": 1,
+            "trailing_pe": 1,
+            "forward_pe": 1,
+            "debt_to_equity": 1,
+            "quarterly": [],
+            "revenue_qoq_growth_pct": 0,
+            "eps_qoq_growth_pct": 0,
+        },
+    )
+    monkeypatch.setattr(
+        analysis,
+        "enrich_fundamentals_with_alpha_validation",
+        lambda symbol, settings, yahoo_payload: (
+            yahoo_payload,
+            {"yahoo_source_used": True, "alpha_source_used": False, "compared_fields": [], "mismatches": [], "notes": []},
+        ),
+    )
+    monkeypatch.setattr(
+        analysis,
+        "fetch_price_volume_history",
+        lambda symbol, period="3mo": [],
+    )
+    normalized_document = TranscriptDocument(
+        ticker="AAPL",
+        company_name="Apple Inc",
+        source="motley_fool",
+        source_url="https://example.com/transcript",
+        title="Apple (AAPL) Q1 2026 Earnings Call Transcript",
+        published_date="2026-01-29",
+        has_full_transcript=True,
+        extraction_confidence=0.9,
+        parsing_warnings=[],
+        participants=[],
+        sections=[
+            TranscriptSectionBlock(
+                section_type="prepared_remarks",
+                speaker="Tim Cook",
+                speaker_role="management",
+                text="Demand remained strong.",
+                order_index=0,
+                evidence_snippets=["Demand remained strong."],
+            ),
+            TranscriptSectionBlock(
+                section_type="qa",
+                speaker="Antoine Chiketan",
+                speaker_role="analyst",
+                text="Weak, vague and uncertain question.",
+                order_index=1,
+                evidence_snippets=["Weak, vague and uncertain question."],
+            ),
+        ],
+        key_quotes=["Demand remained strong."],
+        normalization_mode="deterministic_degraded",
+    )
+    monkeypatch.setattr(
+        analysis,
+        "normalize_transcript_document",
+        lambda **kwargs: NormalizationResult(document=normalized_document, warnings=[]),
+    )
+    # Leave speaker_role unset in analysis rows to ensure build_analysis backfills role from normalized sections.
+    monkeypatch.setattr(
+        analysis,
+        "build_speaker_analysis",
+        lambda sections, score_text_fn: [
+            TranscriptSpeakerAnalysis(
+                speaker="Tim Cook",
+                section_type="prepared_remarks",
+                sentiment_direction=0.6,
+                confidence=80.0,
+                evasiveness=20.0,
+                specificity=78.0,
+                forward_looking_strength=75.0,
+                risk_language_intensity=18.0,
+                topic_label="guidance",
+                evidence_snippets=["Demand remained strong."],
+            ),
+            TranscriptSpeakerAnalysis(
+                speaker="Antoine Chiketan",
+                section_type="qa",
+                sentiment_direction=-0.8,
+                confidence=10.0,
+                evasiveness=90.0,
+                specificity=12.0,
+                forward_looking_strength=8.0,
+                risk_language_intensity=88.0,
+                topic_label="general",
+                evidence_snippets=["Weak, vague and uncertain question."],
+            ),
+        ],
+    )
+    monkeypatch.setattr(analysis, "get_engine", lambda model_name: _StubEngine())
+
+    result = analysis.build_analysis("AAPL", _settings())
+
+    speakers = {row.speaker for row in result.transcript.speaker_analysis}
+    assert "Tim Cook" in speakers
+    assert "Antoine Chiketan" in speakers
+    roles = {row.speaker: row.speaker_role for row in result.transcript.speaker_analysis}
+    assert roles["Tim Cook"] == "management"
+    assert roles["Antoine Chiketan"] == "analyst"
+
+    overview_metrics = {item.key: item.value for item in result.overview.metrics}
+    assert overview_metrics["management_confidence"] == "80.0"
+    assert overview_metrics["evasiveness"] == "20.0"
+    assert overview_metrics["outlook_strength"] == "75.0"
+    assert "Confidence averaged 80.0" in result.transcript.latest_summary
+    assert result.aggregate_scores.confidence_score == 80.0
+    assert result.aggregate_scores.evasiveness_score == 20.0
+    # Transcript contribution should come only from management direction (0.6 * 0.40 = 0.24).
+    assert result.overall_sentiment_score > 0.2
+
 class _SegmentEngine:
     def score_text(self, text: str):
         mapping = {
