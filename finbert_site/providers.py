@@ -1549,6 +1549,23 @@ def _safe_growth(newer: Optional[float], older: Optional[float]) -> Optional[flo
     return ((newer - older) / abs(older)) * 100.0
 
 
+def _extract_yahoo_company_officers(info: dict[str, Any]) -> list[dict[str, str]]:
+    raw = info.get("companyOfficers")
+    if not isinstance(raw, list):
+        return []
+
+    officers: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        title = str(item.get("title") or "").strip()
+        if not name:
+            continue
+        officers.append({"name": name, "title": title})
+    return officers[:40]
+
+
 def fetch_fundamentals(symbol: str) -> dict[str, Any]:
     ticker = yf.Ticker(symbol)
 
@@ -1642,6 +1659,7 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
         "target_mean_price": info.get("targetMeanPrice"),
         "target_high_price": info.get("targetHighPrice"),
         "target_low_price": info.get("targetLowPrice"),
+        "yahoo_company_officers": _extract_yahoo_company_officers(info),
         "quarterly": snapshots,
         "revenue_qoq_growth_pct": revenue_qoq,
         "eps_qoq_growth_pct": eps_qoq,

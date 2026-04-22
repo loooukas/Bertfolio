@@ -1774,6 +1774,7 @@ def build_analysis(
             extraction_confidence=record.extraction_confidence,
             parsing_warnings=record.parsing_warnings,
             participants=record.participants,
+            management_roster=fundamentals_dict.get("yahoo_company_officers") or [],
             settings=settings,
         )
         normalized_documents.append(normalized.document)

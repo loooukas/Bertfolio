@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from functools import lru_cache
 import json
 import math
@@ -370,6 +372,37 @@ class NormalizationResult:
     warnings: list[str]
 
 
+@dataclass
+class _NameSignature:
+    raw: str
+    key: str
+    tokens: list[str]
+    first: str
+    last: str
+
+
+@dataclass
+class _CanonicalSpeakerRecord:
+    canonical_name: str
+    signature: _NameSignature
+    aliases: set[str]
+    source_priority: int
+
+
+@dataclass
+class _DeterministicBlock:
+    speaker_raw: str
+    speaker: str
+    text: str
+    order_index: int
+    base_state: str
+    question_like: bool = False
+    routing_like: bool = False
+    closing_like: bool = False
+    section_type: str = "other"
+    speaker_role: str | None = None
+
+
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
@@ -631,83 +664,514 @@ def _sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+_ROLE_OPERATOR = "operator"
+_ROLE_ANALYST = "analyst"
+_ROLE_MANAGEMENT = "management"
+_ROLE_HOST_IR = "host_ir"
+_ROLE_UNKNOWN = "unknown"
+_SECTION_PREPARED = "prepared_remarks"
+_SECTION_QA = "qa"
+_SECTION_OTHER = "other"
+
+_OPERATOR_NAME_TOKENS = ("operator", "moderator")
+_HOST_IR_TITLE_TOKENS = (
+    "investor relations",
+    "investor relation",
+    "ir",
+    "head of ir",
+    "vp, ir",
+    "vp ir",
+)
+_MANAGEMENT_TITLE_TOKENS = (
+    "chief",
+    "ceo",
+    "cfo",
+    "coo",
+    "cao",
+    "cto",
+    "chairman",
+    "chairwoman",
+    "president",
+    "executive",
+    "founder",
+    "vice president",
+    "svp",
+    "evp",
+    "treasurer",
+    "director",
+)
+_ANALYST_TITLE_TOKENS = ("analyst", "research", "equity research")
+
+_QA_TRANSITION_MARKERS = (
+    "first question",
+    "next question",
+    "our next question",
+    "final question",
+    "line is open",
+    "please go ahead",
+    "we will now take questions",
+    "we are now ready for questions",
+    "open the line",
+    "open it up for questions",
+    "poll for questions",
+    "unmute yourself",
+)
+_QA_CLOSING_MARKERS = (
+    "all the time we have for q&a",
+    "all the time we have for questions",
+    "this concludes the question-and-answer session",
+    "this concludes today",
+    "before we conclude",
+    "closing remarks",
+    "thank you for joining",
+    "that concludes today's conference call",
+)
+_ANALYST_QUESTION_HINTS = (
+    "thanks for taking my question",
+    "my question is",
+    "quick follow-up",
+    "quick follow up",
+    "can you",
+    "could you",
+    "how should we think about",
+    "what is",
+    "what are",
+    "do you expect",
+    "would you",
+    "why",
+    "when",
+)
+_HEADING_QA_PATTERN = re.compile(r"^\s*(q\s*&\s*a|question(?:s)?\s*(?:and|&)\s*answer(?:s)?)\s*$", flags=re.IGNORECASE)
+_HEADING_PREPARED_PATTERN = re.compile(r"^\s*prepared remarks\s*$", flags=re.IGNORECASE)
+_HEADING_CLOSING_PATTERN = re.compile(r"^\s*closing remarks?\s*$", flags=re.IGNORECASE)
+_SPEAKER_LINE_PATTERN = re.compile(r"^([A-Za-z][A-Za-z .,'&()\-/]{1,80}):\s*(.+)$")
+
+_NAME_PREFIX_TOKENS = {"mr", "mrs", "ms", "dr", "sir", "prof"}
+_NAME_SUFFIX_TOKENS = {"jr", "sr", "ii", "iii", "iv", "v", "phd", "cfa", "mba", "md"}
+_NON_PERSON_LABEL_KEYS = {
+    "operator",
+    "moderator",
+    "host",
+    "unknown",
+    "unidentified speaker",
+}
+_GENERIC_BOILERPLATE_MARKERS = (
+    "forward-looking statements",
+    "safe harbor",
+    "copyright",
+    "transcript by",
+)
+
+
 def _normalize_name_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (value or "").strip().lower()).strip()
+
+
+def _speaker_line_match(line: str) -> tuple[str, str] | None:
+    match = _SPEAKER_LINE_PATTERN.match(line.strip())
+    if not match:
+        return None
+    speaker = re.sub(r"\s+", " ", match.group(1)).strip()
+    spoken = match.group(2).strip()
+    if len(spoken) < 2:
+        return None
+    return speaker, spoken
+
+
+def _looks_like_heading(line: str, pattern: re.Pattern[str]) -> bool:
+    return bool(pattern.match(line.strip()))
+
+
+def _normalize_person_tokens(value: str) -> list[str]:
+    normalized = re.sub(r"[^a-z0-9\s]", " ", (value or "").lower())
+    tokens = [token for token in normalized.split() if token]
+    if not tokens:
+        return []
+
+    while tokens and tokens[0] in _NAME_PREFIX_TOKENS:
+        tokens = tokens[1:]
+    while tokens and tokens[-1] in _NAME_SUFFIX_TOKENS:
+        tokens = tokens[:-1]
+    return tokens
+
+
+def _name_signature(value: str) -> _NameSignature | None:
+    raw = re.sub(r"\s+", " ", (value or "").strip())
+    if not raw:
+        return None
+    key = _normalize_name_key(raw)
+    if not key:
+        return None
+    tokens = _normalize_person_tokens(raw)
+    if not tokens:
+        return None
+    first = tokens[0]
+    last = tokens[-1]
+    return _NameSignature(raw=raw, key=key, tokens=tokens, first=first, last=last)
+
+
+def _is_non_person_speaker_label(name: str) -> bool:
+    key = _normalize_name_key(name)
+    if not key:
+        return True
+    if key in _NON_PERSON_LABEL_KEYS:
+        return True
+    return any(token in key for token in _OPERATOR_NAME_TOKENS)
+
+
+def _signature_alias_keys(signature: _NameSignature) -> set[str]:
+    keys = {signature.key}
+    if signature.first and signature.last:
+        keys.add(f"{signature.first} {signature.last}")
+    return {key for key in keys if key}
+
+
+def _name_quality_score(name: str, source_priority: int) -> tuple[int, int, int]:
+    signature = _name_signature(name)
+    token_count = len(signature.tokens) if signature else 0
+    return (source_priority, token_count, len(name))
+
+
+def _merge_confidence(signature: _NameSignature, other: _NameSignature) -> float:
+    if signature.last != other.last:
+        return 0.0
+    first_ratio = SequenceMatcher(None, signature.first, other.first).ratio()
+    if first_ratio < 0.88:
+        return 0.0
+    full_ratio = SequenceMatcher(None, signature.key, other.key).ratio()
+    if signature.first == other.first and signature.last == other.last:
+        return max(0.95, full_ratio)
+    return (0.6 * first_ratio) + (0.4 * full_ratio)
+
+
+def _best_record_match(
+    signature: _NameSignature,
+    records: list[_CanonicalSpeakerRecord],
+) -> tuple[int | None, float]:
+    best_idx: int | None = None
+    best_score = 0.0
+    for idx, record in enumerate(records):
+        score = _merge_confidence(signature, record.signature)
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    return best_idx, best_score
+
+
+def _apply_alias_map_entry(
+    alias_key_to_index: dict[str, int],
+    ambiguous_aliases: set[str],
+    alias_key: str,
+    index: int,
+) -> None:
+    existing = alias_key_to_index.get(alias_key)
+    if existing is None:
+        if alias_key not in ambiguous_aliases:
+            alias_key_to_index[alias_key] = index
+        return
+    if existing == index:
+        return
+    ambiguous_aliases.add(alias_key)
+    alias_key_to_index.pop(alias_key, None)
+
+
+def _canonicalize_speaker_names(
+    *,
+    participants: list[dict[str, str]],
+    management_roster: list[dict[str, str]] | None,
+    observed_speakers: list[str],
+) -> dict[str, str]:
+    records: list[_CanonicalSpeakerRecord] = []
+    alias_key_to_index: dict[str, int] = {}
+    ambiguous_aliases: set[str] = set()
+
+    def upsert_name(name: str, *, source_priority: int) -> None:
+        signature = _name_signature(name)
+        if signature is None:
+            return
+        if _is_non_person_speaker_label(signature.raw):
+            return
+
+        direct_idx = alias_key_to_index.get(signature.key)
+        if direct_idx is not None:
+            record = records[direct_idx]
+            record.aliases.add(signature.key)
+            if _name_quality_score(signature.raw, source_priority) > _name_quality_score(
+                record.canonical_name, record.source_priority
+            ):
+                record.canonical_name = signature.raw
+                record.signature = signature
+                record.source_priority = source_priority
+            return
+
+        best_idx, best_score = _best_record_match(signature, records)
+        if best_idx is not None and best_score >= 0.92:
+            record = records[best_idx]
+            record.aliases.add(signature.key)
+            if _name_quality_score(signature.raw, source_priority) > _name_quality_score(
+                record.canonical_name, record.source_priority
+            ):
+                record.canonical_name = signature.raw
+                record.signature = signature
+                record.source_priority = source_priority
+            target_idx = best_idx
+        else:
+            target_idx = len(records)
+            records.append(
+                _CanonicalSpeakerRecord(
+                    canonical_name=signature.raw,
+                    signature=signature,
+                    aliases={signature.key},
+                    source_priority=source_priority,
+                )
+            )
+
+        record = records[target_idx]
+        for alias in _signature_alias_keys(signature):
+            _apply_alias_map_entry(alias_key_to_index, ambiguous_aliases, alias, target_idx)
+            record.aliases.add(alias)
+
+    for participant in participants:
+        name = str(participant.get("name") or "").strip()
+        if name:
+            upsert_name(name, source_priority=3)
+
+    for officer in management_roster or []:
+        name = str(officer.get("name") or "").strip()
+        if name:
+            upsert_name(name, source_priority=2)
+
+    for speaker in observed_speakers:
+        if speaker:
+            upsert_name(speaker, source_priority=1)
+
+    out: dict[str, str] = {}
+    for record in records:
+        for alias in record.aliases:
+            if alias and alias not in ambiguous_aliases:
+                out[alias] = record.canonical_name
+    return out
 
 
 def _role_from_participant_title(value: str | None) -> str | None:
     lowered = (value or "").strip().lower()
     if not lowered:
         return None
-    if "operator" in lowered or "moderator" in lowered:
-        return "operator"
-    if "analyst" in lowered:
-        return "analyst"
-    if any(
-        token in lowered
-        for token in [
-            "chief",
-            "ceo",
-            "cfo",
-            "coo",
-            "cao",
-            "cto",
-            "president",
-            "chairman",
-            "chairwoman",
-            "executive",
-            "founder",
-            "vice president",
-            "svp",
-            "evp",
-            "director",
-            "treasurer",
-            "investor relations",
-            "corporate secretary",
-        ]
-    ):
-        return "management"
+    if any(token in lowered for token in _OPERATOR_NAME_TOKENS):
+        return _ROLE_OPERATOR
+    if any(token in lowered for token in _HOST_IR_TITLE_TOKENS):
+        return _ROLE_HOST_IR
+    if any(token in lowered for token in _ANALYST_TITLE_TOKENS):
+        return _ROLE_ANALYST
+    if any(token in lowered for token in _MANAGEMENT_TITLE_TOKENS):
+        return _ROLE_MANAGEMENT
     return None
 
 
-def _guess_role(
-    speaker: str,
-    participant_role_by_name: dict[str, str] | None = None,
-) -> str | None:
-    speaker_key = _normalize_name_key(speaker)
-    if participant_role_by_name and speaker_key:
-        participant_role = participant_role_by_name.get(speaker_key)
-        if participant_role:
-            return participant_role
-
-    lowered = speaker.lower()
-    if "operator" in lowered or "moderator" in lowered:
-        return "operator"
+def _role_hint_from_speaker_name(speaker: str) -> str | None:
+    lowered = (speaker or "").strip().lower()
+    if not lowered:
+        return None
+    if any(token in lowered for token in _OPERATOR_NAME_TOKENS):
+        return _ROLE_OPERATOR
+    if "investor relations" in lowered:
+        return _ROLE_HOST_IR
     if "analyst" in lowered:
-        return "analyst"
-    if any(t in lowered for t in ["ceo", "chief executive", "cfo", "chief financial", "president"]):
-        return "management"
+        return _ROLE_ANALYST
+    if any(token in lowered for token in ("ceo", "cfo", "chief", "president")):
+        return _ROLE_MANAGEMENT
     return None
 
 
-def _detect_section_type(line: str, current: str) -> str:
-    lowered = line.lower()
-    if "questions and answers" in lowered or lowered.strip() in {"q&a", "question-and-answer"}:
-        return "qa"
-    if "prepared remarks" in lowered:
-        return "prepared_remarks"
-    return current
+def _looks_like_operator_or_host_routing(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _QA_TRANSITION_MARKERS)
 
 
-def _speaker_line_match(line: str) -> tuple[str, str] | None:
-    m = re.match(r"^([A-Za-z][A-Za-z .,'&()\-/]{1,70}):\s*(.+)$", line)
-    if not m:
+def _looks_like_qa_closing(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _QA_CLOSING_MARKERS)
+
+
+def _looks_like_question_text(text: str) -> bool:
+    lowered = text.lower()
+    if "?" in text:
+        return True
+    return any(marker in lowered for marker in _ANALYST_QUESTION_HINTS)
+
+
+def _looks_like_long_remark_with_trailing_transition(text: str) -> bool:
+    lowered = text.lower()
+    positions = [lowered.rfind(marker) for marker in _QA_TRANSITION_MARKERS if marker in lowered]
+    if not positions:
+        return False
+    trailing_pos = max(positions)
+    appears_trailing = trailing_pos >= int(len(lowered) * 0.6)
+    word_count = len(re.findall(r"\b\w+\b", text))
+    sentence_count = len(re.findall(r"[.!?]", text))
+    return appears_trailing and word_count >= 80 and sentence_count >= 4
+
+
+def _is_management_roster_title(title: str | None) -> bool:
+    lowered = (title or "").strip().lower()
+    if not lowered:
+        return False
+    if any(token in lowered for token in _OPERATOR_NAME_TOKENS):
+        return False
+    if any(token in lowered for token in _ANALYST_TITLE_TOKENS):
+        return False
+    if any(token in lowered for token in _HOST_IR_TITLE_TOKENS):
+        return False
+    return any(token in lowered for token in _MANAGEMENT_TITLE_TOKENS)
+
+
+def _is_boilerplate_block(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _GENERIC_BOILERPLATE_MARKERS)
+
+
+def _infer_qa_start_index(
+    blocks: list[_DeterministicBlock],
+    speaker_role_hints: dict[str, str],
+    management_name_keys: set[str],
+) -> int | None:
+    for idx, block in enumerate(blocks):
+        if block.base_state == _SECTION_QA:
+            return idx
+        if block.routing_like:
+            if _looks_like_long_remark_with_trailing_transition(block.text):
+                continue
+            return idx
+
+    for idx, block in enumerate(blocks):
+        speaker_key = _normalize_name_key(block.speaker)
+        hinted = speaker_role_hints.get(speaker_key)
+        if block.question_like and hinted not in {_ROLE_MANAGEMENT, _ROLE_OPERATOR, _ROLE_HOST_IR}:
+            if speaker_key not in management_name_keys:
+                return idx
+    return None
+
+
+def _infer_qa_end_index(blocks: list[_DeterministicBlock], qa_start: int | None) -> int | None:
+    if qa_start is None:
         return None
-    speaker = re.sub(r"\s+", " ", m.group(1)).strip()
-    text = m.group(2).strip()
-    if len(text) < 2:
-        return None
-    return speaker, text
+    for idx in range(qa_start, len(blocks)):
+        if _looks_like_qa_closing(blocks[idx].text):
+            return idx
+    return None
+
+
+def _resolve_speaker_roles(
+    blocks: list[_DeterministicBlock],
+    speaker_role_hints: dict[str, str],
+    management_name_keys: set[str],
+    qa_start: int | None,
+) -> dict[str, str]:
+    speaker_stats: dict[str, dict[str, int]] = defaultdict(
+        lambda: {
+            "prepared_blocks": 0,
+            "qa_blocks": 0,
+            "question_blocks": 0,
+            "routing_blocks": 0,
+            "answer_blocks": 0,
+        }
+    )
+    for block in blocks:
+        stats = speaker_stats[block.speaker]
+        if block.section_type == _SECTION_PREPARED:
+            stats["prepared_blocks"] += 1
+        if block.section_type == _SECTION_QA:
+            stats["qa_blocks"] += 1
+        if block.question_like:
+            stats["question_blocks"] += 1
+        if block.routing_like:
+            stats["routing_blocks"] += 1
+
+    for idx, block in enumerate(blocks):
+        if idx == 0 or block.section_type != _SECTION_QA or block.question_like:
+            continue
+        previous = blocks[idx - 1]
+        if previous.section_type == _SECTION_QA and previous.question_like and previous.speaker != block.speaker:
+            speaker_stats[block.speaker]["answer_blocks"] += 1
+
+    resolved: dict[str, str] = {}
+    for speaker, stats in speaker_stats.items():
+        speaker_key = _normalize_name_key(speaker)
+        name_hint = _role_hint_from_speaker_name(speaker)
+        explicit_hint = speaker_role_hints.get(speaker_key) or name_hint
+        if explicit_hint == _ROLE_OPERATOR:
+            resolved[speaker] = _ROLE_OPERATOR
+            continue
+
+        scores: dict[str, float] = defaultdict(float)
+        if explicit_hint == _ROLE_HOST_IR:
+            scores[_ROLE_HOST_IR] += 5.0
+        elif explicit_hint == _ROLE_MANAGEMENT:
+            scores[_ROLE_MANAGEMENT] += 5.0
+        elif explicit_hint == _ROLE_ANALYST:
+            scores[_ROLE_ANALYST] += 5.0
+
+        if speaker_key in management_name_keys:
+            scores[_ROLE_MANAGEMENT] += 4.0
+        if stats["routing_blocks"] > 0:
+            if explicit_hint == _ROLE_MANAGEMENT and stats["answer_blocks"] > 0:
+                scores[_ROLE_MANAGEMENT] += 1.0
+            else:
+                scores[_ROLE_HOST_IR] += 3.5
+        if stats["question_blocks"] > 0:
+            scores[_ROLE_ANALYST] += 2.5
+        if stats["answer_blocks"] > 0:
+            scores[_ROLE_MANAGEMENT] += 2.5
+        if stats["prepared_blocks"] > 0 and stats["question_blocks"] == 0:
+            scores[_ROLE_MANAGEMENT] += 1.5
+        if qa_start is not None and stats["qa_blocks"] > 0 and stats["question_blocks"] == stats["qa_blocks"]:
+            scores[_ROLE_ANALYST] += 1.0
+
+        if not scores:
+            resolved[speaker] = _ROLE_UNKNOWN
+            continue
+
+        role_order = {
+            _ROLE_OPERATOR: 5,
+            _ROLE_HOST_IR: 4,
+            _ROLE_MANAGEMENT: 3,
+            _ROLE_ANALYST: 2,
+            _ROLE_UNKNOWN: 1,
+        }
+        ranked = sorted(scores.items(), key=lambda item: (item[1], role_order.get(item[0], 0)), reverse=True)
+        best_role, best_score = ranked[0]
+        if best_score < 2.0:
+            resolved[speaker] = _ROLE_UNKNOWN
+            continue
+        resolved[speaker] = best_role
+    return resolved
+
+
+def _canonicalize_participants_for_output(
+    participants: list[dict[str, str]],
+    alias_to_canonical: dict[str, str],
+    blocks: list[_DeterministicBlock],
+) -> list[TranscriptParticipant]:
+    visible_speakers = {block.speaker for block in blocks}
+    merged: dict[str, str] = {}
+    for participant in participants:
+        name = str(participant.get("name") or "").strip()
+        if not name:
+            continue
+        canonical = alias_to_canonical.get(_normalize_name_key(name), name)
+        role = str(participant.get("role") or "").strip()
+        if canonical in merged:
+            if len(role) > len(merged[canonical]):
+                merged[canonical] = role
+        else:
+            merged[canonical] = role
+
+    out: list[TranscriptParticipant] = []
+    for canonical_name, role in sorted(merged.items(), key=lambda item: item[0]):
+        if canonical_name not in visible_speakers and len(out) >= 20:
+            continue
+        out.append(TranscriptParticipant(name=canonical_name, role=role or None))
+    return out[:40]
 
 
 def deterministic_document_from_text(
@@ -722,59 +1186,60 @@ def deterministic_document_from_text(
     extraction_confidence: float,
     parsing_warnings: list[str],
     participants: list[dict[str, str]],
+    management_roster: list[dict[str, str]] | None = None,
 ) -> TranscriptDocument:
     lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
-    section_type = "other"
-    sections: list[TranscriptSectionBlock] = []
+    parsed_blocks: list[_DeterministicBlock] = []
+    current_speaker: str | None = None
+    current_buffer: list[str] = []
+    current_state = "intro"
+    current_block_state = _SECTION_PREPARED
     order_idx = 0
 
-    current_speaker = None
-    current_role = None
-    current_buffer: list[str] = []
-    current_section_type = section_type
-    participant_role_by_name: dict[str, str] = {}
-
-    for participant in participants:
-        name = str(participant.get("name") or "").strip()
-        if not name:
-            continue
-        inferred = _role_from_participant_title(str(participant.get("role") or ""))
-        if not inferred:
-            continue
-        participant_role_by_name[_normalize_name_key(name)] = inferred
-
     def flush_current() -> None:
-        nonlocal order_idx, current_speaker, current_role, current_buffer, current_section_type
+        nonlocal order_idx, current_speaker, current_buffer, current_block_state
         if not current_speaker or not current_buffer:
             return
         text = " ".join(current_buffer).strip()
         if not text:
             return
-        evidence = _sentences(text)[:2]
-        sections.append(
-            TranscriptSectionBlock(
-                section_type=current_section_type,
+        parsed_blocks.append(
+            _DeterministicBlock(
+                speaker_raw=current_speaker,
                 speaker=current_speaker,
-                speaker_role=current_role,
                 text=text,
                 order_index=order_idx,
-                evidence_snippets=evidence,
+                base_state=current_block_state,
+                question_like=_looks_like_question_text(text),
+                routing_like=_looks_like_operator_or_host_routing(text),
+                closing_like=_looks_like_qa_closing(text),
             )
         )
         order_idx += 1
         current_speaker = None
-        current_role = None
         current_buffer = []
 
     for line in lines:
-        section_type = _detect_section_type(line, section_type)
+        if _looks_like_heading(line, _HEADING_PREPARED_PATTERN):
+            current_state = _SECTION_PREPARED
+            continue
+        if _looks_like_heading(line, _HEADING_QA_PATTERN):
+            current_state = _SECTION_QA
+            continue
+        if _looks_like_heading(line, _HEADING_CLOSING_PATTERN):
+            current_state = "closing"
+            continue
 
         match = _speaker_line_match(line)
         if match:
             flush_current()
             current_speaker = match[0]
-            current_role = _guess_role(current_speaker, participant_role_by_name)
-            current_section_type = section_type
+            if current_state == _SECTION_QA:
+                current_block_state = _SECTION_QA
+            elif current_state in {"intro", _SECTION_PREPARED}:
+                current_block_state = _SECTION_PREPARED
+            else:
+                current_block_state = _SECTION_OTHER
             current_buffer = [match[1]]
             continue
 
@@ -783,23 +1248,98 @@ def deterministic_document_from_text(
 
     flush_current()
 
-    if not sections and lines:
-        sections.append(
-            TranscriptSectionBlock(
-                section_type="other",
+    if not parsed_blocks and lines:
+        parsed_blocks.append(
+            _DeterministicBlock(
+                speaker_raw="unknown",
                 speaker="unknown",
-                speaker_role=None,
                 text=" ".join(lines[:300]),
                 order_index=0,
-                evidence_snippets=_sentences(" ".join(lines[:300]))[:2],
+                base_state=_SECTION_OTHER,
             )
         )
 
-    participant_models = [
-        TranscriptParticipant(name=p.get("name", "unknown"), role=p.get("role") or None)
-        for p in participants[:20]
-        if p.get("name")
-    ]
+    alias_to_canonical = _canonicalize_speaker_names(
+        participants=participants,
+        management_roster=management_roster,
+        observed_speakers=[block.speaker for block in parsed_blocks],
+    )
+    for block in parsed_blocks:
+        key = _normalize_name_key(block.speaker_raw)
+        if _is_non_person_speaker_label(block.speaker_raw):
+            lowered = key.lower()
+            block.speaker = "Operator" if "operator" in lowered else ("Moderator" if "moderator" in lowered else block.speaker_raw)
+        else:
+            block.speaker = alias_to_canonical.get(key, block.speaker_raw)
+
+    speaker_role_hints: dict[str, str] = {}
+    management_name_keys: set[str] = set()
+    for participant in participants:
+        name = str(participant.get("name") or "").strip()
+        if not name:
+            continue
+        canonical = alias_to_canonical.get(_normalize_name_key(name), name)
+        role_hint = _role_from_participant_title(str(participant.get("role") or ""))
+        key = _normalize_name_key(canonical)
+        if role_hint:
+            speaker_role_hints[key] = role_hint
+        if role_hint == _ROLE_MANAGEMENT:
+            management_name_keys.add(key)
+
+    for officer in management_roster or []:
+        name = str(officer.get("name") or "").strip()
+        title = str(officer.get("title") or "")
+        if not name:
+            continue
+        canonical = alias_to_canonical.get(_normalize_name_key(name), name)
+        key = _normalize_name_key(canonical)
+        if _is_management_roster_title(title):
+            management_name_keys.add(key)
+            speaker_role_hints.setdefault(key, _ROLE_MANAGEMENT)
+
+    for block in parsed_blocks:
+        key = _normalize_name_key(block.speaker)
+        role_hint = _role_hint_from_speaker_name(block.speaker)
+        if role_hint and key not in speaker_role_hints:
+            speaker_role_hints[key] = role_hint
+
+    qa_start = _infer_qa_start_index(parsed_blocks, speaker_role_hints, management_name_keys)
+    qa_end = _infer_qa_end_index(parsed_blocks, qa_start)
+
+    for block in parsed_blocks:
+        if qa_start is not None:
+            if block.order_index < qa_start:
+                block.section_type = _SECTION_PREPARED if not _is_boilerplate_block(block.text) else _SECTION_OTHER
+            elif qa_end is not None and block.order_index > qa_end:
+                block.section_type = _SECTION_OTHER
+            elif block.closing_like:
+                block.section_type = _SECTION_OTHER
+            else:
+                block.section_type = _SECTION_QA
+        else:
+            if block.base_state == _SECTION_OTHER or _is_boilerplate_block(block.text):
+                block.section_type = _SECTION_OTHER
+            else:
+                block.section_type = _SECTION_PREPARED
+
+    resolved_roles = _resolve_speaker_roles(parsed_blocks, speaker_role_hints, management_name_keys, qa_start)
+
+    sections: list[TranscriptSectionBlock] = []
+    for block in parsed_blocks:
+        role = resolved_roles.get(block.speaker, _ROLE_UNKNOWN)
+        role_out: str | None = None if role == _ROLE_UNKNOWN else role
+        sections.append(
+            TranscriptSectionBlock(
+                section_type=block.section_type if block.section_type in {_SECTION_PREPARED, _SECTION_QA, _SECTION_OTHER} else _SECTION_OTHER,
+                speaker=block.speaker,
+                speaker_role=role_out,
+                text=block.text,
+                order_index=block.order_index,
+                evidence_snippets=_sentences(block.text)[:2],
+            )
+        )
+
+    participant_models = _canonicalize_participants_for_output(participants, alias_to_canonical, parsed_blocks)
 
     key_quotes: list[str] = []
     for section in sections:
@@ -982,6 +1522,14 @@ def _should_try_openai_normalization(document: TranscriptDocument) -> bool:
     if section_count > 0 and (unknown_speaker_count / section_count) >= 0.35:
         return True
 
+    unknown_role_count = sum(1 for section in document.sections if not (section.speaker_role or "").strip())
+    if section_count > 0 and (unknown_role_count / section_count) >= 0.5:
+        return True
+
+    other_count = sum(1 for section in document.sections if section.section_type == _SECTION_OTHER)
+    if section_count > 0 and (other_count / section_count) >= 0.75:
+        return True
+
     return False
 
 
@@ -997,6 +1545,7 @@ def normalize_transcript_document(
     extraction_confidence: float,
     parsing_warnings: list[str],
     participants: list[dict[str, str]],
+    management_roster: list[dict[str, str]] | None,
     settings: Settings,
 ) -> NormalizationResult:
     deterministic = deterministic_document_from_text(
@@ -1010,6 +1559,7 @@ def normalize_transcript_document(
         extraction_confidence=extraction_confidence,
         parsing_warnings=parsing_warnings,
         participants=participants,
+        management_roster=management_roster,
     )
 
     if not _should_try_openai_normalization(deterministic):

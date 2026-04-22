@@ -67,6 +67,26 @@ export default function ModelMethodologyPage() {
       </section>
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Deterministic Transcript Normalization</h2>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>Deterministic parsing is primary. OpenAI normalization runs only when deterministic quality is degraded.</li>
+          <li>
+            Canonical speaker identity resolves alias variants (for example middle-initial variants) before role aggregation and rollups.
+          </li>
+          <li>
+            Role resolution is weighted across participant titles, Yahoo officer roster enrichment, speaker text behavior, and turn context.
+          </li>
+          <li>Final deterministic role set: <code>management</code>, <code>analyst</code>, <code>operator</code>, <code>host_ir</code>, <code>unknown</code>.</li>
+          <li>
+            Section typing uses a call-flow state machine (<code>intro</code> → <code>prepared_remarks</code> → <code>qa</code> → <code>closing</code>) with transition/closing cues, not only literal headings.
+          </li>
+          <li>
+            Speaker/block diagnostics retain all non-operator detail, while company-facing transcript aggregates remain management-only.
+          </li>
+        </ul>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
         <h2 className="text-xl font-semibold text-foreground">Overall Scoring and Fundamentals Analyst Blend</h2>
         <p className="text-sm text-muted-foreground">Default aggregate weighting (user-adjustable in Run Settings):</p>
         <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
