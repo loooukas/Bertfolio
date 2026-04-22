@@ -1,7 +1,7 @@
 "use client"
 
 import { type KeyboardEvent, useMemo, useState } from "react"
-import { ArrowUpDown, ChevronDown, ExternalLink, Filter, Quote, User, Info, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
+import { ArrowUpDown, ExternalLink, Filter, Quote, User, Info, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
@@ -482,7 +482,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                       <div className="text-xs text-muted-foreground">{speaker.mention_count} mentions • {speaker.dominant_topic}</div>
                     </div>
                   </div>
-                  <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                  <ExternalLink className="h-4 w-4 text-muted-foreground" />
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">
