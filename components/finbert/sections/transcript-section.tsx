@@ -11,6 +11,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 interface SpeakerAnalysis {
   speaker: string
   section_type: string
+  order_index?: number
+  transcript_source_url?: string
   sentiment_direction: number
   confidence: number
   evasiveness: number
@@ -88,6 +90,15 @@ function sectionLabel(sectionType: string): string {
   return "Other"
 }
 
+function speakerAnalysisKey(
+  speaker: string,
+  sectionType: string,
+  orderIndex: number,
+  transcriptSourceUrl?: string,
+): string {
+  return [speaker.trim().toLowerCase(), sectionType, String(orderIndex), (transcriptSourceUrl || "").trim()].join("|")
+}
+
 function metricHelpCopy(key: "sentiment" | "confidence" | "evasiveness" | "specificity") {
   if (key === "sentiment") {
     return "FinBERT directional tone score for each block. Positive is bullish tone, negative is bearish tone."
@@ -159,14 +170,38 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
     return sorted
   }, [filteredAnalysis, sortDirection, sortKey])
 
+  const speakerAnalysisByBlock = useMemo(() => {
+    const index = new Map<string, SpeakerAnalysis>()
+    for (const row of data.speaker_analysis) {
+      if (typeof row.order_index !== "number") {
+        continue
+      }
+      index.set(speakerAnalysisKey(row.speaker, row.section_type, row.order_index, row.transcript_source_url), row)
+    }
+    return index
+  }, [data.speaker_analysis])
+
   const speakerModalData = useMemo(() => {
     if (!activeSpeaker) return []
     const speakerKey = activeSpeaker.trim().toLowerCase()
     return data.transcripts.map((transcript) => ({
       transcript,
-      mentions: transcript.sections.filter((section) => section.speaker.trim().toLowerCase() === speakerKey),
+      mentions: transcript.sections
+        .filter((section) => section.speaker.trim().toLowerCase() === speakerKey)
+        .map((section) => {
+          const exact = speakerAnalysisByBlock.get(
+            speakerAnalysisKey(section.speaker, section.section_type, section.order_index, transcript.source_url),
+          )
+          const fallback = speakerAnalysisByBlock.get(
+            speakerAnalysisKey(section.speaker, section.section_type, section.order_index),
+          )
+          return {
+            section,
+            sentiment_direction: exact?.sentiment_direction ?? fallback?.sentiment_direction,
+          }
+        }),
     }))
-  }, [activeSpeaker, data.transcripts])
+  }, [activeSpeaker, data.transcripts, speakerAnalysisByBlock])
 
   const selectedTranscriptMentions = speakerModalData.find((item) => item.transcript.id === activeTranscriptId)
   const totalSpeakerMentions = speakerModalData.reduce((sum, item) => sum + item.mentions.length, 0)
@@ -546,14 +581,27 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                 ) : (
                   <div className="space-y-3">
                     {selectedTranscriptMentions.mentions.map((mention) => (
-                      <div key={`${mention.order_index}-${mention.section_type}`} className="rounded-lg border border-border p-3">
-                        <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-                          <Badge variant="outline" className="text-[11px]">{sectionLabel(mention.section_type)}</Badge>
-                          <span>
-                            {selectedTranscriptMentions.transcript.label} • Segment {mention.order_index + 1}
-                          </span>
+                      <div
+                        key={`${mention.section.order_index}-${mention.section.section_type}`}
+                        className="rounded-lg border border-border p-3"
+                      >
+                        <div className="mb-2 flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Badge variant="outline" className="text-[11px]">{sectionLabel(mention.section.section_type)}</Badge>
+                            <span>
+                              {selectedTranscriptMentions.transcript.label} • Segment {mention.section.order_index + 1}
+                            </span>
+                          </div>
+                          {typeof mention.sentiment_direction === "number" && (
+                            <span
+                              className={`text-xs font-mono font-medium ${getSentimentColor(mention.sentiment_direction)}`}
+                            >
+                              {mention.sentiment_direction > 0 ? "+" : ""}
+                              {(mention.sentiment_direction * 100).toFixed(0)}
+                            </span>
+                          )}
                         </div>
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{mention.text}</p>
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{mention.section.text}</p>
                       </div>
                     ))}
                   </div>

@@ -523,7 +523,8 @@ def _generate_executive_summary_with_openai(
                     "You are a senior equity analyst. Produce one compact executive summary paragraph. "
                     "Return strict JSON: {\"executive_summary\":\"...\"}. "
                     "Requirements: exactly 5 or 6 sentences; analyst-style aerial narrative; include interpretation of "
-                    "confidence, evasiveness, outlook, and market/fundamental context; no standalone company-name line."
+                    "confidence, evasiveness, outlook, and market/fundamental context; start with the company name; "
+                    "single paragraph with no newline breaks."
                 ),
             },
             {
@@ -567,12 +568,11 @@ def _generate_executive_summary_with_openai(
         if not summary:
             return "", "OpenAI returned an empty executive_summary field."
 
-        summary = re.sub(
-            rf"^\s*{re.escape(company_name)}\s*\.?\s*",
-            "",
-            summary,
-            flags=re.IGNORECASE,
-        ).strip()
+        if summary:
+            starts_with_company = summary.lower().startswith(company_name.lower())
+            starts_with_ticker = summary.lower().startswith(ticker.lower())
+            if not starts_with_company and not starts_with_ticker:
+                summary = f"{company_name} {summary.lstrip(' .:-')}"
         sentence_count = _summary_sentence_count(summary)
         if sentence_count < 5 or sentence_count > 6:
             return "", f"OpenAI summary must be 5-6 sentences (received {sentence_count})."
@@ -933,7 +933,9 @@ def _mismatch_severity(relative_diff_pct: Optional[float]) -> str:
 
 def _is_parse_diagnostic(text: str) -> bool:
     lowered = text.lower().strip()
-    return lowered.startswith("section parse method:") or lowered.startswith("section parse reason:")
+    if lowered.startswith("section parse method:") or lowered.startswith("section parse reason:"):
+        return True
+    return bool(re.search(r"\bsection parse (method|reason):", lowered))
 
 
 def _classify_audit_messages(messages: list[str]) -> tuple[list[str], list[str], list[str]]:
@@ -952,7 +954,7 @@ def _classify_audit_messages(messages: list[str]) -> tuple[list[str], list[str],
         if "openai feature classification batch diagnostics:" in lowered:
             diagnostics.append(cleaned)
             continue
-        if "openai not needed parser high confidence" in lowered:
+        if "openai not needed parser high confidence" in lowered or "openai_not_needed_parser_high_confidence" in lowered:
             diagnostics.append(cleaned)
             continue
         if "regex_from_page_text" in lowered:
@@ -1737,6 +1739,8 @@ def build_analysis(
                 lambda text: _score_text_with_segmentation(text, engine, settings),
             )
         filtered_rows = _exclude_operator_rows(analysis_rows)
+        for row in filtered_rows:
+            row.transcript_source_url = normalized.source_url
         speaker_analysis_by_url[normalized.source_url or f"doc-{len(speaker_analysis_by_url)}"] = filtered_rows
         all_speaker_analysis_raw.extend(filtered_rows)
         if progress is not None and normalized_documents:

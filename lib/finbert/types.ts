@@ -53,6 +53,8 @@ export interface AnalysisResponseBackend {
     speaker_analysis: Array<{
       speaker: string
       section_type: "prepared_remarks" | "qa" | "other"
+      order_index?: number
+      transcript_source_url?: string | null
       sentiment_direction: number
       confidence: number
       evasiveness: number
@@ -230,6 +232,8 @@ export interface UIReportModel {
     speaker_analysis: Array<{
       speaker: string
       section_type: "prepared_remarks" | "qa" | "other"
+      order_index?: number
+      transcript_source_url?: string
       sentiment_direction: number
       confidence: number
       evasiveness: number

@@ -85,7 +85,7 @@ export default function ModelMethodologyPage() {
         <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
           <li>Executive summary is an OpenAI-required quality step for full analysis.</li>
           <li>Target output is exactly 5-6 analyst-style sentences with confidence/evasiveness/outlook + market/fundamental context.</li>
-          <li>Standalone company-name-only lines are disallowed.</li>
+          <li>Summary is rendered as one coherent paragraph and should start with the company name/ticker context.</li>
           <li>
             If generation fails, the summary section is hidden and Data Audit receives an actionable warning with failure cause.
           </li>

@@ -1199,6 +1199,7 @@ def build_speaker_analysis(
             TranscriptSpeakerAnalysis(
                 speaker=block.speaker,
                 section_type=block.section_type,
+                order_index=block.order_index,
                 sentiment_direction=_clamp(directional, -1.0, 1.0),
                 segment_char_count=len(block.text.strip()),
                 confidence=round(confidence, 2),

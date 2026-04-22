@@ -83,10 +83,7 @@ function metricContext(key: string, value: number): string {
 }
 
 export function OverviewSection({ data, onNavigate }: OverviewSectionProps) {
-  const summarySentences = data.executive_summary
-    .split(/(?<=[.!?])\s+/)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean)
+  const executiveSummary = String(data.executive_summary || "").trim()
 
   return (
     <TooltipProvider>
@@ -127,16 +124,10 @@ export function OverviewSection({ data, onNavigate }: OverviewSectionProps) {
         </div>
 
         {/* Executive Summary */}
-        {summarySentences.length > 0 && (
+        {executiveSummary.length > 0 && (
           <div className="rounded-xl border border-border bg-card p-6">
             <h3 className="mb-3 text-sm font-medium uppercase tracking-wider text-muted-foreground">Executive Summary</h3>
-            <div className="space-y-2">
-              {summarySentences.map((sentence, index) => (
-                <p key={`${index}-${sentence.slice(0, 12)}`} className="text-base leading-relaxed text-foreground">
-                  {sentence}
-                </p>
-              ))}
-            </div>
+            <p className="text-base leading-relaxed text-foreground">{executiveSummary}</p>
           </div>
         )}
 

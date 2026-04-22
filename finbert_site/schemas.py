@@ -271,6 +271,8 @@ class TranscriptSectionBlock(BaseModel):
 class TranscriptSpeakerAnalysis(BaseModel):
     speaker: str
     section_type: Literal["prepared_remarks", "qa", "other"]
+    order_index: int = Field(ge=0, default=0)
+    transcript_source_url: Optional[str] = None
     sentiment_direction: float = Field(ge=-1, le=1)
     segment_char_count: int = Field(ge=0, default=0)
     confidence: float = Field(ge=0, le=100)
