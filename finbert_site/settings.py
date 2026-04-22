@@ -46,6 +46,7 @@ class Settings:
         "output/openai_motley_discovery_cache",
     )
     use_cache: bool = _env_bool("USE_CACHE", True)
+    analysis_result_cache_dir: str = os.getenv("ANALYSIS_RESULT_CACHE_DIR", "output/analysis_cache")
 
     transcript_sentiment_segment_chars: int = int(os.getenv("TRANSCRIPT_SENTIMENT_SEGMENT_CHARS", "650"))
     transcript_sentiment_segment_max: int = int(os.getenv("TRANSCRIPT_SENTIMENT_SEGMENT_MAX", "1000"))

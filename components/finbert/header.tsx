@@ -294,9 +294,9 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
 
             <div className="flex items-center justify-between rounded-lg border border-border p-3">
               <div>
-                <div className="text-sm font-medium text-foreground">Use Transcript Cache</div>
+                <div className="text-sm font-medium text-foreground">Use Analysis Cache</div>
                 <div className="text-xs text-muted-foreground">
-                  Reuse cached discovery/scrape results when available to reduce runtime.
+                  Reuse the full cached report when available. Turn off to recompute and overwrite the cache.
                 </div>
               </div>
               <Switch

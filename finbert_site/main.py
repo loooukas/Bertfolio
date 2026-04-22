@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from .analysis import build_analysis, build_sentiment_snapshot
+from .analysis_cache import load_cached_analysis, write_cached_analysis
 from .jobs import AnalyzeJobManager
 from .settings import settings
 
@@ -61,8 +62,19 @@ def health() -> dict[str, str]:
 @app.get("/api/analyze")
 def analyze(ticker: str = Query(..., min_length=1, max_length=12)) -> dict:
     try:
-        result = build_analysis(ticker=ticker, settings=settings)
-        return result.model_dump()
+        symbol = ticker.strip().upper()
+        if settings.use_cache:
+            cached = load_cached_analysis(cache_dir=settings.analysis_result_cache_dir, ticker=symbol)
+            if cached is not None:
+                return cached
+        result = build_analysis(ticker=symbol, settings=settings)
+        serialized = result.model_dump()
+        write_cached_analysis(
+            cache_dir=settings.analysis_result_cache_dir,
+            ticker=symbol,
+            result=serialized,
+        )
+        return serialized
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

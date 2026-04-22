@@ -112,7 +112,10 @@ export default function ModelMethodologyPage() {
         <h2 className="text-xl font-semibold text-foreground">Run Settings That Affect Backend Behavior</h2>
         <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
           <li>Data collection knobs: <code>news/social pool size</code>, <code>kept limits</code>, <code>lookback days</code>.</li>
-          <li>Cache toggle: <code>use_cache</code> enables/disables transcript discovery/scrape cache reuse per run.</li>
+          <li>
+            Cache toggle: <code>use_cache</code> enables/disables full report cache reuse per ticker. When disabled, the run
+            recomputes and overwrites the cached report for that ticker.
+          </li>
           <li>Source toggles: Alpha Vantage/Yahoo for news, Reddit/Stocktwits for social.</li>
           <li>
             Transcript segmentation knobs: <code>TRANSCRIPT_SENTIMENT_SEGMENT_CHARS</code>, <code>MAX</code>, <code>MIN</code>,{" "}

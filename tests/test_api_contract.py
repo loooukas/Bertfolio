@@ -166,6 +166,8 @@ class _DummyAnalysisResult:
 
 
 def test_api_contract_includes_new_sections_and_legacy_fields(monkeypatch):
+    monkeypatch.setattr(main, "load_cached_analysis", lambda **kwargs: None)
+    monkeypatch.setattr(main, "write_cached_analysis", lambda **kwargs: None)
     monkeypatch.setattr(main, "build_analysis", lambda ticker, settings: _DummyAnalysisResult())
 
     client = TestClient(app)
@@ -242,3 +244,25 @@ def test_snapshot_endpoint_returns_preview_payload(monkeypatch):
     assert payload["ticker"] == "AAPL"
     assert "overview" in payload
     assert "market_reaction" in payload
+
+
+def test_analyze_endpoint_uses_full_report_cache_when_enabled(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "load_cached_analysis",
+        lambda **kwargs: {"ticker": "AAPL", "analysis_version": "cached-v1", "cached": True},
+    )
+    monkeypatch.setattr(main, "write_cached_analysis", lambda **kwargs: None)
+    monkeypatch.setattr(
+        main,
+        "build_analysis",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("build_analysis should not run on cache hit")),
+    )
+
+    client = TestClient(app)
+    response = client.get("/api/analyze", params={"ticker": "AAPL"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["analysis_version"] == "cached-v1"
+    assert payload["cached"] is True

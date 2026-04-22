@@ -10,7 +10,8 @@ import time
 import uuid
 from typing import Any, Callable, Optional
 
-from .progress import RunProgressTracker
+from .analysis_cache import load_cached_analysis, write_cached_analysis
+from .progress import STAGE_DEFINITIONS, RunProgressTracker
 from .settings import Settings
 
 
@@ -103,6 +104,27 @@ class AnalyzeJobManager:
         analysis_fn: Callable[..., Any],
         runtime_overrides: Optional[dict[str, Any]] = None,
     ) -> None:
+        job_settings = self._settings_for_job(runtime_overrides)
+        cache_dir = job_settings.analysis_result_cache_dir
+        use_cache = bool(job_settings.use_cache)
+
+        if use_cache:
+            cached_result = load_cached_analysis(cache_dir=cache_dir, ticker=ticker)
+            if cached_result is not None:
+                tracker.mark_running("Cache hit. Loading full analysis result.")
+                for stage in STAGE_DEFINITIONS:
+                    tracker.complete_stage(str(stage["key"]), message=f"{stage['label']} loaded from cache.")
+                with self._lock:
+                    job = self._jobs.get(job_id)
+                    if job is None:
+                        return
+                    job.status = "completed"
+                    job.result = cached_result
+                    job.error = None
+                    job.updated_at = self._now()
+                tracker.mark_completed("Loaded cached analysis result.")
+                return
+
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -112,9 +134,19 @@ class AnalyzeJobManager:
 
         tracker.mark_running()
         try:
-            job_settings = self._settings_for_job(runtime_overrides)
             result = analysis_fn(ticker=ticker, settings=job_settings, progress=tracker, run_id=job_id)
             serialized = result.model_dump() if hasattr(result, "model_dump") else result
+            if isinstance(serialized, dict):
+                try:
+                    write_cached_analysis(
+                        cache_dir=cache_dir,
+                        ticker=ticker,
+                        result=serialized,
+                        runtime_overrides=runtime_overrides,
+                    )
+                except Exception:
+                    # Cache persistence errors should not fail a successful run.
+                    pass
             with self._lock:
                 job = self._jobs.get(job_id)
                 if job is None:
