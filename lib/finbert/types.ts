@@ -45,6 +45,7 @@ export interface CachedRunResponse {
   updated_at: string
   analysis_version: string
   result: AnalysisResponseBackend
+  recomputed_from_cached_data?: boolean
 }
 
 export interface AnalysisResponseBackend {

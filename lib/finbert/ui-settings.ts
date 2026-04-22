@@ -32,7 +32,7 @@ export const DEFAULT_UI_SETTINGS: UISettings = {
   market_columns: 2,
   quote_columns: 2,
   show_transcript_diagnostics: true,
-  auto_open_audit_on_warnings: true,
+  auto_open_audit_on_warnings: false,
   run_overrides: {
     news_limit: 50,
     news_pool_size: 240,

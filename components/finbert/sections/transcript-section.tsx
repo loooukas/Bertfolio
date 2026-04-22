@@ -235,7 +235,13 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
       dominantRoleBySpeaker.set(speakerKey, counts.analyst > counts.management ? "analyst" : "management")
     }
     return dominantRoleBySpeaker
-  }, [data.transcripts])
+  }, [data.speaker_analysis, data.transcripts])
+
+  const roleForRow = (row: SpeakerAnalysis): Exclude<SpeakerRoleFilter, "all"> | null => {
+    const directRole = normalizeSpeakerRole(row.speaker_role)
+    if (directRole) return directRole
+    return speakerRolesBySpeaker.get(normalizeSpeakerKey(row.speaker)) || null
+  }
 
   const filteredSpeakerRollup = useMemo(() => {
     return data.speaker_rollup.filter((speaker) => {
@@ -325,7 +331,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
   const selectedQuarterTranscript =
     activeQuarterTranscripts.find((item) => item.id === activeQuarterTranscriptId) || activeQuarterTranscripts[0] || null
 
-  const managementAnalysisRows = data.speaker_analysis.filter((row) => normalizeSpeakerRole(row.speaker_role) === "management")
+  const managementAnalysisRows = data.speaker_analysis.filter((row) => roleForRow(row) === "management")
 
   const avgConfidence = managementAnalysisRows.length > 0
     ? managementAnalysisRows.reduce((sum, row) => sum + row.confidence, 0) / managementAnalysisRows.length

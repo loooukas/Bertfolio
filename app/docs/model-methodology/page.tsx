@@ -127,6 +127,11 @@ export default function ModelMethodologyPage() {
             Cache Runs tab: browse cached reports instantly (ticker, transcript labels, run timestamp) and delete stale cached
             runs from local storage.
           </li>
+          <li>
+            Opening a cached run performs a lightweight local recompute of company-facing aggregates (management-only transcript
+            rollups, overview metrics, overall score/label) from cached speaker/news/social/fundamentals payloads without
+            re-running provider fetches or OpenAI scoring.
+          </li>
           <li>Source toggles: Alpha Vantage/Yahoo for news, Reddit/Stocktwits for social.</li>
           <li>
             Transcript segmentation knobs: <code>TRANSCRIPT_SENTIMENT_SEGMENT_CHARS</code>, <code>MAX</code>, <code>MIN</code>,{" "}

@@ -172,6 +172,53 @@ function transcriptLabelFromMetadata(
   return `Transcript ${index + 1}`
 }
 
+function normalizeSpeakerToken(value: string | null | undefined): string {
+  return String(value || "").trim().toLowerCase()
+}
+
+function buildRoleHints(
+  transcripts: AnalysisResponseBackend["transcript"]["transcripts"],
+): {
+  byBlock: Map<string, string>
+  bySpeakerSection: Map<string, string>
+  dominantBySpeaker: Map<string, string>
+} {
+  const byBlock = new Map<string, string>()
+  const bySpeakerSection = new Map<string, string>()
+  const roleCountsBySpeaker = new Map<string, { analyst: number; management: number }>()
+
+  for (const transcript of transcripts) {
+    const sourceKey = String(transcript.source_url || "").trim()
+    for (const section of transcript.sections) {
+      const role = String(section.speaker_role || "").trim().toLowerCase()
+      if (!role) continue
+      const speakerKey = normalizeSpeakerToken(section.speaker)
+      const sectionKey = String(section.section_type || "").trim().toLowerCase()
+      if (!speakerKey || !sectionKey) continue
+      const orderIndex = typeof section.order_index === "number" ? section.order_index : null
+
+      if (orderIndex !== null) {
+        byBlock.set([speakerKey, sectionKey, String(orderIndex), sourceKey].join("|"), role)
+      }
+      bySpeakerSection.set([speakerKey, sectionKey].join("|"), role)
+
+      if (role === "analyst" || role === "management") {
+        const existing = roleCountsBySpeaker.get(speakerKey) || { analyst: 0, management: 0 }
+        existing[role] += 1
+        roleCountsBySpeaker.set(speakerKey, existing)
+      }
+    }
+  }
+
+  const dominantBySpeaker = new Map<string, string>()
+  for (const [speakerKey, counts] of roleCountsBySpeaker.entries()) {
+    if (counts.analyst === 0 && counts.management === 0) continue
+    dominantBySpeaker.set(speakerKey, counts.analyst > counts.management ? "analyst" : "management")
+  }
+
+  return { byBlock, bySpeakerSection, dominantBySpeaker }
+}
+
 export function adaptJobProgress(progress?: BackendJobProgress): BackendJobProgress {
   return safeProgress(progress)
 }
@@ -214,21 +261,35 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
     }
   })
 
-  const speakerRows = report.transcript.speaker_analysis.map((row) => ({
-    speaker: row.speaker,
-    speaker_role: row.speaker_role || undefined,
-    section_type: row.section_type,
-    order_index: typeof row.order_index === "number" ? row.order_index : undefined,
-    transcript_source_url: row.transcript_source_url || undefined,
-    sentiment_direction: row.sentiment_direction,
-    confidence: row.confidence,
-    evasiveness: row.evasiveness,
-    specificity: row.specificity,
-    forward_looking_strength: row.forward_looking_strength,
-    risk_language_intensity: row.risk_language_intensity,
-    topic_label: row.topic_label,
-    mentions: Math.max(1, Math.round((row.segment_char_count || 220) / 220)),
-  }))
+  const roleHints = buildRoleHints(report.transcript.transcripts)
+  const speakerRows = report.transcript.speaker_analysis.map((row) => {
+    const speakerKey = normalizeSpeakerToken(row.speaker)
+    const sectionKey = String(row.section_type || "").trim().toLowerCase()
+    const orderIndex = typeof row.order_index === "number" ? row.order_index : null
+    const sourceKey = String(row.transcript_source_url || "").trim()
+    const inferredRole =
+      (orderIndex !== null
+        ? roleHints.byBlock.get([speakerKey, sectionKey, String(orderIndex), sourceKey].join("|"))
+        : undefined) ||
+      roleHints.bySpeakerSection.get([speakerKey, sectionKey].join("|")) ||
+      roleHints.dominantBySpeaker.get(speakerKey)
+
+    return {
+      speaker: row.speaker,
+      speaker_role: (row.speaker_role || inferredRole || undefined) ?? undefined,
+      section_type: row.section_type,
+      order_index: typeof row.order_index === "number" ? row.order_index : undefined,
+      transcript_source_url: row.transcript_source_url || undefined,
+      sentiment_direction: row.sentiment_direction,
+      confidence: row.confidence,
+      evasiveness: row.evasiveness,
+      specificity: row.specificity,
+      forward_looking_strength: row.forward_looking_strength,
+      risk_language_intensity: row.risk_language_intensity,
+      topic_label: row.topic_label,
+      mentions: Math.max(1, Math.round((row.segment_char_count || 220) / 220)),
+    }
+  })
 
   const dedupePool =
     (report.data_audit.dedupe_counts.news_pool || 0) +
