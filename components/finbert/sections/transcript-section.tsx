@@ -145,6 +145,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc")
   const [activeSpeaker, setActiveSpeaker] = useState<string | null>(null)
   const [activeTranscriptId, setActiveTranscriptId] = useState<string | null>(null)
+  const [activeBlockIndex, setActiveBlockIndex] = useState<number | null>(null)
 
   const speakers = [...new Set(data.speaker_analysis.map((s) => s.speaker))]
 
@@ -234,6 +235,10 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
     setActiveTranscriptId(null)
   }
 
+  const closeBlockModal = () => {
+    setActiveBlockIndex(null)
+  }
+
   const toggleSort = (nextSortKey: SortKey) => {
     if (sortKey === nextSortKey) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))
@@ -262,6 +267,43 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
     if (score < -0.3) return "text-bearish"
     return "text-neutral"
   }
+
+  const activeBlock = useMemo(() => {
+    if (activeBlockIndex === null || activeBlockIndex < 0 || activeBlockIndex >= sortedAnalysis.length) {
+      return null
+    }
+    return sortedAnalysis[activeBlockIndex]
+  }, [activeBlockIndex, sortedAnalysis])
+
+  const activeBlockTranscript = useMemo(() => {
+    if (!activeBlock || typeof activeBlock.order_index !== "number") {
+      return null
+    }
+
+    const speakerKey = activeBlock.speaker.trim().toLowerCase()
+    const expectedSection = activeBlock.section_type
+    const expectedOrder = activeBlock.order_index
+
+    const bySource = activeBlock.transcript_source_url
+      ? data.transcripts.find((doc) => (doc.source_url || "").trim() === (activeBlock.transcript_source_url || "").trim())
+      : null
+    const prioritizedDocs = bySource
+      ? [bySource, ...data.transcripts.filter((doc) => doc.id !== bySource.id)]
+      : data.transcripts
+
+    for (const transcript of prioritizedDocs) {
+      const section = transcript.sections.find(
+        (row) =>
+          row.order_index === expectedOrder &&
+          row.section_type === expectedSection &&
+          row.speaker.trim().toLowerCase() === speakerKey,
+      )
+      if (section) {
+        return { transcript, section }
+      }
+    }
+    return null
+  }, [activeBlock, data.transcripts])
 
   return (
     <TooltipProvider>
@@ -494,6 +536,9 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                           {renderSortIndicator("topic_label")}
                         </button>
                       </th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        Detail
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -535,6 +580,15 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-sm text-muted-foreground">{item.topic_label}</span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:border-ring hover:bg-secondary/40"
+                            onClick={() => setActiveBlockIndex(index)}
+                          >
+                            Open
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -608,6 +662,72 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                 )}
               </div>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={activeBlockIndex !== null} onOpenChange={(open) => (!open ? closeBlockModal() : undefined)}>
+          <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
+            <DialogHeader>
+              <DialogTitle className="text-lg">Speaker Block Detail</DialogTitle>
+              <DialogDescription>
+                {activeBlock
+                  ? `${activeBlock.speaker} • ${sectionLabel(activeBlock.section_type)}`
+                  : "Inspect the exact transcript block behind this row."}
+              </DialogDescription>
+            </DialogHeader>
+
+            {activeBlock ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Sentiment</div>
+                    <div className={`font-mono text-base font-semibold ${getSentimentColor(activeBlock.sentiment_direction)}`}>
+                      {activeBlock.sentiment_direction > 0 ? "+" : ""}
+                      {(activeBlock.sentiment_direction * 100).toFixed(0)}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Confidence</div>
+                    <div className="font-mono text-base text-foreground">{activeBlock.confidence.toFixed(2)}</div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Evasiveness</div>
+                    <div className={`font-mono text-base ${activeBlock.evasiveness > 30 ? "text-bearish" : "text-foreground"}`}>
+                      {activeBlock.evasiveness.toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Specificity</div>
+                    <div className="font-mono text-base text-foreground">{activeBlock.specificity.toFixed(2)}</div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Topic</div>
+                    <div className="text-base text-foreground">{activeBlock.topic_label}</div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Block</div>
+                    <div className="text-base text-foreground">
+                      {typeof activeBlock.order_index === "number" ? `Segment ${activeBlock.order_index + 1}` : "Unavailable"}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-border bg-card p-4">
+                  <div className="mb-2 text-xs text-muted-foreground">
+                    {activeBlockTranscript
+                      ? `${activeBlockTranscript.transcript.label} • ${sectionLabel(activeBlockTranscript.section.section_type)}`
+                      : "Transcript source could not be resolved for this block."}
+                  </div>
+                  <p className="max-h-[38vh] overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                    {activeBlockTranscript?.section.text || "No source transcript text available for this row."}
+                  </p>
+                </div>
+
+                <div className="text-xs text-muted-foreground">
+                  One row maps to one parsed speaker block. A block may include multiple consecutive sentences from that speaker.
+                </div>
+              </div>
+            ) : null}
           </DialogContent>
         </Dialog>
       </div>
