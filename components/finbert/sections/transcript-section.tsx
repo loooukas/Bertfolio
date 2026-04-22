@@ -84,6 +84,7 @@ interface TranscriptSectionProps {
 
 type SortDirection = "asc" | "desc"
 type SortKey = "speaker" | "section_type" | "sentiment_direction" | "confidence" | "evasiveness" | "specificity" | "topic_label"
+type SpeakerRoleFilter = "all" | "analyst" | "management"
 
 function sectionLabel(sectionType: string): string {
   if (sectionType === "prepared_remarks") return "Prepared"
@@ -114,6 +115,41 @@ function quarterKeyFromLabel(label: string): string | null {
     return `${alt[2]}-Q${alt[1]}`
   }
   return null
+}
+
+function normalizeSpeakerKey(value: string): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+}
+
+function normalizeSpeakerRole(value?: string | null): Exclude<SpeakerRoleFilter, "all"> | null {
+  const role = String(value || "").trim().toLowerCase()
+  if (!role) return null
+  if (role === "analyst") return "analyst"
+  if (role === "management" || role === "operator") return "management"
+  return null
+}
+
+function formatTopicLabel(value?: string | null): string {
+  const raw = String(value || "").trim()
+  if (!raw) return "n/a"
+  const specialTokens: Record<string, string> = {
+    ai: "AI",
+    capex: "CapEx",
+    eps: "EPS",
+    "n/a": "n/a",
+  }
+  return raw
+    .split(/[\s_]+/)
+    .map((token) => {
+      const lower = token.toLowerCase()
+      if (specialTokens[lower]) return specialTokens[lower]
+      return lower.charAt(0).toUpperCase() + lower.slice(1)
+    })
+    .join(" ")
 }
 
 function metricHelpCopy(key: "sentiment" | "confidence" | "evasiveness" | "specificity") {
@@ -158,6 +194,8 @@ function MetricHelp({ copy }: { copy: string }) {
 export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails = true }: TranscriptSectionProps) {
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>("all")
   const [selectedSection, setSelectedSection] = useState<string>("all")
+  const [selectedRollupTopic, setSelectedRollupTopic] = useState<string>("all")
+  const [selectedRollupRole, setSelectedRollupRole] = useState<SpeakerRoleFilter>("all")
   const [sortKey, setSortKey] = useState<SortKey>("speaker")
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc")
   const [activeSpeaker, setActiveSpeaker] = useState<string | null>(null)
@@ -167,6 +205,42 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
   const [activeQuarterTranscriptId, setActiveQuarterTranscriptId] = useState<string | null>(null)
 
   const speakers = [...new Set(data.speaker_analysis.map((s) => s.speaker))]
+
+  const speakerTopics = useMemo(() => {
+    const unique = new Set(
+      data.speaker_rollup
+        .map((row) => row.dominant_topic)
+        .filter((topic) => String(topic || "").trim().length > 0),
+    )
+    return [...unique].sort((a, b) => formatTopicLabel(a).localeCompare(formatTopicLabel(b)))
+  }, [data.speaker_rollup])
+
+  const speakerRolesBySpeaker = useMemo(() => {
+    const bySpeaker = new Map<string, Set<Exclude<SpeakerRoleFilter, "all">>>()
+    for (const transcript of data.transcripts) {
+      for (const section of transcript.sections) {
+        const role = normalizeSpeakerRole(section.speaker_role)
+        if (!role) continue
+        const speakerKey = normalizeSpeakerKey(section.speaker)
+        if (!speakerKey) continue
+        const existing = bySpeaker.get(speakerKey) || new Set<Exclude<SpeakerRoleFilter, "all">>()
+        existing.add(role)
+        bySpeaker.set(speakerKey, existing)
+      }
+    }
+    return bySpeaker
+  }, [data.transcripts])
+
+  const filteredSpeakerRollup = useMemo(() => {
+    return data.speaker_rollup.filter((speaker) => {
+      if (selectedRollupTopic !== "all" && speaker.dominant_topic !== selectedRollupTopic) return false
+      if (selectedRollupRole !== "all") {
+        const roles = speakerRolesBySpeaker.get(normalizeSpeakerKey(speaker.speaker))
+        if (!roles || !roles.has(selectedRollupRole)) return false
+      }
+      return true
+    })
+  }, [data.speaker_rollup, selectedRollupRole, selectedRollupTopic, speakerRolesBySpeaker])
 
   const filteredAnalysis = data.speaker_analysis.filter((item) => {
     if (selectedSpeaker !== "all" && item.speaker !== selectedSpeaker) return false
@@ -457,64 +531,105 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
             <TabsTrigger value="block">Block Analysis</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="speaker" className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {data.speaker_rollup.map((speaker) => (
-              <div
-                key={speaker.speaker}
-                role="button"
-                tabIndex={0}
-                className="cursor-pointer rounded-xl border border-border bg-card p-5 text-left transition-all hover:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                onClick={() => openSpeakerModal(speaker.speaker)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault()
-                    openSpeakerModal(speaker.speaker)
-                  }
-                }}
-              >
-                <div className="mb-4 flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
-                      <User className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <div className="font-medium text-foreground">{speaker.speaker}</div>
-                      <div className="text-xs text-muted-foreground">{speaker.mention_count} mentions • {speaker.dominant_topic}</div>
-                    </div>
-                  </div>
-                  <ExternalLink className="h-4 w-4 text-muted-foreground" />
+          <TabsContent value="speaker" className="space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Filter:</span>
                 </div>
-
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-                      <span>Sentiment</span>
-                      <MetricHelp copy={metricHelpCopy("sentiment")} />
-                    </div>
-                    <div className={`text-lg font-semibold ${getSentimentColor(speaker.avg_sentiment_direction)}`}>
-                      {speaker.avg_sentiment_direction > 0 ? "+" : ""}
-                      {(speaker.avg_sentiment_direction * 100).toFixed(0)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-                      <span>Confidence</span>
-                      <MetricHelp copy={metricHelpCopy("confidence")} />
-                    </div>
-                    <div className="text-lg font-semibold text-foreground">{speaker.avg_confidence}</div>
-                  </div>
-                  <div>
-                    <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-                      <span>Evasiveness</span>
-                      <MetricHelp copy={metricHelpCopy("evasiveness")} />
-                    </div>
-                    <div className={`text-lg font-semibold ${speaker.avg_evasiveness > 30 ? "text-bearish" : "text-foreground"}`}>
-                      {speaker.avg_evasiveness}
-                    </div>
-                  </div>
-                </div>
+                <Select value={selectedRollupTopic} onValueChange={setSelectedRollupTopic}>
+                  <SelectTrigger className="h-9 w-40">
+                    <SelectValue placeholder="Topic" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Topics</SelectItem>
+                    {speakerTopics.map((topic) => (
+                      <SelectItem key={topic} value={topic}>{formatTopicLabel(topic)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={selectedRollupRole}
+                  onValueChange={(value) => setSelectedRollupRole(value as SpeakerRoleFilter)}
+                >
+                  <SelectTrigger className="h-9 w-40">
+                    <SelectValue placeholder="Role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Roles</SelectItem>
+                    <SelectItem value="management">Management</SelectItem>
+                    <SelectItem value="analyst">Analyst</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            ))}
+            </div>
+
+            {filteredSpeakerRollup.length === 0 ? (
+              <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
+                No speakers match the selected topic/role filters.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {filteredSpeakerRollup.map((speaker) => (
+                  <div
+                    key={speaker.speaker}
+                    role="button"
+                    tabIndex={0}
+                    className="cursor-pointer rounded-xl border border-border bg-card p-5 text-left transition-all hover:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    onClick={() => openSpeakerModal(speaker.speaker)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault()
+                        openSpeakerModal(speaker.speaker)
+                      }
+                    }}
+                  >
+                    <div className="mb-4 flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
+                          <User className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <div className="font-medium text-foreground">{speaker.speaker}</div>
+                          <div className="text-xs text-muted-foreground">{speaker.mention_count} mentions • {formatTopicLabel(speaker.dominant_topic)}</div>
+                        </div>
+                      </div>
+                      <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+                          <span>Sentiment</span>
+                          <MetricHelp copy={metricHelpCopy("sentiment")} />
+                        </div>
+                        <div className={`text-lg font-semibold ${getSentimentColor(speaker.avg_sentiment_direction)}`}>
+                          {speaker.avg_sentiment_direction > 0 ? "+" : ""}
+                          {(speaker.avg_sentiment_direction * 100).toFixed(0)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+                          <span>Confidence</span>
+                          <MetricHelp copy={metricHelpCopy("confidence")} />
+                        </div>
+                        <div className="text-lg font-semibold text-foreground">{speaker.avg_confidence}</div>
+                      </div>
+                      <div>
+                        <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+                          <span>Evasiveness</span>
+                          <MetricHelp copy={metricHelpCopy("evasiveness")} />
+                        </div>
+                        <div className={`text-lg font-semibold ${speaker.avg_evasiveness > 30 ? "text-bearish" : "text-foreground"}`}>
+                          {speaker.avg_evasiveness}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="block" className="space-y-3">
@@ -642,7 +757,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                           <span className="text-sm text-muted-foreground">{item.specificity}</span>
                         </td>
                         <td className="px-4 py-3">
-                          <span className="text-sm text-muted-foreground">{item.topic_label}</span>
+                          <span className="text-sm text-muted-foreground">{formatTopicLabel(item.topic_label)}</span>
                         </td>
                         <td className="px-4 py-3 text-right">
                           <button
@@ -833,7 +948,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                               </div>
                               <div className="rounded-lg border border-border bg-secondary/30 p-3">
                                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Topic</div>
-                                <div className="text-base text-foreground">{score?.topic_label || "n/a"}</div>
+                                <div className="text-base text-foreground">{formatTopicLabel(score?.topic_label)}</div>
                               </div>
                             </div>
 
@@ -886,7 +1001,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                   </div>
                   <div className="rounded-lg border border-border bg-secondary/30 p-3">
                     <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Topic</div>
-                    <div className="text-base text-foreground">{activeBlock.topic_label}</div>
+                    <div className="text-base text-foreground">{formatTopicLabel(activeBlock.topic_label)}</div>
                   </div>
                   <div className="rounded-lg border border-border bg-secondary/30 p-3">
                     <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Quarter</div>
