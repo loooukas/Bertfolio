@@ -1,7 +1,7 @@
 "use client"
 
 import { type KeyboardEvent, useMemo, useState } from "react"
-import { ArrowUpDown, ChevronDown, Filter, Quote, User, Info, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
+import { ArrowUpDown, ChevronDown, ExternalLink, Filter, Quote, User, Info, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
@@ -99,6 +99,22 @@ function speakerAnalysisKey(
   return [speaker.trim().toLowerCase(), sectionType, String(orderIndex), (transcriptSourceUrl || "").trim()].join("|")
 }
 
+function quarterKeyFromLabel(label: string): string | null {
+  const raw = String(label || "").trim()
+  if (!raw) {
+    return null
+  }
+  const direct = raw.match(/\b(20\d{2})-Q([1-4])\b/i)
+  if (direct) {
+    return `${direct[1]}-Q${direct[2]}`
+  }
+  const alt = raw.match(/\bQ([1-4])\s*(20\d{2})\b/i)
+  if (alt) {
+    return `${alt[2]}-Q${alt[1]}`
+  }
+  return null
+}
+
 function metricHelpCopy(key: "sentiment" | "confidence" | "evasiveness" | "specificity") {
   if (key === "sentiment") {
     return "FinBERT directional tone score for each block. Positive is bullish tone, negative is bearish tone."
@@ -146,6 +162,8 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
   const [activeSpeaker, setActiveSpeaker] = useState<string | null>(null)
   const [activeTranscriptId, setActiveTranscriptId] = useState<string | null>(null)
   const [activeBlockIndex, setActiveBlockIndex] = useState<number | null>(null)
+  const [activeQuarter, setActiveQuarter] = useState<string | null>(null)
+  const [activeQuarterTranscriptId, setActiveQuarterTranscriptId] = useState<string | null>(null)
 
   const speakers = [...new Set(data.speaker_analysis.map((s) => s.speaker))]
 
@@ -182,6 +200,23 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
     return index
   }, [data.speaker_analysis])
 
+  const quarterTranscripts = useMemo(() => {
+    const byQuarter = new Map<string, TranscriptDocument[]>()
+    for (const transcript of data.transcripts) {
+      const quarterKey =
+        quarterKeyFromLabel(transcript.label) ||
+        quarterKeyFromLabel(transcript.title || "") ||
+        quarterKeyFromLabel(transcript.published_date || "")
+      if (!quarterKey) {
+        continue
+      }
+      const existing = byQuarter.get(quarterKey) || []
+      existing.push(transcript)
+      byQuarter.set(quarterKey, existing)
+    }
+    return byQuarter
+  }, [data.transcripts])
+
   const speakerModalData = useMemo(() => {
     if (!activeSpeaker) return []
     const speakerKey = activeSpeaker.trim().toLowerCase()
@@ -206,9 +241,10 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
 
   const selectedTranscriptMentions = speakerModalData.find((item) => item.transcript.id === activeTranscriptId)
   const totalSpeakerMentions = speakerModalData.reduce((sum, item) => sum + item.mentions.length, 0)
+  const activeQuarterTranscripts = activeQuarter ? quarterTranscripts.get(activeQuarter) || [] : []
+  const selectedQuarterTranscript =
+    activeQuarterTranscripts.find((item) => item.id === activeQuarterTranscriptId) || activeQuarterTranscripts[0] || null
 
-  const preparedBlocks = data.speaker_analysis.filter((row) => row.section_type === "prepared_remarks").length
-  const qaBlocks = data.speaker_analysis.filter((row) => row.section_type === "qa").length
   const avgConfidence = data.speaker_analysis.length > 0
     ? data.speaker_analysis.reduce((sum, row) => sum + row.confidence, 0) / data.speaker_analysis.length
     : 0
@@ -237,6 +273,20 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
 
   const closeBlockModal = () => {
     setActiveBlockIndex(null)
+  }
+
+  const openQuarterModal = (quarter: string) => {
+    const transcripts = quarterTranscripts.get(quarter) || []
+    if (transcripts.length === 0) {
+      return
+    }
+    setActiveQuarter(quarter)
+    setActiveQuarterTranscriptId(transcripts[0]?.id || null)
+  }
+
+  const closeQuarterModal = () => {
+    setActiveQuarter(null)
+    setActiveQuarterTranscriptId(null)
   }
 
   const toggleSort = (nextSortKey: SortKey) => {
@@ -343,9 +393,6 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                     <div className="text-base font-semibold text-foreground">{avgEvasiveness.toFixed(1)}</div>
                   </div>
                 </div>
-                <div className="mt-3 text-xs text-muted-foreground">
-                  {data.prepared_vs_qa_note} Prepared blocks: {preparedBlocks}; Q&A blocks: {qaBlocks}.
-                </div>
               </>
             )}
           </div>
@@ -356,7 +403,20 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
               {data.quarter_status.map((q) => (
                 <div key={q.quarter} className="flex items-center justify-between rounded-lg bg-secondary/50 px-3 py-2">
                   <span className="text-sm font-mono text-foreground">{q.quarter}</span>
-                  {getStatusIcon(q.status)}
+                  <div className="flex items-center gap-2">
+                    {getStatusIcon(q.status)}
+                    {q.status === "found" && (quarterTranscripts.get(q.quarter) || []).length > 0 ? (
+                      <button
+                        type="button"
+                        className="inline-flex items-center rounded border border-border p-1 text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
+                        onClick={() => openQuarterModal(q.quarter)}
+                        aria-label={`Open ${q.quarter} transcript`}
+                        title={`Open ${q.quarter} transcript`}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>
@@ -665,6 +725,128 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
           </DialogContent>
         </Dialog>
 
+        <Dialog open={!!activeQuarter} onOpenChange={(open) => (!open ? closeQuarterModal() : undefined)}>
+          <DialogContent className="max-h-[90vh] w-[92vw] max-w-[92vw] overflow-hidden">
+            <DialogHeader>
+              <DialogTitle className="text-lg">
+                {activeQuarter ? `${activeQuarter} Transcript` : "Quarter Transcript"}
+              </DialogTitle>
+              <DialogDescription>
+                Full transcript view with speaker-block metrics.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              {activeQuarterTranscripts.length > 1 ? (
+                <div className="flex flex-wrap gap-2">
+                  {activeQuarterTranscripts.map((transcript) => {
+                    const selected = transcript.id === selectedQuarterTranscript?.id
+                    return (
+                      <button
+                        key={transcript.id}
+                        type="button"
+                        onClick={() => setActiveQuarterTranscriptId(transcript.id)}
+                        className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                          selected
+                            ? "border-primary bg-primary/10 text-foreground"
+                            : "border-border bg-secondary/30 text-muted-foreground hover:border-ring hover:text-foreground"
+                        }`}
+                      >
+                        {transcript.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : null}
+
+              <div className="max-h-[72vh] overflow-y-auto rounded-lg border border-border bg-card p-4">
+                {!selectedQuarterTranscript ? (
+                  <p className="text-sm text-muted-foreground">No transcript is available for this quarter.</p>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs text-muted-foreground">
+                      <div>{selectedQuarterTranscript.label}</div>
+                      {selectedQuarterTranscript.source ? <div>Source: {selectedQuarterTranscript.source}</div> : null}
+                    </div>
+
+                    {selectedQuarterTranscript.sections.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No parsed speaker blocks were found in this transcript.</p>
+                    ) : (
+                      selectedQuarterTranscript.sections.map((section) => {
+                        const exact = speakerAnalysisByBlock.get(
+                          speakerAnalysisKey(
+                            section.speaker,
+                            section.section_type,
+                            section.order_index,
+                            selectedQuarterTranscript.source_url,
+                          ),
+                        )
+                        const fallback = speakerAnalysisByBlock.get(
+                          speakerAnalysisKey(section.speaker, section.section_type, section.order_index),
+                        )
+                        const score = exact || fallback
+                        const sentimentDirection = typeof score?.sentiment_direction === "number" ? score.sentiment_direction : null
+
+                        return (
+                          <div
+                            key={`${selectedQuarterTranscript.id}-${section.order_index}-${section.speaker}`}
+                            className="rounded-lg border border-border p-4"
+                          >
+                            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-foreground">{section.speaker}</span>
+                                <Badge variant="outline" className="text-[11px]">
+                                  {sectionLabel(section.section_type)}
+                                </Badge>
+                              </div>
+                              <span className="text-xs text-muted-foreground">Block {section.order_index + 1}</span>
+                            </div>
+
+                            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                              <div className="rounded border border-border bg-secondary/30 px-2 py-1">
+                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Sentiment</div>
+                                <div className={`text-xs font-mono ${sentimentDirection === null ? "text-muted-foreground" : getSentimentColor(sentimentDirection)}`}>
+                                  {sentimentDirection === null
+                                    ? "n/a"
+                                    : `${sentimentDirection > 0 ? "+" : ""}${(sentimentDirection * 100).toFixed(0)}`}
+                                </div>
+                              </div>
+                              <div className="rounded border border-border bg-secondary/30 px-2 py-1">
+                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Confidence</div>
+                                <div className="text-xs font-mono text-foreground">
+                                  {typeof score?.confidence === "number" ? score.confidence.toFixed(2) : "n/a"}
+                                </div>
+                              </div>
+                              <div className="rounded border border-border bg-secondary/30 px-2 py-1">
+                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Evasiveness</div>
+                                <div className="text-xs font-mono text-foreground">
+                                  {typeof score?.evasiveness === "number" ? score.evasiveness.toFixed(2) : "n/a"}
+                                </div>
+                              </div>
+                              <div className="rounded border border-border bg-secondary/30 px-2 py-1">
+                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Specificity</div>
+                                <div className="text-xs font-mono text-foreground">
+                                  {typeof score?.specificity === "number" ? score.specificity.toFixed(2) : "n/a"}
+                                </div>
+                              </div>
+                              <div className="rounded border border-border bg-secondary/30 px-2 py-1">
+                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Topic</div>
+                                <div className="text-xs text-foreground">{score?.topic_label || "n/a"}</div>
+                              </div>
+                            </div>
+
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{section.text}</p>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={activeBlockIndex !== null} onOpenChange={(open) => (!open ? closeBlockModal() : undefined)}>
           <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
             <DialogHeader>
@@ -705,9 +887,9 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                     <div className="text-base text-foreground">{activeBlock.topic_label}</div>
                   </div>
                   <div className="rounded-lg border border-border bg-secondary/30 p-3">
-                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Block</div>
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Quarter</div>
                     <div className="text-base text-foreground">
-                      {typeof activeBlock.order_index === "number" ? `Segment ${activeBlock.order_index + 1}` : "Unavailable"}
+                      {activeBlockTranscript?.transcript.label || "Unavailable"}
                     </div>
                   </div>
                 </div>
@@ -721,10 +903,6 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                   <p className="max-h-[38vh] overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-foreground">
                     {activeBlockTranscript?.section.text || "No source transcript text available for this row."}
                   </p>
-                </div>
-
-                <div className="text-xs text-muted-foreground">
-                  One row maps to one parsed speaker block. A block may include multiple consecutive sentences from that speaker.
                 </div>
               </div>
             ) : null}

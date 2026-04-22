@@ -2037,6 +2037,26 @@ def build_analysis(
     analyst_opinion_count = fundamentals_dict.get("analyst_opinion_count")
     target_high = fundamentals_dict.get("target_high_price")
     target_low = fundamentals_dict.get("target_low_price")
+    target_range_tone = "neutral"
+    target_range_note: Optional[str] = None
+    if isinstance(target_low, (int, float)) and isinstance(target_high, (int, float)):
+        low_value = float(target_low)
+        high_value = float(target_high)
+        spread = abs(high_value - low_value)
+        if isinstance(target_mean, (int, float)) and abs(float(target_mean)) > 0:
+            spread_pct = (spread / abs(float(target_mean))) * 100.0
+            if spread_pct <= 15:
+                target_range_tone = "bullish"
+                range_label = "Tight range"
+            elif spread_pct <= 35:
+                target_range_tone = "neutral"
+                range_label = "Moderate range"
+            else:
+                target_range_tone = "bearish"
+                range_label = "Wide range"
+            target_range_note = f"{range_label} ({spread_pct:.1f}% spread)."
+        else:
+            target_range_note = f"Spread: ${spread:.2f}."
 
     analyst_signals = [
         AnalystSnapshot(
@@ -2069,15 +2089,15 @@ def build_analysis(
                 if isinstance(target_low, (int, float)) and isinstance(target_high, (int, float))
                 else "n/a"
             ),
-            tone="muted",
-            note=None,
+            tone=target_range_tone,
+            note=target_range_note,
         ),
         AnalystSnapshot(
             key="recommendation_mean",
             label="Recommendation Mean",
             value=f"{float(recommendation_mean):.2f}" if isinstance(recommendation_mean, (int, float)) else "n/a",
             tone="neutral",
-            note="Lower generally indicates stronger buy conviction.",
+            note="Lower = stronger buy.",
         ),
     ]
 
