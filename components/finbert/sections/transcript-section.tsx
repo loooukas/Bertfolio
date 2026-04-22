@@ -404,7 +404,6 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                 <div key={q.quarter} className="flex items-center justify-between rounded-lg bg-secondary/50 px-3 py-2">
                   <span className="text-sm font-mono text-foreground">{q.quarter}</span>
                   <div className="flex items-center gap-2">
-                    {getStatusIcon(q.status)}
                     {q.status === "found" && (quarterTranscripts.get(q.quarter) || []).length > 0 ? (
                       <button
                         type="button"
@@ -416,6 +415,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                         <ExternalLink className="h-3.5 w-3.5" />
                       </button>
                     ) : null}
+                    {getStatusIcon(q.status)}
                   </div>
                 </div>
               ))}
@@ -428,7 +428,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
             <Quote className="h-4 w-4 text-muted-foreground" />
             <h3 className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Key Quotes</h3>
           </div>
-          <div className={`grid gap-4 ${quoteColumns === 2 ? "grid-cols-1 xl:grid-cols-2" : "grid-cols-1"}`}>
+          <div className={`grid gap-4 ${quoteColumns === 2 ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}>
             {data.key_quotes.map((quote, index) => (
               <div
                 key={index}
@@ -726,7 +726,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
         </Dialog>
 
         <Dialog open={!!activeQuarter} onOpenChange={(open) => (!open ? closeQuarterModal() : undefined)}>
-          <DialogContent className="max-h-[90vh] w-[98vw] max-w-[1600px] overflow-hidden sm:w-[96vw]">
+          <DialogContent className="max-h-[90vh] w-[99vw] max-w-[1760px] overflow-hidden sm:w-[98vw]">
             <DialogHeader>
               <DialogTitle className="text-lg">
                 {activeQuarter ? `${activeQuarter} Transcript` : "Quarter Transcript"}
