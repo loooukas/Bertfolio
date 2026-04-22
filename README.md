@@ -54,7 +54,7 @@ The frontend now follows the provided FinBERT reference design (dark institution
 Execution-role UI language (trader/risk/manager workflows) is removed from the primary interface. Legacy API fields remain for one migration window.
 
 The UI now keeps a full-screen progress experience until every section finishes, then reveals the full report in one pass.
-Progress stages now focus on actionable work only (`Market Reaction`, `Fundamentals`, `Transcript`, `Data Audit`).
+Progress stages now follow the full 10-step backend pipeline (`News Fetch`, `Social Fetch`, `News Sentiment Scoring`, `Social Sentiment Scoring`, `Fundamentals Fetch`, `Fundamentals Validation`, `Transcript Discovery + Scrape`, `Transcript Normalization`, `Transcript Sentiment + Speaker Scoring`, `Data Audit / Report Assembly`).
 Polling cadence is user-configurable in the settings modal (`Fast`, `Balanced`, `Eco`).
 
 ## Quick Start (Single Command)
@@ -306,8 +306,10 @@ Optional keys:
 - `ALPHAVANTAGE_API_KEY` for Alpha Vantage news feed
 - `OPENAI_API_KEY` for transcript normalization and deterministic Motley pipeline OpenAI fallback
 - `OPENAI_NORMALIZER_MODEL` (default `gpt-4o-mini`)
+- `OPENAI_REQUEST_RETRIES` and `OPENAI_RETRY_BACKOFF_SECONDS` for OpenAI retry behavior
 - `OPENAI_SEARCH_MODEL` (default `gpt-5-mini`) for deterministic discovery/scrape
 - `TRANSCRIPT_PIPELINE_MODE` (`motley_cli` or `legacy`)
+- `TRANSCRIPT_FEATURE_COUNTER_WEIGHT` and `TRANSCRIPT_FEATURE_DENSITY_SMOOTHING` for anti-signal lexical calibration
 - `TRANSCRIPT_PIPELINE_FALLBACK_TO_LEGACY` (`1` or `0`)
 - `MOTLEY_*` discovery/scrape controls in `.env.example`
 - `TRANSCRIPT_SENTIMENT_SEGMENT_*` segmentation controls in `.env.example`

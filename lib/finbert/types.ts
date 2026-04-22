@@ -155,6 +155,8 @@ export interface AnalysisResponseBackend {
     confidence_note: string
     normalization_mode: "openai" | "deterministic_degraded"
     warnings: string[]
+    notices: string[]
+    diagnostics: string[]
     missing_items: string[]
     parsing_warnings: string[]
     source_counts: {
@@ -197,6 +199,7 @@ export interface AnalysisResponseBackend {
         yahoo_value?: number | null
         alpha_value?: number | null
         relative_diff_pct?: number | null
+        severity?: "low" | "medium" | "high" | null
         note?: string | null
       }>
     }
@@ -312,6 +315,8 @@ export interface UIReportModel {
     confidence_note: string
     normalization_mode: "openai" | "deterministic_degraded"
     warnings: string[]
+    notices: string[]
+    diagnostics: string[]
     missing_items: string[]
     parsing_warnings: string[]
     source_counts: {
@@ -350,6 +355,7 @@ export interface UIReportModel {
         yahoo_value: string
         alpha_value: string
         relative_diff_pct: number
+        severity: "low" | "medium" | "high"
         note: string
       }>
     }

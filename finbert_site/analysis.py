@@ -162,7 +162,7 @@ UI_COPY = CopyDictionary(
         "audit_dedupe": "Dedupe Stats",
         "audit_failures": "Discovery Failures",
         "audit_discarded": "Discarded Near-Matches",
-        "audit_parsing": "Parsing Warnings",
+        "audit_parsing": "Diagnostics",
     },
     microcopy={
         "query_note": (
@@ -219,6 +219,20 @@ def _label_from_sentiment_score(score: float) -> str:
     if score <= -0.15:
         return "cautiously_bearish"
     return "mixed"
+
+
+def _call_with_supported_kwargs(func: Any, *args: Any, **kwargs: Any) -> Any:
+    """Call func with keyword args filtered to the callable signature."""
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return func(*args, **kwargs)
+
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+        return func(*args, **kwargs)
+
+    accepted_kwargs = {name: value for name, value in kwargs.items() if name in signature.parameters}
+    return func(*args, **accepted_kwargs)
 
 
 def _format_pct(value: Optional[float]) -> str:
@@ -440,6 +454,131 @@ def _display_recommendation(value: Optional[str]) -> str:
     if not value:
         return "n/a"
     return value.replace("_", " ").strip().title()
+
+
+def _fundamentals_growth_signal(revenue_qoq_growth_pct: Optional[float], eps_qoq_growth_pct: Optional[float]) -> float:
+    rev_growth = float(revenue_qoq_growth_pct or 0.0)
+    eps_growth = float(eps_qoq_growth_pct or 0.0)
+    return _clamp_unit((rev_growth * 0.55 + eps_growth * 0.45) / 50.0)
+
+
+def _recommendation_mean_signal(recommendation_mean: Any) -> Optional[float]:
+    if not isinstance(recommendation_mean, (int, float)):
+        return None
+    return _clamp_unit((3.0 - float(recommendation_mean)) / 2.0)
+
+
+def _upside_signal(upside_pct: Optional[float]) -> Optional[float]:
+    if not isinstance(upside_pct, (int, float)):
+        return None
+    return _clamp_unit(float(upside_pct) / 30.0)
+
+
+def _analyst_signal(recommendation_mean: Any, upside_pct: Optional[float]) -> Optional[float]:
+    rec_signal = _recommendation_mean_signal(recommendation_mean)
+    upside_signal = _upside_signal(upside_pct)
+    candidates = [signal for signal in [rec_signal, upside_signal] if signal is not None]
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    return _clamp_unit(candidates[0] * 0.65 + candidates[1] * 0.35)
+
+
+def _fundamentals_blended_signal(growth_signal: float, analyst_signal: Optional[float]) -> float:
+    if analyst_signal is None:
+        return _clamp_unit(growth_signal)
+    return _clamp_unit(growth_signal * 0.80 + float(analyst_signal) * 0.20)
+
+
+def _summary_sentence_count(text: str) -> int:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not cleaned:
+        return 0
+    return len([part for part in re.split(r"(?<=[.!?])\s+", cleaned) if part.strip()])
+
+
+def _generate_executive_summary_with_openai(
+    *,
+    ticker: str,
+    company_name: str,
+    settings: Settings,
+    summary_payload: dict[str, Any],
+) -> tuple[str, Optional[str]]:
+    if not settings.openai_api_key:
+        return "", "OPENAI_API_KEY missing."
+
+    model_name = settings.openai_normalizer_model
+    if model_name.strip().lower().startswith("gpt-5"):
+        model_name = "gpt-4o-mini"
+
+    request_payload = {
+        "model": model_name,
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a senior equity analyst. Produce one compact executive summary paragraph. "
+                    "Return strict JSON: {\"executive_summary\":\"...\"}. "
+                    "Requirements: exactly 5 or 6 sentences; analyst-style aerial narrative; include interpretation of "
+                    "confidence, evasiveness, outlook, and market/fundamental context; no standalone company-name line."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "ticker": ticker,
+                        "company_name": company_name,
+                        "analysis_context": summary_payload,
+                    }
+                ),
+            },
+        ],
+    }
+
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.openai_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=request_payload,
+            timeout=settings.request_timeout_seconds,
+        )
+        response.raise_for_status()
+        body = response.json()
+        choices = body.get("choices") or []
+        if not choices:
+            return "", "OpenAI returned no choices."
+        content = str(choices[0].get("message", {}).get("content") or "").strip()
+        if not content:
+            return "", "OpenAI returned empty content."
+
+        if content.startswith("```"):
+            content = re.sub(r"^```(?:json)?", "", content).strip()
+            content = re.sub(r"```$", "", content).strip()
+
+        parsed = json.loads(content)
+        summary = re.sub(r"\s+", " ", str(parsed.get("executive_summary") or "")).strip()
+        if not summary:
+            return "", "OpenAI returned an empty executive_summary field."
+
+        summary = re.sub(
+            rf"^\s*{re.escape(company_name)}\s*\.?\s*",
+            "",
+            summary,
+            flags=re.IGNORECASE,
+        ).strip()
+        sentence_count = _summary_sentence_count(summary)
+        if sentence_count < 5 or sentence_count > 6:
+            return "", f"OpenAI summary must be 5-6 sentences (received {sentence_count})."
+        return summary, None
+    except Exception as exc:
+        return "", str(exc)
 
 
 def _score_text(text: str, engine) -> dict[str, float | str]:
@@ -782,6 +921,73 @@ def _compact_warnings(warnings: list[str], found: int, requested: int) -> list[s
     return compact[:8]
 
 
+def _mismatch_severity(relative_diff_pct: Optional[float]) -> str:
+    if relative_diff_pct is None:
+        return "low"
+    if relative_diff_pct >= 25:
+        return "high"
+    if relative_diff_pct >= 12:
+        return "medium"
+    return "low"
+
+
+def _is_parse_diagnostic(text: str) -> bool:
+    lowered = text.lower().strip()
+    return lowered.startswith("section parse method:") or lowered.startswith("section parse reason:")
+
+
+def _classify_audit_messages(messages: list[str]) -> tuple[list[str], list[str], list[str]]:
+    warnings: list[str] = []
+    notices: list[str] = []
+    diagnostics: list[str] = []
+
+    for message in messages:
+        cleaned = str(message or "").strip()
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if _is_parse_diagnostic(cleaned):
+            diagnostics.append(cleaned)
+            continue
+        if "openai feature classification batch diagnostics:" in lowered:
+            diagnostics.append(cleaned)
+            continue
+        if "openai not needed parser high confidence" in lowered:
+            diagnostics.append(cleaned)
+            continue
+        if "regex_from_page_text" in lowered:
+            diagnostics.append(cleaned)
+            continue
+        if "fundamentals validation:" in lowered:
+            notices.append(cleaned)
+            continue
+        if "no yahoo finance news items returned" in lowered:
+            notices.append(cleaned)
+            continue
+        if "no reddit posts found" in lowered:
+            notices.append(cleaned)
+            continue
+        if "no stocktwits posts found" in lowered:
+            notices.append(cleaned)
+            continue
+        if "used json-ld fallback extraction" in lowered:
+            notices.append(cleaned)
+            continue
+        if "openai normalization failed:" in lowered:
+            warnings.append(cleaned)
+            continue
+        if "openai feature classification degraded:" in lowered:
+            warnings.append(cleaned)
+            continue
+        warnings.append(cleaned)
+
+    return (
+        list(dict.fromkeys(warnings)),
+        list(dict.fromkeys(notices)),
+        list(dict.fromkeys(diagnostics)),
+    )
+
+
 def _aggregate_scores(
     transcript_speaker_analysis: list[TranscriptSpeakerAnalysis],
     fundamentals: FundamentalsSummary,
@@ -957,10 +1163,13 @@ def _build_report_tabs(
                 f"Normalization mode: {data_audit.normalization_mode}\n\n"
                 "## Warnings\n- "
                 + "\n- ".join(data_audit.warnings or ["No warnings."])
+                + "\n\n## Notices\n- "
+                + "\n- ".join(data_audit.notices or ["No notices."])
             ),
             kpis=[
                 ReportKPI(label="normalization", value=data_audit.normalization_mode),
                 ReportKPI(label="warnings", value=str(len(data_audit.warnings))),
+                ReportKPI(label="notices", value=str(len(data_audit.notices))),
             ],
             tables=[audit_table],
         ),
@@ -1135,7 +1344,7 @@ def _build_legacy_fields(
         ),
     ]
 
-    composite = transcript_signal * 0.45 + fundamentals_signal * 0.2 + news_signal * 0.2 + social_signal * 0.15
+    composite = transcript_signal * 0.40 + fundamentals_signal * 0.35 + news_signal * 0.15 + social_signal * 0.10
 
     research_team = ResearchDebate(
         bullish_points=[f"{a.name}: {a.key_points[0]}" for a in analyst_team if a.signal_score > 0.05]
@@ -1184,7 +1393,8 @@ def build_sentiment_snapshot(ticker: str, settings: Settings) -> dict[str, Any]:
     fundamentals_dict = fetch_fundamentals(symbol)
     company_name = str(fundamentals_dict.get("company_name") or symbol)
 
-    news_records, news_warnings, _news_audit = fetch_news_multi_source(
+    news_records, news_warnings, _news_audit = _call_with_supported_kwargs(
+        fetch_news_multi_source,
         symbol,
         settings,
         limit=max(1, settings.news_limit),
@@ -1194,7 +1404,8 @@ def build_sentiment_snapshot(ticker: str, settings: Settings) -> dict[str, Any]:
         enable_alpha=settings.news_enable_alpha_vantage,
         enable_yahoo=settings.news_enable_yahoo_finance,
     )
-    social_records, social_warnings, _social_audit = fetch_social_multi_source(
+    social_records, social_warnings, _social_audit = _call_with_supported_kwargs(
+        fetch_social_multi_source,
         symbol,
         settings,
         limit=max(1, settings.social_limit),
@@ -1213,10 +1424,21 @@ def build_sentiment_snapshot(ticker: str, settings: Settings) -> dict[str, Any]:
     news_avg = mean(n.sentiment_score for n in news) if news else 0.0
     social_avg = mean(s.sentiment_score for s in social) if social else 0.0
 
-    rev_growth = float(fundamentals_dict.get("revenue_qoq_growth_pct") or 0.0)
-    eps_growth = float(fundamentals_dict.get("eps_qoq_growth_pct") or 0.0)
-    fundamentals_signal = _clamp_unit((rev_growth * 0.55 + eps_growth * 0.45) / 50.0)
-    overall_score = _clamp_unit(news_avg * 0.45 + social_avg * 0.2 + fundamentals_signal * 0.35)
+    growth_signal = _fundamentals_growth_signal(
+        fundamentals_dict.get("revenue_qoq_growth_pct"),
+        fundamentals_dict.get("eps_qoq_growth_pct"),
+    )
+    target_mean = fundamentals_dict.get("target_mean_price")
+    current_price = fundamentals_dict.get("current_price")
+    upside_pct: Optional[float] = None
+    if isinstance(target_mean, (int, float)) and isinstance(current_price, (int, float)) and current_price not in (0,):
+        try:
+            upside_pct = ((float(target_mean) - float(current_price)) / abs(float(current_price))) * 100.0
+        except Exception:
+            upside_pct = None
+    analyst_signal = _analyst_signal(fundamentals_dict.get("recommendation_mean"), upside_pct)
+    fundamentals_signal = _fundamentals_blended_signal(growth_signal, analyst_signal)
+    overall_score = _clamp_unit(news_avg * 0.15 + social_avg * 0.10 + fundamentals_signal * 0.35)
     overall_label = _label_from_sentiment_score(overall_score)
 
     overview = OverviewSection(
@@ -1291,9 +1513,10 @@ def build_analysis(
     symbol = _normalize_ticker(ticker)
 
     if progress is not None:
-        progress.start_stage("market_reaction", subtask="fetch_feeds", message="Fetching news and social feeds.")
+        progress.start_stage("news_fetch", subtask="fetch_news", message="Fetching news feed candidates.")
     news_fetch_start = time.perf_counter()
-    news_records, news_warnings, news_audit = fetch_news_multi_source(
+    news_records, news_warnings, news_audit = _call_with_supported_kwargs(
+        fetch_news_multi_source,
         symbol,
         settings,
         limit=max(1, settings.news_limit),
@@ -1304,9 +1527,14 @@ def build_analysis(
         enable_yahoo=settings.news_enable_yahoo_finance,
     )
     _record_task("news_fetch", "News Fetch", news_fetch_start, detail=f"{len(news_records)} records.")
+    if progress is not None:
+        progress.complete_stage("news_fetch", message=f"Fetched {len(news_records)} news candidates.")
 
+    if progress is not None:
+        progress.start_stage("social_fetch", subtask="fetch_social", message="Fetching social feed candidates.")
     social_fetch_start = time.perf_counter()
-    social_records, social_warnings, social_audit = fetch_social_multi_source(
+    social_records, social_warnings, social_audit = _call_with_supported_kwargs(
+        fetch_social_multi_source,
         symbol,
         settings,
         limit=max(1, settings.social_limit),
@@ -1317,25 +1545,34 @@ def build_analysis(
         enable_stocktwits=settings.social_enable_stocktwits,
     )
     _record_task("social_fetch", "Social Fetch", social_fetch_start, detail=f"{len(social_records)} records.")
+    if progress is not None:
+        progress.complete_stage("social_fetch", message=f"Fetched {len(social_records)} social candidates.")
 
     engine = get_engine(settings.finbert_model_name)
 
+    if progress is not None:
+        progress.start_stage(
+            "news_sentiment_scoring",
+            subtask="score_news",
+            message="Scoring retained news items with FinBERT.",
+        )
     news_score_start = time.perf_counter()
     news = _score_news_records(news_records, engine)
     _record_task("news_sentiment", "News Sentiment Scoring", news_score_start, detail=f"{len(news)} scored.")
+    if progress is not None:
+        progress.complete_stage("news_sentiment_scoring", message=f"Scored {len(news)} news items.")
 
+    if progress is not None:
+        progress.start_stage(
+            "social_sentiment_scoring",
+            subtask="score_social",
+            message="Scoring retained social items with FinBERT.",
+        )
     social_score_start = time.perf_counter()
     social = _score_social_records(social_records, engine)
     _record_task("social_sentiment", "Social Sentiment Scoring", social_score_start, detail=f"{len(social)} scored.")
-
     if progress is not None:
-        progress.update_stage(
-            "market_reaction",
-            progress=0.8,
-            subtask="score_feeds",
-            message=f"Scored {len(news)} news and {len(social)} social items.",
-        )
-        progress.complete_stage("market_reaction", message="Market reaction feeds ranked and scored.")
+        progress.complete_stage("social_sentiment_scoring", message=f"Scored {len(social)} social items.")
 
     news_avg = mean(n.sentiment_score for n in news) if news else 0.0
     social_avg = mean(s.sentiment_score for s in social) if social else 0.0
@@ -1352,13 +1589,21 @@ def build_analysis(
     )
 
     if progress is not None:
-        progress.start_stage("fundamentals", subtask="fetch", message="Fetching fundamentals from Yahoo Finance.")
+        progress.start_stage("fundamentals_fetch", subtask="fetch", message="Fetching fundamentals from Yahoo Finance.")
     fundamentals_fetch_start = time.perf_counter()
     fundamentals_dict_raw = fetch_fundamentals(symbol)
     _record_task("fundamentals_fetch", "Fundamentals Fetch", fundamentals_fetch_start)
+    if progress is not None:
+        progress.complete_stage("fundamentals_fetch", message="Fetched fundamentals baseline payload.")
 
     company_name = str(fundamentals_dict_raw.get("company_name") or symbol)
 
+    if progress is not None:
+        progress.start_stage(
+            "fundamentals_validation",
+            subtask="cross_check",
+            message="Cross-validating fundamentals against Alpha Vantage.",
+        )
     fundamentals_validate_start = time.perf_counter()
     fundamentals_dict, fundamentals_validation_raw = enrich_fundamentals_with_alpha_validation(
         symbol=symbol,
@@ -1371,15 +1616,8 @@ def build_analysis(
         fundamentals_validate_start,
         detail=f"{len(fundamentals_validation_raw.get('mismatches') or [])} mismatches.",
     )
-
     if progress is not None:
-        progress.update_stage(
-            "fundamentals",
-            progress=0.85,
-            subtask="cross_check",
-            message="Cross-checked fundamentals against Alpha Vantage.",
-        )
-        progress.complete_stage("fundamentals", message="Fundamentals metrics assembled.")
+        progress.complete_stage("fundamentals_validation", message="Fundamentals validation completed.")
 
     fundamentals = FundamentalsSummary(
         currency=fundamentals_dict.get("currency"),
@@ -1402,7 +1640,11 @@ def build_analysis(
     )
 
     if progress is not None:
-        progress.start_stage("transcript", subtask="discovery_scrape", message="Running transcript discovery and scrape.")
+        progress.start_stage(
+            "transcript_discovery_scrape",
+            subtask="discovery_scrape",
+            message="Running transcript discovery and scrape.",
+        )
     transcript_fetch_start = time.perf_counter()
     transcript_raw, transcript_warnings, transcript_diagnostics, transcript_discovery = fetch_transcripts_motley_fool(
         symbol=symbol,
@@ -1416,13 +1658,10 @@ def build_analysis(
         transcript_fetch_start,
         detail=f"{len(transcript_raw)} transcripts parsed.",
     )
-
     if progress is not None:
-        progress.update_stage(
-            "transcript",
-            progress=0.35,
-            subtask="normalize",
-            message=f"Normalizing {len(transcript_raw)} transcript documents.",
+        progress.complete_stage(
+            "transcript_discovery_scrape",
+            message=f"Discovery/scrape completed with {len(transcript_raw)} transcript candidates.",
         )
 
     normalized_documents: list[TranscriptDocument] = []
@@ -1430,6 +1669,12 @@ def build_analysis(
     speaker_analysis_by_url: dict[str, list[TranscriptSpeakerAnalysis]] = {}
     all_speaker_analysis_raw: list[TranscriptSpeakerAnalysis] = []
 
+    if progress is not None:
+        progress.start_stage(
+            "transcript_normalization",
+            subtask="normalize",
+            message=f"Normalizing {len(transcript_raw)} transcript documents.",
+        )
     normalize_start = time.perf_counter()
     for idx, record in enumerate(transcript_raw):
         normalized = normalize_transcript_document(
@@ -1449,8 +1694,8 @@ def build_analysis(
         normalization_warnings.extend(normalized.warnings)
         if progress is not None and transcript_raw:
             progress.update_stage(
-                "transcript",
-                progress=min(0.35 + ((idx + 1) / max(len(transcript_raw), 1)) * 0.35, 0.75),
+                "transcript_normalization",
+                progress=min((idx + 1) / max(len(transcript_raw), 1), 0.99),
                 subtask="normalize",
                 message=f"Normalized {idx + 1}/{len(transcript_raw)} transcript documents.",
             )
@@ -1460,9 +1705,21 @@ def build_analysis(
         normalize_start,
         detail=f"{len(normalized_documents)} normalized docs.",
     )
+    if progress is not None:
+        progress.complete_stage(
+            "transcript_normalization",
+            message=f"Normalized {len(normalized_documents)} transcript documents.",
+        )
 
+    if progress is not None:
+        progress.start_stage(
+            "transcript_sentiment_speaker_scoring",
+            subtask="speaker_scoring",
+            message="Scoring transcript sentiment and speaker metrics.",
+        )
     scoring_start = time.perf_counter()
     feature_classifier_warnings: list[str] = []
+    feature_classifier_diagnostics: list[str] = []
     speaker_analysis_signature = inspect.signature(build_speaker_analysis).parameters
     supports_feature_classifier_kwargs = "settings" in speaker_analysis_signature
     for normalized in normalized_documents:
@@ -1472,6 +1729,7 @@ def build_analysis(
                 lambda text: _score_text_with_segmentation(text, engine, settings),
                 settings=settings,
                 classifier_warnings=feature_classifier_warnings,
+                classifier_diagnostics=feature_classifier_diagnostics,
             )
         else:
             analysis_rows = build_speaker_analysis(
@@ -1481,12 +1739,24 @@ def build_analysis(
         filtered_rows = _exclude_operator_rows(analysis_rows)
         speaker_analysis_by_url[normalized.source_url or f"doc-{len(speaker_analysis_by_url)}"] = filtered_rows
         all_speaker_analysis_raw.extend(filtered_rows)
+        if progress is not None and normalized_documents:
+            progress.update_stage(
+                "transcript_sentiment_speaker_scoring",
+                progress=min(len(speaker_analysis_by_url) / max(len(normalized_documents), 1), 0.99),
+                subtask="speaker_scoring",
+                message=f"Scored speaker features for {len(speaker_analysis_by_url)}/{len(normalized_documents)} transcripts.",
+            )
     _record_task(
         "transcript_scoring",
         "Transcript Sentiment + Speaker Scoring",
         scoring_start,
         detail=f"{len(all_speaker_analysis_raw)} speaker blocks.",
     )
+    if progress is not None:
+        progress.complete_stage(
+            "transcript_sentiment_speaker_scoring",
+            message=f"Scored {len(all_speaker_analysis_raw)} non-operator speaker blocks.",
+        )
 
     all_speaker_analysis = all_speaker_analysis_raw
     speaker_rollup = _build_speaker_rollup(all_speaker_analysis)
@@ -1543,58 +1813,137 @@ def build_analysis(
         ),
     )
 
-    if progress is not None:
-        progress.update_stage(
-            "transcript",
-            progress=0.9,
-            subtask="summarize",
-            message=f"Built transcript summary from {len(all_speaker_analysis)} non-operator speaker blocks.",
-        )
-        progress.complete_stage("transcript", message="Transcript analysis completed.")
-
     transcript_direction = mean(row.sentiment_direction for row in all_speaker_analysis) if all_speaker_analysis else 0.0
     forward_strength = mean(row.forward_looking_strength for row in all_speaker_analysis) if all_speaker_analysis else 45.0
     confidence_score = mean(row.confidence for row in all_speaker_analysis) if all_speaker_analysis else 45.0
     evasiveness_score = mean(row.evasiveness for row in all_speaker_analysis) if all_speaker_analysis else 40.0
 
-    rev_growth = float(fundamentals.revenue_qoq_growth_pct or 0.0)
-    eps_growth = float(fundamentals.eps_qoq_growth_pct or 0.0)
-    fundamentals_signal = _clamp_unit((rev_growth * 0.55 + eps_growth * 0.45) / 50.0)
+    recommendation_mean = fundamentals_dict.get("recommendation_mean")
+    target_mean = fundamentals_dict.get("target_mean_price")
+    current_price = fundamentals_dict.get("current_price")
+    upside_pct: Optional[float] = None
+    if isinstance(target_mean, (int, float)) and isinstance(current_price, (int, float)) and current_price not in (0,):
+        try:
+            upside_pct = ((float(target_mean) - float(current_price)) / abs(float(current_price))) * 100.0
+        except Exception:
+            upside_pct = None
 
-    if normalized_documents:
-        overall_score = _clamp_unit(
-            transcript_direction * 0.45
-            + news_avg * 0.22
-            + social_avg * 0.13
-            + fundamentals_signal * 0.20
-        )
-    else:
-        overall_score = _clamp_unit(news_avg * 0.35 + social_avg * 0.2 + fundamentals_signal * 0.45)
+    growth_signal = _fundamentals_growth_signal(
+        fundamentals.revenue_qoq_growth_pct,
+        fundamentals.eps_qoq_growth_pct,
+    )
+    analyst_signal = _analyst_signal(recommendation_mean, upside_pct)
+    fundamentals_signal = _fundamentals_blended_signal(growth_signal, analyst_signal)
+
+    transcript_component = transcript_direction if normalized_documents else 0.0
+    overall_score = _clamp_unit(
+        transcript_component * 0.40
+        + fundamentals_signal * 0.35
+        + news_avg * 0.15
+        + social_avg * 0.10
+    )
 
     overall_label = _label_from_sentiment_score(overall_score)
 
-    overview_takeaways = transcript_takeaways[:3]
-    if len(overview_takeaways) < 6:
+    forward_leader = (
+        max(all_speaker_analysis, key=lambda row: row.forward_looking_strength)
+        if all_speaker_analysis
+        else None
+    )
+    evasive_leader = (
+        max(all_speaker_analysis, key=lambda row: row.evasiveness)
+        if all_speaker_analysis
+        else None
+    )
+    dominant_topic = speaker_rollup[0].dominant_topic if speaker_rollup else "general"
+    dominant_speaker = speaker_rollup[0].speaker if speaker_rollup else "management team"
+    transcript_bias_label = _stance_from_score(transcript_direction)
+    news_bias_label = _stance_from_score(news_avg)
+    social_bias_label = _stance_from_score(social_avg)
+
+    overview_takeaways: list[str] = []
+    if all_speaker_analysis:
         overview_takeaways.extend(
             [
-                f"Captured {len(news)} high-relevance news stories in the recent window.",
-                f"Captured {len(social)} related social discussions in the recent window.",
-                f"Latest revenue QoQ growth is {_format_pct(fundamentals.revenue_qoq_growth_pct)}.",
-                f"Most active management speaker: {speaker_rollup[0].speaker if speaker_rollup else 'n/a'}.",
+                (
+                    f"Management confidence averaged {confidence_score:.1f} because {dominant_topic} commentary from "
+                    f"{dominant_speaker} included concrete metrics more often than broad qualifiers."
+                ),
+                (
+                    f"Evasiveness averaged {evasiveness_score:.1f}, driven most by {evasive_leader.speaker if evasive_leader else dominant_speaker} "
+                    f"on {evasive_leader.topic_label if evasive_leader else dominant_topic} where hedge language intensity stayed elevated."
+                ),
+                (
+                    f"Forward language remained {transcript_bias_label} with the strongest forward cues from "
+                    f"{forward_leader.speaker if forward_leader else dominant_speaker} in "
+                    f"{forward_leader.topic_label if forward_leader else dominant_topic}."
+                ),
             ]
         )
+    else:
+        overview_takeaways.append(
+            "Transcript-derived speaker metrics are unavailable in this run, so interpretation leans on market and fundamentals signals."
+        )
+
+    overview_takeaways.extend(
+        [
+            (
+                f"Market reaction signal combines {len(news)} news items and {len(social)} social posts; "
+                f"news tone is {news_bias_label} ({_format_signed_unit_pct(news_avg)}) and social tone is "
+                f"{social_bias_label} ({_format_signed_unit_pct(social_avg)}) after relevance filtering."
+            ),
+            (
+                f"Fundamentals blended signal is {_format_signed_unit_pct(fundamentals_signal)} "
+                f"(growth {_format_signed_unit_pct(growth_signal)}"
+                + (
+                    f", analyst overlay {_format_signed_unit_pct(analyst_signal)} from recommendation/target context)."
+                    if analyst_signal is not None
+                    else ", analyst overlay unavailable so growth-only blend used)."
+                )
+            ),
+        ]
+    )
     overview_takeaways = overview_takeaways[:6]
+
+    executive_summary_warning: Optional[str] = None
+    executive_summary_payload = {
+        "overall_label": _stance_from_score(overall_score),
+        "overall_score": round(overall_score, 4),
+        "confidence_score": round(confidence_score, 2),
+        "evasiveness_score": round(evasiveness_score, 2),
+        "outlook_strength": round(forward_strength, 2),
+        "transcript_coverage": f"{len(normalized_documents)}/{settings.transcript_target_count}",
+        "market_context": {
+            "news_count": len(news),
+            "social_count": len(social),
+            "news_signal": round(news_avg, 4),
+            "social_signal": round(social_avg, 4),
+        },
+        "fundamentals_context": {
+            "growth_signal": round(growth_signal, 4),
+            "analyst_signal": round(analyst_signal, 4) if analyst_signal is not None else None,
+            "blended_signal": round(fundamentals_signal, 4),
+            "revenue_qoq_growth_pct": fundamentals.revenue_qoq_growth_pct,
+            "eps_qoq_growth_pct": fundamentals.eps_qoq_growth_pct,
+            "recommendation_mean": recommendation_mean,
+            "target_upside_pct": upside_pct,
+        },
+    }
+    executive_summary, summary_error = _generate_executive_summary_with_openai(
+        ticker=symbol,
+        company_name=company_name,
+        settings=settings,
+        summary_payload=executive_summary_payload,
+    )
+    if summary_error:
+        executive_summary = ""
+        executive_summary_warning = f"Executive summary generation failed: {summary_error}"
 
     overview = OverviewSection(
         ticker=symbol,
         company_name=company_name,
         stance_label=_stance_from_score(overall_score),
-        executive_summary=(
-            f"{company_name} currently reads as {_stance_from_score(overall_score)} based on transcript tone, "
-            f"fundamentals, and near-term market reaction. Transcript coverage is "
-            f"{len(normalized_documents)}/{settings.transcript_target_count}; average confidence is "
-            f"{confidence_score:.1f} and evasiveness is {evasiveness_score:.1f}."
-        ),
+        executive_summary=executive_summary,
         key_takeaways=overview_takeaways,
         metrics=[
             CompactMetric(key="management_confidence", label="Management Confidence", value=f"{confidence_score:.1f}"),
@@ -1634,19 +1983,9 @@ def build_analysis(
     ]
     fundamentals_chart_enabled = len(fundamentals_trend) >= 3
     recommendation_key = str(fundamentals_dict.get("recommendation_key") or "").strip() or None
-    recommendation_mean = fundamentals_dict.get("recommendation_mean")
     analyst_opinion_count = fundamentals_dict.get("analyst_opinion_count")
-    target_mean = fundamentals_dict.get("target_mean_price")
     target_high = fundamentals_dict.get("target_high_price")
     target_low = fundamentals_dict.get("target_low_price")
-    current_price = fundamentals_dict.get("current_price")
-
-    upside_pct: Optional[float] = None
-    if isinstance(target_mean, (int, float)) and isinstance(current_price, (int, float)) and current_price not in (0,):
-        try:
-            upside_pct = ((float(target_mean) - float(current_price)) / abs(float(current_price))) * 100.0
-        except Exception:
-            upside_pct = None
 
     analyst_signals = [
         AnalystSnapshot(
@@ -1722,9 +2061,13 @@ def build_analysis(
         sparse_note=None if fundamentals_chart_enabled else UI_COPY.empty_states["fundamentals_chart"],
     )
 
-    warnings = list(dict.fromkeys(transcript_warnings + news_warnings + social_warnings + feature_classifier_warnings))
+    provider_warnings = transcript_warnings + news_warnings + social_warnings + feature_classifier_warnings
     if normalized_documents:
-        warnings = [warning for warning in warnings if not warning.lower().startswith("openai normalization failed:")]
+        provider_warnings = [
+            warning
+            for warning in provider_warnings
+            if not str(warning).lower().startswith("openai normalization failed:")
+        ]
         transcript_discovery.fetch_failures = [
             warning
             for warning in transcript_discovery.fetch_failures
@@ -1754,6 +2097,7 @@ def build_analysis(
             yahoo_value=item.get("yahoo_value"),
             alpha_value=item.get("alpha_value"),
             relative_diff_pct=item.get("relative_diff_pct"),
+            severity=_mismatch_severity(item.get("relative_diff_pct")),
             note=item.get("note"),
         )
         for item in (fundamentals_validation_raw.get("mismatches") or [])
@@ -1766,14 +2110,30 @@ def build_analysis(
         mismatches=fundamentals_mismatches,
         notes=[str(item) for item in fundamentals_validation_raw.get("notes") or []],
     )
-    if fundamentals_validation.notes:
-        warnings.extend([f"Fundamentals validation: {note}" for note in fundamentals_validation.notes[:5]])
-    if fundamentals_validation.mismatches:
-        warnings.append(
-            f"Fundamentals validation found {len(fundamentals_validation.mismatches)} cross-source mismatches."
+
+    mismatch_high = sum(1 for item in fundamentals_validation.mismatches if item.severity == "high")
+    mismatch_medium = sum(1 for item in fundamentals_validation.mismatches if item.severity == "medium")
+    mismatch_low = sum(1 for item in fundamentals_validation.mismatches if item.severity == "low")
+
+    audit_candidates = list(provider_warnings)
+    audit_candidates.extend(parsing_warnings)
+    if feature_classifier_diagnostics:
+        audit_candidates.extend(
+            [f"OpenAI feature classification batch diagnostics: {detail}" for detail in feature_classifier_diagnostics]
         )
-    if fundamentals_validation.mismatches:
-        missing_items.append("Fundamentals cross-check found provider mismatches; review Data Audit details.")
+    if executive_summary_warning:
+        audit_candidates.append(executive_summary_warning)
+    if fundamentals_validation.notes:
+        audit_candidates.extend([f"Fundamentals validation: {note}" for note in fundamentals_validation.notes[:5]])
+    if mismatch_high:
+        audit_candidates.append(
+            f"Fundamentals validation found {mismatch_high} high-severity cross-source mismatches."
+        )
+    elif mismatch_medium or mismatch_low:
+        audit_candidates.append(
+            "Fundamentals validation found low/medium provider drift; see mismatch table for details."
+        )
+    warnings, notices, diagnostics = _classify_audit_messages(audit_candidates)
 
     avg_extraction_confidence = (
         mean(doc.extraction_confidence for doc in normalized_documents)
@@ -1787,7 +2147,11 @@ def build_analysis(
     )
 
     if progress is not None:
-        progress.start_stage("data_audit", subtask="assemble", message="Assembling data audit details.")
+        progress.start_stage(
+            "data_audit_report_assembly",
+            subtask="assemble_report",
+            message="Assembling data audit and report payload.",
+        )
 
     report_assembly_start = time.perf_counter()
     _record_task("report_assembly", "Report Assembly", report_assembly_start, detail="Sections and tables materialized.")
@@ -1819,10 +2183,12 @@ def build_analysis(
             "social_pool": social_audit.fetched_pool,
             "social_deduped": social_audit.deduped_pool,
         },
-        parsing_warnings=parsing_warnings,
         missing_items=missing_items,
         normalization_mode=normalization_mode,
         warnings=warnings,
+        notices=notices,
+        diagnostics=diagnostics,
+        parsing_warnings=diagnostics,
         confidence_note=confidence_note,
         task_breakdown=task_breakdown,
         slowest_tasks=slowest_tasks,
@@ -1830,13 +2196,10 @@ def build_analysis(
     )
 
     if progress is not None:
-        progress.update_stage(
-            "data_audit",
-            progress=0.85,
-            subtask="finalize",
-            message=f"Data audit assembled with {len(task_breakdown)} granular tasks.",
+        progress.complete_stage(
+            "data_audit_report_assembly",
+            message=f"Data audit/report assembly completed with {len(task_breakdown)} tracked tasks.",
         )
-        progress.complete_stage("data_audit", message="Data audit finalized.")
 
     aggregate = _aggregate_scores(all_speaker_analysis, fundamentals, news_avg, social_avg)
 

@@ -369,6 +369,7 @@ class FundamentalsValidationMismatch(BaseModel):
     yahoo_value: Optional[float] = None
     alpha_value: Optional[float] = None
     relative_diff_pct: Optional[float] = None
+    severity: Literal["low", "medium", "high"] = "low"
     note: Optional[str] = None
 
 
@@ -392,10 +393,12 @@ class DataAuditSection(BaseModel):
     transcript_discovery: TranscriptDiscoveryAudit
     source_counts: dict[str, int]
     dedupe_counts: dict[str, int]
-    parsing_warnings: list[str]
     missing_items: list[str]
     normalization_mode: Literal["openai", "deterministic_degraded"]
     warnings: list[str]
+    notices: list[str] = Field(default_factory=list)
+    diagnostics: list[str] = Field(default_factory=list)
+    parsing_warnings: list[str] = Field(default_factory=list)
     confidence_note: str
     task_breakdown: list[AuditTaskBreakdown] = Field(default_factory=list)
     slowest_tasks: list[str] = Field(default_factory=list)

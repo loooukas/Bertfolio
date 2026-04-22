@@ -2,10 +2,11 @@
 
 import Link from "next/link"
 import { useMemo, useState } from "react"
-import { Activity, FileText, Settings } from "lucide-react"
+import { Activity, FileText, Settings, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -135,18 +136,26 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
       </div>
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="w-[94vw] max-w-3xl h-[85vh] max-h-[85vh] overflow-hidden p-0">
-          <div className="flex h-full flex-col">
+        <DialogContent showCloseButton={false} className="h-[85vh] max-h-[85vh] w-[94vw] max-w-3xl overflow-hidden p-0">
+          <div className="flex h-full min-h-0 flex-col">
             <div className="sticky top-0 z-20 border-b border-border bg-background px-6 py-4">
-              <DialogHeader>
-                <DialogTitle>Run & Display Settings</DialogTitle>
-                <DialogDescription>
-                  Adjust how often the app polls the backend and how dense the report layout renders.
-                </DialogDescription>
-              </DialogHeader>
+              <div className="flex items-start justify-between gap-3">
+                <DialogHeader className="pr-2">
+                  <DialogTitle>Run & Display Settings</DialogTitle>
+                  <DialogDescription>
+                    Adjust how often the app polls the backend and how dense the report layout renders.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogClose asChild>
+                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                    <X className="h-4 w-4" />
+                    <span className="sr-only">Close settings</span>
+                  </Button>
+                </DialogClose>
+              </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-4">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4">
               <div className="space-y-5 pb-2">
             <div className="space-y-2">
               <Label htmlFor="polling-mode">Polling Mode</Label>
@@ -171,17 +180,7 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
 
             <div className="space-y-3 rounded-lg border border-border p-3">
               <div className="text-sm font-medium text-foreground">Data Collection (Per Run)</div>
-              <p className="text-xs text-muted-foreground">
-                Increase pool sizes and lookback to scrape more candidates before dedupe/ranking. Defaults are tuned for fast local runs.
-              </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <NumberInput
-                  label="News Kept"
-                  value={effectiveSettings.run_overrides.news_limit}
-                  min={10}
-                  max={120}
-                  onChange={(value) => updateRunSettings({ news_limit: value })}
-                />
                 <NumberInput
                   label="News Pool"
                   value={effectiveSettings.run_overrides.news_pool_size}
@@ -190,11 +189,18 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
                   onChange={(value) => updateRunSettings({ news_pool_size: value })}
                 />
                 <NumberInput
-                  label="News Lookback Days"
-                  value={effectiveSettings.run_overrides.news_lookback_days}
-                  min={3}
-                  max={365}
-                  onChange={(value) => updateRunSettings({ news_lookback_days: value })}
+                  label="Social Pool"
+                  value={effectiveSettings.run_overrides.social_pool_size}
+                  min={80}
+                  max={1000}
+                  onChange={(value) => updateRunSettings({ social_pool_size: value })}
+                />
+                <NumberInput
+                  label="News Kept"
+                  value={effectiveSettings.run_overrides.news_limit}
+                  min={10}
+                  max={120}
+                  onChange={(value) => updateRunSettings({ news_limit: value })}
                 />
                 <NumberInput
                   label="Social Kept"
@@ -204,11 +210,11 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
                   onChange={(value) => updateRunSettings({ social_limit: value })}
                 />
                 <NumberInput
-                  label="Social Pool"
-                  value={effectiveSettings.run_overrides.social_pool_size}
-                  min={80}
-                  max={1000}
-                  onChange={(value) => updateRunSettings({ social_pool_size: value })}
+                  label="News Lookback Days"
+                  value={effectiveSettings.run_overrides.news_lookback_days}
+                  min={3}
+                  max={365}
+                  onChange={(value) => updateRunSettings({ news_lookback_days: value })}
                 />
                 <NumberInput
                   label="Social Lookback Days"

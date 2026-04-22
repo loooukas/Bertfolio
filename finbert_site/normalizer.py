@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import json
+import math
 import re
 from statistics import mean
+import time
 from typing import Any
 
 import requests
@@ -171,6 +173,73 @@ _SPECIFICITY_TERMS = {
     "headcount": 0.8,
     "market share": 1.0,
     "roi": 0.9,
+}
+
+_FORWARD_COUNTER_TERMS = {
+    "headwind": 1.0,
+    "headwinds": 1.0,
+    "uncertain": 1.0,
+    "uncertainty": 1.0,
+    "pressure": 0.9,
+    "pressures": 0.9,
+    "slowdown": 1.0,
+    "softness": 1.0,
+    "volatility": 1.0,
+    "challenging": 0.9,
+    "timing dependent": 1.0,
+    "not committed": 1.1,
+}
+
+_CONFIDENCE_TERMS = {
+    "on track": 1.0,
+    "executed": 1.0,
+    "delivered": 1.0,
+    "visibility": 0.9,
+    "disciplined": 0.8,
+    "consistent": 0.8,
+    "repeatable": 0.9,
+    "raising guidance": 1.2,
+    "raise guidance": 1.2,
+    "confident": 0.9,
+    "committed": 0.9,
+}
+
+_CONFIDENCE_COUNTER_TERMS = {
+    "unclear": 1.0,
+    "uncertain": 1.1,
+    "too early": 1.2,
+    "cannot comment": 1.3,
+    "can't comment": 1.3,
+    "not prepared": 1.1,
+    "limited visibility": 1.2,
+    "remains to be seen": 1.3,
+    "we'll see": 1.2,
+}
+
+_SPECIFICITY_COUNTER_TERMS = {
+    "various": 0.8,
+    "several": 0.8,
+    "many": 0.7,
+    "some": 0.6,
+    "kind of": 1.0,
+    "sort of": 1.0,
+    "at a high level": 1.2,
+    "directionally": 1.0,
+    "broadly": 0.9,
+    "roughly": 0.9,
+    "approximately": 0.8,
+}
+
+_DIRECTNESS_TERMS = {
+    "specifically": 1.0,
+    "to be clear": 1.1,
+    "exactly": 1.0,
+    "we will": 0.9,
+    "we did": 0.8,
+    "we have": 0.8,
+    "the number is": 1.2,
+    "guidance is": 1.0,
+    "we can commit": 1.2,
 }
 
 _TOPIC_KEYWORDS = {
@@ -351,6 +420,17 @@ def _weighted_term_density(text: str, terms: dict[str, float]) -> tuple[float, l
     return _clamp_unit(matched_weight / total_weight), matched_terms
 
 
+def _net_density(positive_density: float, counter_density: float, counter_weight: float) -> float:
+    return _clamp_unit(positive_density - max(0.0, counter_weight) * counter_density)
+
+
+def _smoothed_percent(net_density: float, smoothing: float) -> float:
+    # Convert unit density into a stable 0-100 signal with bounded curvature.
+    curve = 1.9 + max(0.0, min(1.0, smoothing)) * 2.6
+    mapped = 0.5 + 0.5 * math.tanh(_clamp(net_density, -1.0, 1.0) * curve)
+    return _clamp(mapped * 100.0, 0.0, 100.0)
+
+
 def _topic_label(text: str) -> tuple[str, float]:
     best_topic = "general"
     best_score = 0.0
@@ -377,96 +457,164 @@ def _classify_block_features_with_openai(
     *,
     sections: list[TranscriptSectionBlock],
     settings: Settings | None,
-) -> tuple[dict[int, BlockAiFeatures], list[str]]:
+) -> tuple[dict[int, BlockAiFeatures], list[str], list[str]]:
     if settings is None:
-        return {}, []
+        return {}, [], []
     if not settings.transcript_feature_ai_enabled:
-        return {}, []
+        return {}, [], []
     if not settings.openai_api_key:
-        return {}, []
+        return {}, [], []
     if not sections:
-        return {}, []
+        return {}, [], []
 
     try:
         system_prompt = load_prompt_template("transcript_feature_classifier_v1.md")
     except Exception as exc:
-        return {}, [f"Transcript feature classifier prompt load failed: {exc}"]
+        return {}, [f"OpenAI feature classification degraded: prompt load failed ({exc})."], []
 
     max_blocks = max(1, settings.transcript_feature_ai_max_blocks)
-    batch_size = max(1, min(32, settings.transcript_feature_ai_batch_size))
+    configured_batch = max(1, min(32, settings.transcript_feature_ai_batch_size))
+    min_batch_size = max(1, min(configured_batch, settings.transcript_feature_ai_min_batch_size))
     timeout_seconds = max(5, settings.transcript_feature_ai_timeout_seconds)
     target_sections = sections[:max_blocks]
 
-    model_name = _chat_compatible_model(settings.transcript_feature_ai_model)
-    results: dict[int, BlockAiFeatures] = {}
-    warnings: list[str] = []
+    try:
+        model_name = _assert_structured_chat_model(
+            settings.transcript_feature_ai_model,
+            purpose="OpenAI feature classifier",
+        )
+    except Exception as exc:
+        return {}, [f"OpenAI feature classification degraded: {exc}"], []
 
-    for start in range(0, len(target_sections), batch_size):
-        batch = target_sections[start : start + batch_size]
-        payload = {
-            "topics": list(_TOPIC_LABELS),
-            "blocks": [
-                {
-                    "index": start + offset,
-                    "speaker": section.speaker,
-                    "section_type": section.section_type,
-                    "text": _truncate_block_text(section.text),
-                }
-                for offset, section in enumerate(batch)
-            ],
-        }
-        try:
-            response = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.openai_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model_name,
-                    "temperature": 0,
-                    "response_format": {"type": "json_object"},
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": json.dumps(payload)},
+    response_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "blocks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "index": {"type": "integer"},
+                        "forward_density": {"type": "number"},
+                        "risk_density": {"type": "number"},
+                        "hedge_density": {"type": "number"},
+                        "specificity_density": {"type": "number"},
+                        "topic_label": {"type": "string", "enum": list(_TOPIC_LABELS)},
+                        "confidence": {"type": "number"},
+                    },
+                    "required": [
+                        "index",
+                        "forward_density",
+                        "risk_density",
+                        "hedge_density",
+                        "specificity_density",
+                        "topic_label",
+                        "confidence",
                     ],
                 },
-                timeout=timeout_seconds,
+            }
+        },
+        "required": ["blocks"],
+    }
+
+    results: dict[int, BlockAiFeatures] = {}
+    warnings: list[str] = []
+    diagnostics: list[str] = []
+    failed_batches = 0
+    failed_blocks = 0
+
+    cursor = 0
+    batch_number = 0
+    while cursor < len(target_sections):
+        batch_number += 1
+        remaining = len(target_sections) - cursor
+        attempt_batch_size = min(configured_batch, remaining)
+        parsed: dict[str, Any] | None = None
+        final_error = ""
+
+        while attempt_batch_size >= min_batch_size:
+            batch = target_sections[cursor : cursor + attempt_batch_size]
+            payload = {
+                "topics": list(_TOPIC_LABELS),
+                "blocks": [
+                    {
+                        "index": cursor + offset,
+                        "speaker": section.speaker,
+                        "section_type": section.section_type,
+                        "text": _truncate_block_text(section.text),
+                    }
+                    for offset, section in enumerate(batch)
+                ],
+            }
+            parsed, error = _post_structured_chat_completion(
+                api_key=settings.openai_api_key,
+                model_name=model_name,
+                system_prompt=system_prompt,
+                user_payload=payload,
+                response_schema_name="transcript_block_features_v1",
+                response_schema=response_schema,
+                timeout_seconds=timeout_seconds,
+                retries=settings.openai_request_retries,
+                backoff_seconds=settings.openai_retry_backoff_seconds,
             )
-            response.raise_for_status()
-            raw = response.json()
-            choices = raw.get("choices") or []
-            if not choices:
-                raise ValueError("OpenAI feature classifier returned no choices")
-            content = str(choices[0].get("message", {}).get("content") or "").strip()
-            if not content:
-                raise ValueError("OpenAI feature classifier returned empty content")
-            parsed = json.loads(_extract_json_from_text(content))
-            items = parsed.get("blocks")
-            if not isinstance(items, list):
-                raise ValueError("OpenAI feature classifier response missing blocks[]")
+            if parsed is not None:
+                break
 
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                idx = int(_safe_float(item.get("index"), -1))
-                if idx < 0 or idx >= len(sections):
-                    continue
-                topic_label = str(item.get("topic_label") or "general").strip().lower()
-                if topic_label not in _TOPIC_LABELS:
-                    topic_label = "general"
-                results[idx] = BlockAiFeatures(
-                    forward_density=_clamp_unit(_safe_float(item.get("forward_density"), 0.0)),
-                    risk_density=_clamp_unit(_safe_float(item.get("risk_density"), 0.0)),
-                    hedge_density=_clamp_unit(_safe_float(item.get("hedge_density"), 0.0)),
-                    specificity_density=_clamp_unit(_safe_float(item.get("specificity_density"), 0.0)),
-                    topic_label=topic_label,
-                    confidence=_clamp_unit(_safe_float(item.get("confidence"), 0.5)),
+            final_error = str(error or "unknown_error")
+            if attempt_batch_size > min_batch_size:
+                next_batch_size = max(min_batch_size, attempt_batch_size // 2)
+                diagnostics.append(
+                    f"batch={batch_number} reduced_size={attempt_batch_size}->{next_batch_size} error={final_error}"
                 )
-        except Exception as exc:
-            warnings.append(f"OpenAI feature classification failed for batch {start // batch_size + 1}: {exc}")
+                attempt_batch_size = next_batch_size
+                continue
+            break
 
-    return results, warnings
+        if parsed is None:
+            failed_batches += 1
+            failed_blocks += attempt_batch_size
+            diagnostics.append(
+                f"batch={batch_number} failed_size={attempt_batch_size} error={final_error or 'unknown_error'}"
+            )
+            cursor += attempt_batch_size
+            continue
+
+        items = parsed.get("blocks")
+        if not isinstance(items, list):
+            failed_batches += 1
+            failed_blocks += attempt_batch_size
+            diagnostics.append(f"batch={batch_number} invalid_schema=missing_blocks_array")
+            cursor += attempt_batch_size
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            idx = int(_safe_float(item.get("index"), -1))
+            if idx < 0 or idx >= len(sections):
+                continue
+            topic_label = str(item.get("topic_label") or "general").strip().lower()
+            if topic_label not in _TOPIC_LABELS:
+                topic_label = "general"
+            results[idx] = BlockAiFeatures(
+                forward_density=_clamp_unit(_safe_float(item.get("forward_density"), 0.0)),
+                risk_density=_clamp_unit(_safe_float(item.get("risk_density"), 0.0)),
+                hedge_density=_clamp_unit(_safe_float(item.get("hedge_density"), 0.0)),
+                specificity_density=_clamp_unit(_safe_float(item.get("specificity_density"), 0.0)),
+                topic_label=topic_label,
+                confidence=_clamp_unit(_safe_float(item.get("confidence"), 0.5)),
+            )
+        cursor += attempt_batch_size
+
+    if failed_batches > 0:
+        warnings.append(
+            "OpenAI feature classification degraded: "
+            f"{failed_batches} batches failed after retries; lexical fallback used for {failed_blocks} blocks."
+        )
+
+    return results, warnings, diagnostics
 
 
 def _sentences(text: str) -> list[str]:
@@ -624,11 +772,85 @@ def _extract_json_from_text(content: str) -> str:
     return content
 
 
-def _chat_compatible_model(model_name: str) -> str:
-    normalized = (model_name or "").strip().lower()
-    if normalized.startswith("gpt-5"):
-        return "gpt-4o-mini"
-    return model_name
+def _assert_structured_chat_model(model_name: str, *, purpose: str) -> str:
+    configured = (model_name or "").strip()
+    if not configured:
+        raise ValueError(f"{purpose}: model is not configured.")
+    lowered = configured.lower()
+    if lowered.startswith("gpt-5"):
+        raise ValueError(
+            f"{purpose}: model '{configured}' is not allowed for this chat.completions structured-output path. "
+            "Set an explicitly supported model (for example gpt-4o-mini)."
+        )
+    return configured
+
+
+def _structured_response_format(schema_name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": schema_name,
+            "strict": True,
+            "schema": schema,
+        },
+    }
+
+
+def _post_structured_chat_completion(
+    *,
+    api_key: str,
+    model_name: str,
+    system_prompt: str,
+    user_payload: dict[str, Any],
+    response_schema_name: str,
+    response_schema: dict[str, Any],
+    timeout_seconds: float,
+    retries: int,
+    backoff_seconds: float,
+) -> tuple[dict[str, Any] | None, str | None]:
+    timeout = max(5.0, float(timeout_seconds))
+    max_retries = max(0, int(retries))
+    backoff = max(0.25, float(backoff_seconds))
+    last_error = ""
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model_name,
+                    "temperature": 0,
+                    "response_format": _structured_response_format(response_schema_name, response_schema),
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": json.dumps(user_payload)},
+                    ],
+                },
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            choices = payload.get("choices") or []
+            if not choices:
+                raise ValueError("OpenAI response returned no choices.")
+            content = str(choices[0].get("message", {}).get("content") or "").strip()
+            if not content:
+                raise ValueError("OpenAI response returned empty content.")
+            parsed = json.loads(_extract_json_from_text(content))
+            if not isinstance(parsed, dict):
+                raise ValueError("OpenAI response returned non-object JSON payload.")
+            return parsed, None
+        except Exception as exc:
+            last_error = str(exc)
+            if attempt >= max_retries:
+                break
+            time.sleep(backoff * (2 ** attempt))
+
+    return None, last_error or "Unknown OpenAI failure."
 
 
 def _openai_normalize(
@@ -648,33 +870,23 @@ def _openai_normalize(
     }
 
     try:
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.openai_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": _chat_compatible_model(settings.openai_normalizer_model),
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": json.dumps(input_payload)},
-                ],
-            },
-            timeout=settings.request_timeout_seconds,
+        model_name = _assert_structured_chat_model(
+            settings.openai_normalizer_model,
+            purpose="OpenAI normalizer",
         )
-        response.raise_for_status()
-        payload = response.json()
-        choices = payload.get("choices") or []
-        if not choices:
-            return None, "OpenAI normalization returned no choices."
-        content = str(choices[0].get("message", {}).get("content") or "").strip()
-        if not content:
-            return None, "OpenAI normalization returned empty content."
-
-        parsed = json.loads(_extract_json_from_text(content))
+        parsed, error = _post_structured_chat_completion(
+            api_key=settings.openai_api_key,
+            model_name=model_name,
+            system_prompt=system_prompt,
+            user_payload=input_payload,
+            response_schema_name="transcript_document_v1",
+            response_schema=TranscriptDocument.model_json_schema(),
+            timeout_seconds=settings.request_timeout_seconds,
+            retries=settings.openai_request_retries,
+            backoff_seconds=settings.openai_retry_backoff_seconds,
+        )
+        if parsed is None:
+            return None, f"OpenAI normalization failed after retries: {error}"
         normalized = TranscriptDocument.model_validate(
             {
                 **parsed,
@@ -752,11 +964,17 @@ def build_speaker_analysis(
     score_text_fn,
     settings: Settings | None = None,
     classifier_warnings: list[str] | None = None,
+    classifier_diagnostics: list[str] | None = None,
 ) -> list[TranscriptSpeakerAnalysis]:
     results: list[TranscriptSpeakerAnalysis] = []
-    ai_features_by_index, ai_warnings = _classify_block_features_with_openai(sections=sections, settings=settings)
+    ai_features_by_index, ai_warnings, ai_diagnostics = _classify_block_features_with_openai(
+        sections=sections,
+        settings=settings,
+    )
     if classifier_warnings is not None and ai_warnings:
         classifier_warnings.extend(ai_warnings)
+    if classifier_diagnostics is not None and ai_diagnostics:
+        classifier_diagnostics.extend(ai_diagnostics)
 
     ai_weight_base = (
         _clamp_unit(settings.transcript_feature_ai_weight)
@@ -779,17 +997,43 @@ def build_speaker_analysis(
         )
         hedge_density_lex, hedge_terms = _weighted_term_density(block.text, _HEDGE_TERMS)
         forward_density_lex, forward_terms = _weighted_term_density(block.text, _FORWARD_TERMS)
+        forward_counter_density_lex, forward_counter_terms = _weighted_term_density(block.text, _FORWARD_COUNTER_TERMS)
         risk_density_lex, risk_terms = _weighted_term_density(block.text, _RISK_TERMS)
+        confidence_density_lex, confidence_terms = _weighted_term_density(block.text, _CONFIDENCE_TERMS)
+        confidence_counter_density_lex, confidence_counter_terms = _weighted_term_density(
+            block.text,
+            _CONFIDENCE_COUNTER_TERMS,
+        )
         specificity_density_lex, specificity_terms = _weighted_term_density(block.text, _SPECIFICITY_TERMS)
+        specificity_counter_density_lex, specificity_counter_terms = _weighted_term_density(
+            block.text,
+            _SPECIFICITY_COUNTER_TERMS,
+        )
+        directness_density_lex, directness_terms = _weighted_term_density(block.text, _DIRECTNESS_TERMS)
         topic_label_lex, topic_score_lex = _topic_label(block.text)
 
         ai_features = ai_features_by_index.get(idx)
         ai_blend_weight = ai_weight_base * (ai_features.confidence if ai_features is not None else 0.0)
+        counter_weight = (
+            max(0.0, float(getattr(settings, "transcript_feature_counter_weight", 0.65)))
+            if settings is not None
+            else 0.65
+        )
+        smoothing = (
+            _clamp(float(getattr(settings, "transcript_feature_density_smoothing", 0.35)), 0.0, 1.0)
+            if settings is not None
+            else 0.35
+        )
 
         forward_density = (
             forward_density_lex * (1.0 - ai_blend_weight) + ai_features.forward_density * ai_blend_weight
             if ai_features is not None
             else forward_density_lex
+        )
+        forward_counter_density = (
+            forward_counter_density_lex * (1.0 - ai_blend_weight) + ai_features.risk_density * ai_blend_weight
+            if ai_features is not None
+            else forward_counter_density_lex
         )
         risk_density = (
             risk_density_lex * (1.0 - ai_blend_weight) + ai_features.risk_density * ai_blend_weight
@@ -806,30 +1050,92 @@ def build_speaker_analysis(
             if ai_features is not None
             else specificity_density_lex
         )
+        confidence_density = (
+            confidence_density_lex * (1.0 - ai_blend_weight) + ai_features.specificity_density * ai_blend_weight
+            if ai_features is not None
+            else confidence_density_lex
+        )
+        confidence_counter_density = (
+            confidence_counter_density_lex * (1.0 - ai_blend_weight) + ai_features.hedge_density * ai_blend_weight
+            if ai_features is not None
+            else confidence_counter_density_lex
+        )
+        specificity_counter_density = (
+            specificity_counter_density_lex * (1.0 - ai_blend_weight) + ai_features.hedge_density * ai_blend_weight
+            if ai_features is not None
+            else specificity_counter_density_lex
+        )
+        directness_density = (
+            directness_density_lex * (1.0 - ai_blend_weight) + ai_features.specificity_density * ai_blend_weight
+            if ai_features is not None
+            else directness_density_lex
+        )
         blended_numeric_density = _clamp_unit(numeric_density * 0.65 + specificity_density * 0.35)
 
+        outlook_net = _net_density(forward_density, forward_counter_density, counter_weight)
+        confidence_net = _net_density(
+            confidence_density + specificity_density * 0.25 + forward_density * 0.15,
+            confidence_counter_density + hedge_density * 0.35 + risk_density * 0.2,
+            counter_weight,
+        )
+        specificity_net = _net_density(
+            specificity_density + blended_numeric_density * 0.25,
+            specificity_counter_density,
+            counter_weight,
+        )
+        evasiveness_net = _net_density(
+            hedge_density + risk_density * 0.25,
+            directness_density + specificity_density * 0.15,
+            counter_weight,
+        )
+        risk_net = _net_density(risk_density, directness_density * 0.3, max(0.25, counter_weight * 0.45))
+
+        confidence_component = _smoothed_percent(confidence_net, smoothing)
+        evasiveness_component = _smoothed_percent(evasiveness_net, smoothing)
+        specificity_component = _smoothed_percent(specificity_net, smoothing)
+        outlook_component = _smoothed_percent(outlook_net, smoothing)
+        risk_component = _smoothed_percent(risk_net, smoothing)
+
         confidence = _clamp(
-            42
-            + blended_numeric_density * 36
-            + specificity_density * 24
-            + forward_density * 10
-            - hedge_density * 42
-            - risk_density * 8,
+            14
+            + confidence_component * 0.68
+            + specificity_component * 0.14
+            + blended_numeric_density * 14
+            - evasiveness_component * 0.10,
             0,
             100,
         )
         evasiveness = _clamp(
-            20
-            + hedge_density * 58
-            + (1 - blended_numeric_density) * 16
-            + risk_density * 12
-            - specificity_density * 8,
+            10
+            + evasiveness_component * 0.72
+            + (1 - blended_numeric_density) * 14
+            + risk_component * 0.08
+            - specificity_component * 0.10,
             0,
             100,
         )
-        specificity = _clamp(24 + blended_numeric_density * 44 + specificity_density * 38 - hedge_density * 12, 0, 100)
-        forward_strength = _clamp(18 + forward_density * 82 - hedge_density * 8, 0, 100)
-        risk_intensity = _clamp(15 + risk_density * 88 + hedge_density * 8, 0, 100)
+        specificity = _clamp(
+            14
+            + specificity_component * 0.72
+            + blended_numeric_density * 18
+            - evasiveness_component * 0.12,
+            0,
+            100,
+        )
+        forward_strength = _clamp(
+            12
+            + outlook_component * 0.78
+            - evasiveness_component * 0.10,
+            0,
+            100,
+        )
+        risk_intensity = _clamp(
+            10
+            + risk_component * 0.80
+            + evasiveness_component * 0.08,
+            0,
+            100,
+        )
 
         topic_label = topic_label_lex
         if ai_features is not None and ai_features.topic_label != "general" and ai_blend_weight >= 0.2:
@@ -849,17 +1155,31 @@ def build_speaker_analysis(
             "method": "hybrid_lexical_plus_ai" if ai_features is not None else "lexical_weighted",
             "numeric_density": round(numeric_density, 4),
             "specificity_density": round(specificity_density, 4),
+            "specificity_counter_density": round(specificity_counter_density, 4),
             "forward_density": round(forward_density, 4),
+            "forward_counter_density": round(forward_counter_density, 4),
             "risk_density": round(risk_density, 4),
             "hedge_density": round(hedge_density, 4),
+            "directness_density": round(directness_density, 4),
+            "counter_weight": round(counter_weight, 4),
+            "density_smoothing": round(smoothing, 4),
+            "outlook_net_density": round(outlook_net, 4),
+            "confidence_net_density": round(confidence_net, 4),
+            "specificity_net_density": round(specificity_net, 4),
+            "evasiveness_net_density": round(evasiveness_net, 4),
             "topic_score_lex": round(topic_score_lex, 4),
             "ai_blend_weight": round(ai_blend_weight, 4),
             "topic_label_lex": topic_label_lex,
             "matched_terms": {
                 "forward": forward_terms[:8],
+                "forward_counter": forward_counter_terms[:8],
                 "risk": risk_terms[:8],
                 "hedge": hedge_terms[:8],
+                "confidence": confidence_terms[:8],
+                "confidence_counter": confidence_counter_terms[:8],
                 "specificity": specificity_terms[:8],
+                "specificity_counter": specificity_counter_terms[:8],
+                "directness": directness_terms[:8],
             },
         }
         if ai_features is not None:

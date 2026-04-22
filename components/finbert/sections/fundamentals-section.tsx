@@ -176,7 +176,7 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
 
         <div className="p-5 rounded-xl bg-card border border-border">
           <div className="text-xs text-muted-foreground mb-2">Reported EPS</div>
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-center gap-2">
             <span className="text-2xl font-bold text-foreground">${latestQuarter?.reported_eps}</span>
             <Badge className={`${epsBeats ? "bg-bullish/10 text-bullish border-bullish/20" : "bg-bearish/10 text-bearish border-bearish/20"}`}>
               {epsBeats ? "Beat" : "Miss"}

@@ -46,11 +46,16 @@ Each analysis run has job-level progress. The UI should interpret these fields a
 - `progress.messages[]`: timestamped run log entries with `level`, `stage`, `subtask`, `message`.
 
 Canonical stages and intended meaning:
-- `overview`: run initialization and top-level synthesis readiness.
-- `market_reaction`: feed acquisition, filtering, and sentiment scoring.
-- `fundamentals`: metric retrieval and cross-provider checks.
-- `transcript`: discovery, scrape, normalization, speaker scoring, summary.
-- `data_audit`: diagnostics assembly and reliability reporting.
+- `news_fetch`: fetch ranked candidate news pool.
+- `social_fetch`: fetch ranked candidate social pool.
+- `news_sentiment_scoring`: score retained news items with FinBERT.
+- `social_sentiment_scoring`: score retained social items with FinBERT.
+- `fundamentals_fetch`: pull baseline fundamentals.
+- `fundamentals_validation`: cross-provider checks and mismatch severity tagging.
+- `transcript_discovery_scrape`: discovery and scrape pass for transcript candidates.
+- `transcript_normalization`: deterministic/OpenAI normalization pass.
+- `transcript_sentiment_speaker_scoring`: speaker-block sentiment and feature scoring.
+- `data_audit_report_assembly`: data audit assembly plus report materialization.
 
 ## Global Report Context (cross-section)
 The complete report contains global context fields:
@@ -125,7 +130,7 @@ Normalized transcript documents (`transcript.transcripts[]`):
 - `has_full_transcript`
 - `extraction_confidence` (0-1)
 - `normalization_mode` (`openai`, `deterministic_degraded`)
-- `parsing_warnings[]`
+- `parsing_warnings[]` (compatibility field; map into diagnostics UI)
 - `participants[]` with `name`, optional `role`
 - `sections[]` with:
   - `section_type`, `speaker`, `speaker_role`, `text`, `order_index`, `evidence_snippets[]`
@@ -180,6 +185,8 @@ Data:
 - `data_audit.confidence_note`
 - `data_audit.normalization_mode`
 - `data_audit.warnings[]`
+- `data_audit.notices[]`
+- `data_audit.diagnostics[]`
 - `data_audit.missing_items[]`
 - `data_audit.parsing_warnings[]`
 - `data_audit.source_counts` (transcripts/news/social counts)
@@ -203,7 +210,7 @@ Fundamentals cross-check audit (`data_audit.fundamentals_validation`):
 - `yahoo_source_used`, `alpha_source_used`
 - `compared_fields[]`
 - `notes[]`
-- `mismatches[]`, each with `key`, `yahoo_value`, `alpha_value`, `relative_diff_pct`, `note`.
+- `mismatches[]`, each with `key`, `yahoo_value`, `alpha_value`, `relative_diff_pct`, `severity`, `note`.
 
 ## Auxiliary Surfaces and Payloads
 Treat these as product-relevant information surfaces, not just technical internals.
@@ -242,7 +249,7 @@ Data displayed for selected quarter:
 - transcript identity (`title`, `source`, `published_date`, `source_url`)
 - participant roster (`name`, `role`)
 - normalized section stream (`speaker`, `section_type`, `text`, order sequence)
-- parse/normalization quality context (`extraction_confidence`, `normalization_mode`, `parsing_warnings`).
+- parse/normalization quality context (`extraction_confidence`, `normalization_mode`, diagnostics incl. compatibility parsing_warnings).
 
 ### Social detail surface
 Purpose: read the full underlying social content for a selected record.

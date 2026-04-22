@@ -48,7 +48,14 @@ export function ReportView({ report, settings }: ReportViewProps) {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
+          <div className="text-left">
+            <div className="mb-0.5 text-xs text-muted-foreground">Score</div>
+            <div className="text-2xl font-mono font-bold text-foreground">
+              {report.overall_sentiment_score > 0 ? "+" : ""}
+              {(report.overall_sentiment_score * 100).toFixed(0)}
+            </div>
+          </div>
           <div
             className={`rounded-lg px-4 py-2 ${
               report.overall_sentiment_score > 0.3
@@ -71,13 +78,6 @@ export function ReportView({ report, settings }: ReportViewProps) {
               {report.overall_sentiment_label}
             </div>
           </div>
-          <div className="text-right">
-            <div className="mb-0.5 text-xs text-muted-foreground">Score</div>
-            <div className="text-2xl font-mono font-bold text-foreground">
-              {report.overall_sentiment_score > 0 ? "+" : ""}
-              {(report.overall_sentiment_score * 100).toFixed(0)}
-            </div>
-          </div>
         </div>
       </div>
 
@@ -96,7 +96,7 @@ export function ReportView({ report, settings }: ReportViewProps) {
         </TabsList>
 
         <TabsContent value="overview" className="mt-6">
-          <OverviewSection data={report.overview} />
+          <OverviewSection data={report.overview} onNavigate={setActiveTab} />
         </TabsContent>
 
         <TabsContent value="transcript" className="mt-6">

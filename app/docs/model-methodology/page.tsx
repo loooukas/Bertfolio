@@ -14,227 +14,114 @@ export default function ModelMethodologyPage() {
           </Link>
         </div>
         <p className="text-sm text-muted-foreground">
-          This page documents how every major score is computed, what values usually mean, and why each metric exists.
+          Canonical implementation reference for scoring, pipeline progress, data-audit taxonomy, and run-time settings behavior.
         </p>
       </section>
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
         <h2 className="text-xl font-semibold text-foreground">Score Scales</h2>
         <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>Directional sentiment scores are normalized to <code>-1</code> to <code>+1</code>.</li>
+          <li>UI score badges typically show unit scores multiplied by <code>100</code>.</li>
+          <li>Confidence, evasiveness, outlook strength, and specificity are <code>0-100</code> metrics.</li>
+          <li>Transcript coverage shows <code>found / requested</code> quarter capture.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">10-Stage Progress Semantics</h2>
+        <p className="text-sm text-muted-foreground">
+          Job progress is emitted from backend as the canonical ordered stage list below and rendered directly by frontend without collapsing to
+          coarse buckets.
+        </p>
+        <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
+          <li>News Fetch</li>
+          <li>Social Fetch</li>
+          <li>News Sentiment Scoring</li>
+          <li>Social Sentiment Scoring</li>
+          <li>Fundamentals Fetch</li>
+          <li>Fundamentals Validation</li>
+          <li>Transcript Discovery + Scrape</li>
+          <li>Transcript Normalization</li>
+          <li>Transcript Sentiment + Speaker Scoring</li>
+          <li>Data Audit / Report Assembly</li>
+        </ol>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Transcript Lexicon + Anti-Signal Model</h2>
+        <p className="text-sm text-muted-foreground">
+          Communication metrics use hybrid lexical densities with optional OpenAI block-feature blending. Each major signal includes positive and
+          counter lexicons, then uses net density and smoothing.
+        </p>
+        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
+          net_density = positive_density - counter_weight * counter_density{"\n"}
+          smoothed_pct = 100 * (0.5 + 0.5*tanh(net_density * curve)){"\n"}
+          confidence/evasiveness/specificity/outlook = bounded mixes of smoothed signals + numeric density + AI blend
+        </div>
+        <p className="text-sm text-muted-foreground">
+          AI feature blending remains active and confidence-bounded; lexical layers provide broader directional coverage and anti-signal handling.
+        </p>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Overall Scoring and Fundamentals Analyst Blend</h2>
+        <p className="text-sm text-muted-foreground">Locked aggregate weighting:</p>
+        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
+          overall = transcript*0.40 + fundamentals*0.35 + news*0.15 + social*0.10
+        </div>
+        <p className="text-sm text-muted-foreground">Fundamentals blend:</p>
+        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
+          growth_signal = clamp_unit((revenue_qoq_growth*0.55 + eps_qoq_growth*0.45) / 50.0){"\n"}
+          analyst_signal = blend(recommendation_mean_signal, target_upside_signal) when available{"\n"}
+          fundamentals_blended = 0.80 * growth_signal + 0.20 * analyst_signal{"\n"}
+          fallback = growth_signal when analyst fields unavailable
+        </div>
+        <p className="text-sm text-muted-foreground">Label thresholds are unchanged in this calibration pass.</p>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Executive Summary Generation</h2>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>Executive summary is an OpenAI-required quality step for full analysis.</li>
+          <li>Target output is exactly 5-6 analyst-style sentences with confidence/evasiveness/outlook + market/fundamental context.</li>
+          <li>Standalone company-name-only lines are disallowed.</li>
           <li>
-            Most sentiment-like values are normalized to <code>-1</code> to <code>+1</code> internally.
-          </li>
-          <li>
-            UI “Score” badges usually show that unit score multiplied by <code>100</code> (for example <code>+0.30</code> becomes <code>+30</code>).
-          </li>
-          <li>
-            Confidence, evasiveness, outlook, specificity, and related communication metrics are on a <code>0-100</code> scale.
-          </li>
-          <li>
-            Transcript coverage is shown as a percent derived from <code>found / requested</code> transcript count.
+            If generation fails, the summary section is hidden and Data Audit receives an actionable warning with failure cause.
           </li>
         </ul>
       </section>
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xl font-semibold text-foreground">Transcript Metric Formulas</h2>
-        <p className="text-sm text-muted-foreground">
-          Transcript sections are parsed into speaker blocks. FinBERT provides directional sentiment, and communication metrics are computed from a
-          hybrid feature pipeline (weighted lexicons plus optional OpenAI feature classification).
-        </p>
-        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
-          forward_density = blend(lex_forward_density, ai_forward_density, ai_weight*ai_confidence){"\n"}
-          risk_density = blend(lex_risk_density, ai_risk_density, ai_weight*ai_confidence){"\n"}
-          hedge_density = blend(lex_hedge_density, ai_hedge_density, ai_weight*ai_confidence){"\n"}
-          specificity_density = blend(lex_specificity_density, ai_specificity_density, ai_weight*ai_confidence){"\n"}
-          blended_numeric_density = 0.65*numeric_density + 0.35*specificity_density{"\n"}
-          confidence = clamp(42 + 36*blended_numeric_density + 24*specificity_density + 10*forward_density - 42*hedge_density - 8*risk_density, 0, 100){"\n"}
-          evasiveness = clamp(20 + 58*hedge_density + 16*(1-blended_numeric_density) + 12*risk_density - 8*specificity_density, 0, 100){"\n"}
-          specificity = clamp(24 + 44*blended_numeric_density + 38*specificity_density - 12*hedge_density, 0, 100){"\n"}
-          forward_looking_strength = clamp(18 + 82*forward_density - 8*hedge_density, 0, 100){"\n"}
-          risk_language_intensity = clamp(15 + 88*risk_density + 8*hedge_density, 0, 100){"\n"}
-          sentiment_direction = clamp(directional_score, -1, 1)
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Block-level speaker metrics are then aggregated (means/rollups) into section cards, table values, and transcript takeaways.
-        </p>
-      </section>
-
-      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xl font-semibold text-foreground">Topic Labeling</h2>
-        <p className="text-sm text-muted-foreground">
-          Topic labels are assigned by weighted lexical scoring and may be overridden by OpenAI block classification when classifier confidence is
-          strong enough. If no topic score clears threshold, label defaults to <code>general</code>.
-        </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">demand</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">margins</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">guidance</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">capex</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">costs</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">pricing</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">competition</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">regulation</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">ai</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">macro</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">supply_chain</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">cashflow</div>
-          <div className="rounded-md border border-border bg-secondary/30 p-3 text-foreground">general (fallback)</div>
-        </div>
-      </section>
-
-      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xl font-semibold text-foreground">FinBERT vs Engineered Metrics</h2>
+        <h2 className="text-xl font-semibold text-foreground">Data Audit Taxonomy</h2>
         <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li><code>warnings[]</code>: actionable failures that need attention.</li>
+          <li><code>notices[]</code>: non-blocking drift/variance.</li>
+          <li><code>diagnostics[]</code>: parser traces and internal method diagnostics.</li>
           <li>
-            FinBERT natively provides <code>positive</code>, <code>neutral</code>, and <code>negative</code> probabilities and derived directional score.
+            Legacy <code>parsing_warnings[]</code> is retained for compatibility and mapped into diagnostics in UI adapters.
           </li>
           <li>
-            Confidence/evasiveness/specificity/forward/risk/topic are engineered from transcript language features and optional AI feature classifier
-            outputs; FinBERT does not natively output those fields.
+            Fundamentals mismatch table includes severity (<code>low/medium/high</code>); only high-severity drift escalates into warnings.
           </li>
-          <li>
-            When OpenAI classifier is unavailable, the system remains fully deterministic with weighted lexical features.
-          </li>
+          <li><code>missing_items[]</code> is reserved for true absence of required data (not provider drift).</li>
         </ul>
       </section>
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xl font-semibold text-foreground">Market Reaction Pipeline</h2>
+        <h2 className="text-xl font-semibold text-foreground">Run Settings That Affect Backend Behavior</h2>
         <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
-          <li>Fetch larger candidate pools per source family (news/social).</li>
-          <li>Filter to ticker/company-related items and apply recency-aware relevance rank.</li>
-          <li>Dedupe near-duplicate headlines/posts.</li>
-          <li>Score remaining text with FinBERT for directional sentiment.</li>
-          <li>Keep top N items (N is controlled by settings).</li>
-        </ul>
-        <p className="text-sm text-muted-foreground">
-          Social feed output is source-balanced so one feed does not dominate final cards when multiple sources are enabled.
-        </p>
-      </section>
-
-      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xl font-semibold text-foreground">Fundamentals and Aggregate Scores</h2>
-        <p className="text-sm text-muted-foreground">Fundamentals momentum uses quarterly revenue and EPS growth:</p>
-        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
-          fundamentals_signal = clamp_unit((revenue_qoq_growth*0.55 + eps_qoq_growth*0.45) / 50.0)
-        </div>
-        <p className="text-sm text-muted-foreground">Aggregate communication/strength fields are derived as:</p>
-        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
-          company_strength_score = clamp(52 + avg_directional*32 + news_avg*10 + social_avg*6 + rev_growth*0.18 + eps_growth*0.20){"\n"}
-          outlook_score = clamp(avg_outlook){"\n"}
-          confidence_score = clamp(avg_confidence){"\n"}
-          evasiveness_score = clamp(avg_evasive)
-        </div>
-      </section>
-
-      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xl font-semibold text-foreground">Overall Score and Labels</h2>
-        <p className="text-sm text-muted-foreground">Full analysis weighting (when transcript data exists):</p>
-        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
-          overall_score = clamp_unit(
-          transcript_signal*0.45 + news_avg*0.22 + social_avg*0.13 + fundamentals_signal*0.20
-          )
-        </div>
-        <p className="text-sm text-muted-foreground">Fallback weighting (if transcript coverage is missing):</p>
-        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
-          overall_score = clamp_unit(news_avg*0.35 + social_avg*0.20 + fundamentals_signal*0.45)
-        </div>
-        <p className="text-sm text-muted-foreground">Snapshot endpoint weighting:</p>
-        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
-          overall_score = clamp_unit(news_avg*0.45 + social_avg*0.20 + fundamentals_signal*0.35)
-        </div>
-        <p className="text-sm text-muted-foreground">Label thresholds:</p>
-        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
-          strongly_bullish if score &gt;= 0.50{"\n"}
-          cautiously_bullish if score &gt;= 0.15{"\n"}
-          strongly_bearish if score &lt;= -0.50{"\n"}
-          cautiously_bearish if score &lt;= -0.15{"\n"}
-          mixed otherwise
-        </div>
-      </section>
-
-      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xl font-semibold text-foreground">Typical Value Bands</h2>
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-secondary/40 text-muted-foreground">
-              <tr>
-                <th className="px-4 py-3">Metric</th>
-                <th className="px-4 py-3">Typical</th>
-                <th className="px-4 py-3">Interpretation</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border text-foreground">
-              <tr>
-                <td className="px-4 py-3">Overall Sentiment (unit)</td>
-                <td className="px-4 py-3">-0.25 to +0.35</td>
-                <td className="px-4 py-3">Near 0 is mixed; tails indicate stronger directional consensus.</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3">Confidence (0-100)</td>
-                <td className="px-4 py-3">45 to 65</td>
-                <td className="px-4 py-3">Higher means more concrete/quantified language and fewer hedges.</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3">Evasiveness (0-100)</td>
-                <td className="px-4 py-3">35 to 60</td>
-                <td className="px-4 py-3">Higher means more hedging or less direct numeric specificity.</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3">Specificity (0-100)</td>
-                <td className="px-4 py-3">30 to 70</td>
-                <td className="px-4 py-3">Higher means denser concrete facts/metrics per speaker block.</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3">Outlook Strength (0-100)</td>
-                <td className="px-4 py-3">25 to 55</td>
-                <td className="px-4 py-3">Higher means stronger forward-looking language intensity.</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3">Sentiment Direction</td>
-                <td className="px-4 py-3">-0.3 to +0.3</td>
-                <td className="px-4 py-3">Signed directional tone per block/rollup from FinBERT output.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xl font-semibold text-foreground">Why These Metrics Exist</h2>
-        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>Data collection knobs: <code>news/social pool size</code>, <code>kept limits</code>, <code>lookback days</code>.</li>
+          <li>Source toggles: Alpha Vantage/Yahoo for news, Reddit/Stocktwits for social.</li>
           <li>
-            <strong>Confidence + Specificity:</strong> capture quality of communication, not just tone.
+            Transcript segmentation knobs: <code>TRANSCRIPT_SENTIMENT_SEGMENT_CHARS</code>, <code>MAX</code>, <code>MIN</code>,{" "}
+            <code>OVERLAP_SENTENCES</code>.
           </li>
           <li>
-            <strong>Evasiveness:</strong> highlights possible avoidance behavior in Q&amp;A or guidance responses.
+            Feature blending knobs: <code>TRANSCRIPT_FEATURE_AI_* </code>, <code>TRANSCRIPT_FEATURE_COUNTER_WEIGHT</code>,{" "}
+            <code>TRANSCRIPT_FEATURE_DENSITY_SMOOTHING</code>.
           </li>
-          <li>
-            <strong>Outlook + Topic labels:</strong> isolate where management is constructive or weak (demand, margins, capex, etc.).
-          </li>
-          <li>
-            <strong>Market Reaction feeds:</strong> provide external confirmation/challenge signals from recent coverage.
-          </li>
-          <li>
-            <strong>Fundamentals momentum:</strong> ties language-based readouts to hard quarterly business trajectory.
-          </li>
-        </ul>
-      </section>
-
-      <section className="space-y-3 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xl font-semibold text-foreground">Important Notes</h2>
-        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
-          <li>Scores are model-derived indicators, not investment advice.</li>
-          <li>Provider coverage varies by ticker and recency window; low counts reduce confidence.</li>
-          <li>
-            OpenAI normalization is opportunistic and only used when deterministic parsing quality is weak; deterministic parsing remains the default
-            path.
-          </li>
-          <li>
-            Hybrid feature classification is confidence-weighted and bounded; OpenAI feature output cannot fully override deterministic transcript
-            scoring.
-          </li>
+          <li>OpenAI request resiliency knobs: <code>OPENAI_REQUEST_RETRIES</code>, <code>OPENAI_RETRY_BACKOFF_SECONDS</code>.</li>
         </ul>
       </section>
     </main>

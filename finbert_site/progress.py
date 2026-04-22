@@ -13,10 +13,16 @@ from typing import Any, Callable, Optional
 
 
 STAGE_DEFINITIONS: list[dict[str, Any]] = [
-    {"key": "market_reaction", "label": "Market Reaction", "weight": 30},
-    {"key": "fundamentals", "label": "Fundamentals", "weight": 20},
-    {"key": "transcript", "label": "Transcript", "weight": 35},
-    {"key": "data_audit", "label": "Data Audit", "weight": 15},
+    {"key": "news_fetch", "label": "News Fetch", "weight": 8},
+    {"key": "social_fetch", "label": "Social Fetch", "weight": 7},
+    {"key": "news_sentiment_scoring", "label": "News Sentiment Scoring", "weight": 7},
+    {"key": "social_sentiment_scoring", "label": "Social Sentiment Scoring", "weight": 6},
+    {"key": "fundamentals_fetch", "label": "Fundamentals Fetch", "weight": 9},
+    {"key": "fundamentals_validation", "label": "Fundamentals Validation", "weight": 8},
+    {"key": "transcript_discovery_scrape", "label": "Transcript Discovery + Scrape", "weight": 16},
+    {"key": "transcript_normalization", "label": "Transcript Normalization", "weight": 14},
+    {"key": "transcript_sentiment_speaker_scoring", "label": "Transcript Sentiment + Speaker Scoring", "weight": 17},
+    {"key": "data_audit_report_assembly", "label": "Data Audit / Report Assembly", "weight": 8},
 ]
 
 

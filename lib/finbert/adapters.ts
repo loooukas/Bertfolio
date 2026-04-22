@@ -6,15 +6,21 @@ import type {
 } from "@/lib/finbert/types"
 
 export const DEFAULT_PROGRESS_STAGES: BackendJobProgressStage[] = [
-  { key: "market_reaction", label: "Market Reaction", status: "pending", progress: 0, message: "Waiting" },
-  { key: "fundamentals", label: "Fundamentals", status: "pending", progress: 0, message: "Waiting" },
-  { key: "transcript", label: "Transcript", status: "pending", progress: 0, message: "Waiting" },
-  { key: "data_audit", label: "Data Audit", status: "pending", progress: 0, message: "Waiting" },
+  { key: "news_fetch", label: "News Fetch", status: "pending", progress: 0, message: "Waiting" },
+  { key: "social_fetch", label: "Social Fetch", status: "pending", progress: 0, message: "Waiting" },
+  { key: "news_sentiment_scoring", label: "News Sentiment Scoring", status: "pending", progress: 0, message: "Waiting" },
+  { key: "social_sentiment_scoring", label: "Social Sentiment Scoring", status: "pending", progress: 0, message: "Waiting" },
+  { key: "fundamentals_fetch", label: "Fundamentals Fetch", status: "pending", progress: 0, message: "Waiting" },
+  { key: "fundamentals_validation", label: "Fundamentals Validation", status: "pending", progress: 0, message: "Waiting" },
+  { key: "transcript_discovery_scrape", label: "Transcript Discovery + Scrape", status: "pending", progress: 0, message: "Waiting" },
+  { key: "transcript_normalization", label: "Transcript Normalization", status: "pending", progress: 0, message: "Waiting" },
+  { key: "transcript_sentiment_speaker_scoring", label: "Transcript Sentiment + Speaker Scoring", status: "pending", progress: 0, message: "Waiting" },
+  { key: "data_audit_report_assembly", label: "Data Audit / Report Assembly", status: "pending", progress: 0, message: "Waiting" },
 ]
 
 export const DEFAULT_PROGRESS: BackendJobProgress = {
   percent: 0,
-  active_stage: "market_reaction",
+  active_stage: "news_fetch",
   active_subtask: "Initializing analysis",
   stages: DEFAULT_PROGRESS_STAGES,
 }
@@ -98,21 +104,19 @@ function safeProgress(stage?: BackendJobProgress): BackendJobProgress {
   if (!stage) {
     return DEFAULT_PROGRESS
   }
-  const stageMap = new Map(stage.stages.map((item) => [item.key, item]))
+  const normalizedStages = (stage.stages || [])
+    .filter((item) => item && typeof item.key === "string" && item.key.trim())
+    .map((item) => ({
+      ...item,
+      progress: Number.isFinite(item.progress) ? clamp(item.progress, 0, 1) : 0,
+      duration_ms: typeof item.duration_ms === "number" ? item.duration_ms : undefined,
+    }))
+
   return {
     percent: Number.isFinite(stage.percent) ? stage.percent : 0,
     active_stage: stage.active_stage || "",
     active_subtask: stage.active_subtask || "",
-    stages: DEFAULT_PROGRESS_STAGES.map((defaults) => {
-      const fromApi = stageMap.get(defaults.key)
-      return fromApi
-        ? {
-            ...fromApi,
-            progress: Number.isFinite(fromApi.progress) ? clamp(fromApi.progress, 0, 1) : 0,
-            duration_ms: typeof fromApi.duration_ms === "number" ? fromApi.duration_ms : undefined,
-          }
-        : defaults
-    }),
+    stages: normalizedStages.length > 0 ? normalizedStages : DEFAULT_PROGRESS_STAGES,
   }
 }
 
@@ -231,6 +235,13 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
     (report.data_audit.dedupe_counts.news_deduped || 0) +
     (report.data_audit.dedupe_counts.social_deduped || 0) +
     (report.data_audit.dedupe_counts.deduped || 0)
+  const diagnosticsCompat = Array.from(
+    new Set(
+      [...(report.data_audit.diagnostics || []), ...(report.data_audit.parsing_warnings || [])]
+        .map((item) => String(item || "").trim())
+        .filter(Boolean),
+    ),
+  )
 
   const transcriptDocs = report.transcript.transcripts.map((doc, index) => {
     const label = transcriptLabelFromMetadata(doc.title, doc.published_date, index)
@@ -332,8 +343,10 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
       confidence_note: report.data_audit.confidence_note,
       normalization_mode: report.data_audit.normalization_mode,
       warnings: report.data_audit.warnings,
+      notices: report.data_audit.notices || [],
+      diagnostics: diagnosticsCompat,
       missing_items: report.data_audit.missing_items,
-      parsing_warnings: report.data_audit.parsing_warnings,
+      parsing_warnings: diagnosticsCompat,
       source_counts: report.data_audit.source_counts,
       dedupe_counts: {
         pool: dedupePool,
@@ -354,6 +367,7 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
             typeof mismatch.alpha_value === "number" ? mismatch.alpha_value.toFixed(4) : "n/a",
           relative_diff_pct:
             typeof mismatch.relative_diff_pct === "number" ? mismatch.relative_diff_pct : 0,
+          severity: mismatch.severity || "low",
           note: mismatch.note || "",
         })),
       },

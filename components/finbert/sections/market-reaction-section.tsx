@@ -78,14 +78,13 @@ export function MarketReactionSection({ data, gridColumns = 2 }: MarketReactionS
   const [selectedSocial, setSelectedSocial] = useState<SocialItem | null>(null)
   const gridClass = gridColumns === 2 ? "grid grid-cols-1 xl:grid-cols-2 gap-3" : "space-y-3"
 
-  const bullishCount = [...data.news_items, ...data.social_items].filter(
-    (item) => item.sentiment_label === "bullish"
-  ).length
-  const bearishCount = [...data.news_items, ...data.social_items].filter(
-    (item) => item.sentiment_label === "bearish"
-  ).length
-  const totalCount = data.news_count + data.social_count
+  const combinedItems = [...data.news_items, ...data.social_items]
+  const bullishCount = combinedItems.filter((item) => item.sentiment_label === "bullish").length
+  const bearishCount = combinedItems.filter((item) => item.sentiment_label === "bearish").length
+  const totalCount = combinedItems.length
+  const neutralCount = Math.max(0, totalCount - bullishCount - bearishCount)
   const bullishPct = totalCount > 0 ? (bullishCount / totalCount) * 100 : 0
+  const neutralPct = totalCount > 0 ? (neutralCount / totalCount) * 100 : 0
   const bearishPct = totalCount > 0 ? (bearishCount / totalCount) * 100 : 0
 
   return (
@@ -123,17 +122,32 @@ export function MarketReactionSection({ data, gridColumns = 2 }: MarketReactionS
         <div className="mt-6">
           <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
             <span>Sentiment Distribution</span>
-            <span>{Math.round(bullishPct)}% Bullish</span>
+            <span>{totalCount} total signals</span>
           </div>
           <div className="h-3 rounded-full bg-secondary overflow-hidden flex">
             <div 
               className="h-full bg-bullish" 
               style={{ width: `${bullishPct}%` }} 
             />
+            <div
+              className="h-full bg-neutral"
+              style={{ width: `${neutralPct}%` }}
+            />
             <div 
-              className="h-full bg-bearish" 
+              className="ml-auto h-full bg-bearish" 
               style={{ width: `${bearishPct}%` }} 
             />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground">
+            <span>
+              <span className="font-medium text-bullish">{Math.round(bullishPct)}%</span> Bullish
+            </span>
+            <span>
+              <span className="font-medium text-neutral">{Math.round(neutralPct)}%</span> Neutral
+            </span>
+            <span>
+              <span className="font-medium text-bearish">{Math.round(bearishPct)}%</span> Bearish
+            </span>
           </div>
         </div>
       </div>
@@ -281,7 +295,7 @@ export function MarketReactionSection({ data, gridColumns = 2 }: MarketReactionS
                 </div>
                 <DialogTitle className="text-lg">{selectedSocial.title}</DialogTitle>
               </DialogHeader>
-              <div className="max-h-[65vh] space-y-4 overflow-y-auto pr-1">
+              <div className="max-h-[65vh] min-h-0 space-y-4 overflow-y-auto overscroll-contain pr-1">
                 <div className="break-words whitespace-pre-wrap rounded-lg bg-secondary/50 p-4 text-sm leading-relaxed text-foreground">
                   {selectedSocial.body}
                 </div>

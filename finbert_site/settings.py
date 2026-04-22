@@ -26,6 +26,8 @@ class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_normalizer_model: str = os.getenv("OPENAI_NORMALIZER_MODEL", "gpt-4o-mini")
     openai_search_model: str = os.getenv("OPENAI_SEARCH_MODEL", "gpt-5-mini")
+    openai_request_retries: int = int(os.getenv("OPENAI_REQUEST_RETRIES", "2"))
+    openai_retry_backoff_seconds: float = float(os.getenv("OPENAI_RETRY_BACKOFF_SECONDS", "1.5"))
 
     transcript_pipeline_mode: str = os.getenv("TRANSCRIPT_PIPELINE_MODE", "motley_cli")
     transcript_pipeline_fallback_to_legacy: bool = _env_bool("TRANSCRIPT_PIPELINE_FALLBACK_TO_LEGACY", True)
@@ -55,7 +57,10 @@ class Settings:
     transcript_feature_ai_weight: float = float(os.getenv("TRANSCRIPT_FEATURE_AI_WEIGHT", "0.35"))
     transcript_feature_ai_max_blocks: int = int(os.getenv("TRANSCRIPT_FEATURE_AI_MAX_BLOCKS", "80"))
     transcript_feature_ai_batch_size: int = int(os.getenv("TRANSCRIPT_FEATURE_AI_BATCH_SIZE", "20"))
-    transcript_feature_ai_timeout_seconds: int = int(os.getenv("TRANSCRIPT_FEATURE_AI_TIMEOUT_SECONDS", "12"))
+    transcript_feature_ai_timeout_seconds: int = int(os.getenv("TRANSCRIPT_FEATURE_AI_TIMEOUT_SECONDS", "24"))
+    transcript_feature_ai_min_batch_size: int = int(os.getenv("TRANSCRIPT_FEATURE_AI_MIN_BATCH_SIZE", "4"))
+    transcript_feature_counter_weight: float = float(os.getenv("TRANSCRIPT_FEATURE_COUNTER_WEIGHT", "0.65"))
+    transcript_feature_density_smoothing: float = float(os.getenv("TRANSCRIPT_FEATURE_DENSITY_SMOOTHING", "0.35"))
 
     news_limit: int = int(os.getenv("NEWS_LIMIT", "50"))
     news_pool_size: int = int(os.getenv("NEWS_POOL_SIZE", "240"))
