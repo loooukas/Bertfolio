@@ -764,11 +764,6 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                   <p className="text-sm text-muted-foreground">No transcript is available for this quarter.</p>
                 ) : (
                   <div className="space-y-3">
-                    <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs text-muted-foreground">
-                      <div>{selectedQuarterTranscript.label}</div>
-                      {selectedQuarterTranscript.source ? <div>Source: {selectedQuarterTranscript.source}</div> : null}
-                    </div>
-
                     {selectedQuarterTranscript.sections.length === 0 ? (
                       <p className="text-sm text-muted-foreground">No parsed speaker blocks were found in this transcript.</p>
                     ) : (
@@ -802,36 +797,40 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                               <span className="text-xs text-muted-foreground">Block {section.order_index + 1}</span>
                             </div>
 
-                            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
-                              <div className="rounded border border-border bg-secondary/30 px-2 py-1">
-                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Sentiment</div>
-                                <div className={`text-xs font-mono ${sentimentDirection === null ? "text-muted-foreground" : getSentimentColor(sentimentDirection)}`}>
+                            <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                              <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Sentiment</div>
+                                <div className={`font-mono text-base font-semibold ${sentimentDirection === null ? "text-muted-foreground" : getSentimentColor(sentimentDirection)}`}>
                                   {sentimentDirection === null
                                     ? "n/a"
                                     : `${sentimentDirection > 0 ? "+" : ""}${(sentimentDirection * 100).toFixed(0)}`}
                                 </div>
                               </div>
-                              <div className="rounded border border-border bg-secondary/30 px-2 py-1">
-                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Confidence</div>
-                                <div className="text-xs font-mono text-foreground">
+                              <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Confidence</div>
+                                <div className="font-mono text-base text-foreground">
                                   {typeof score?.confidence === "number" ? score.confidence.toFixed(2) : "n/a"}
                                 </div>
                               </div>
-                              <div className="rounded border border-border bg-secondary/30 px-2 py-1">
-                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Evasiveness</div>
-                                <div className="text-xs font-mono text-foreground">
+                              <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Evasiveness</div>
+                                <div
+                                  className={`font-mono text-base ${
+                                    typeof score?.evasiveness === "number" && score.evasiveness > 30 ? "text-bearish" : "text-foreground"
+                                  }`}
+                                >
                                   {typeof score?.evasiveness === "number" ? score.evasiveness.toFixed(2) : "n/a"}
                                 </div>
                               </div>
-                              <div className="rounded border border-border bg-secondary/30 px-2 py-1">
-                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Specificity</div>
-                                <div className="text-xs font-mono text-foreground">
+                              <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Specificity</div>
+                                <div className="font-mono text-base text-foreground">
                                   {typeof score?.specificity === "number" ? score.specificity.toFixed(2) : "n/a"}
                                 </div>
                               </div>
-                              <div className="rounded border border-border bg-secondary/30 px-2 py-1">
-                                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Topic</div>
-                                <div className="text-xs text-foreground">{score?.topic_label || "n/a"}</div>
+                              <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Topic</div>
+                                <div className="text-base text-foreground">{score?.topic_label || "n/a"}</div>
                               </div>
                             </div>
 
