@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -40,7 +42,18 @@ from .jobs import AnalyzeJobManager
 from .schemas import FundamentalsSummary, TranscriptSpeakerAnalysis
 from .settings import Settings, settings
 
-app = FastAPI(title="FinBERT Earnings Signals", version="0.4.0")
+
+@asynccontextmanager
+async def _app_lifespan(_: FastAPI):
+    try:
+        yield
+    except asyncio.CancelledError:
+        # Uvicorn reload + Ctrl+C can cancel lifespan receive during shutdown.
+        # Swallow this expected cancellation to avoid noisy traceback logs.
+        return
+
+
+app = FastAPI(title="FinBERT Earnings Signals", version="0.4.0", lifespan=_app_lifespan)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
