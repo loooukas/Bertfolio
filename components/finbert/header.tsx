@@ -227,6 +227,43 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
             </div>
 
             <div className="space-y-3 rounded-lg border border-border p-3">
+              <div className="text-sm font-medium text-foreground">Score Weights (%)</div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <NumberInput
+                  label="Transcript Weight"
+                  value={effectiveSettings.run_overrides.score_weight_transcript}
+                  min={0}
+                  max={100}
+                  onChange={(value) => updateRunSettings({ score_weight_transcript: value })}
+                />
+                <NumberInput
+                  label="Fundamentals Weight"
+                  value={effectiveSettings.run_overrides.score_weight_fundamentals}
+                  min={0}
+                  max={100}
+                  onChange={(value) => updateRunSettings({ score_weight_fundamentals: value })}
+                />
+                <NumberInput
+                  label="News Weight"
+                  value={effectiveSettings.run_overrides.score_weight_news}
+                  min={0}
+                  max={100}
+                  onChange={(value) => updateRunSettings({ score_weight_news: value })}
+                />
+                <NumberInput
+                  label="Social Weight"
+                  value={effectiveSettings.run_overrides.score_weight_social}
+                  min={0}
+                  max={100}
+                  onChange={(value) => updateRunSettings({ score_weight_social: value })}
+                />
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                Weights are normalized automatically; they do not need to sum to 100.
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-lg border border-border p-3">
               <div className="text-sm font-medium text-foreground">Feed Sources</div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <SourceToggle

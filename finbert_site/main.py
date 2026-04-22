@@ -27,6 +27,10 @@ class AnalyzeRuntimeOverrides(BaseModel):
     social_limit: Optional[int] = Field(default=None, ge=10, le=120)
     social_pool_size: Optional[int] = Field(default=None, ge=80, le=1000)
     social_lookback_days: Optional[int] = Field(default=None, ge=3, le=365)
+    score_weight_transcript: Optional[float] = Field(default=None, ge=0, le=100)
+    score_weight_fundamentals: Optional[float] = Field(default=None, ge=0, le=100)
+    score_weight_news: Optional[float] = Field(default=None, ge=0, le=100)
+    score_weight_social: Optional[float] = Field(default=None, ge=0, le=100)
     news_enable_alpha_vantage: Optional[bool] = None
     news_enable_yahoo_finance: Optional[bool] = None
     social_enable_reddit: Optional[bool] = None

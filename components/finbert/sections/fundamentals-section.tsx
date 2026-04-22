@@ -123,7 +123,7 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
         {data.analyst_signals.length === 0 ? (
           <p className="text-sm text-muted-foreground">Analyst consensus data is currently unavailable for this ticker.</p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {data.analyst_signals.map((signal) => (
               <div key={signal.key} className="rounded-lg border border-border bg-secondary/30 p-4">
                 <div className="text-xs text-muted-foreground mb-1">{signal.label}</div>

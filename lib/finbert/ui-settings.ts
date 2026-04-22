@@ -7,6 +7,10 @@ export interface AnalyzeRunOverrides {
   social_limit: number
   social_pool_size: number
   social_lookback_days: number
+  score_weight_transcript: number
+  score_weight_fundamentals: number
+  score_weight_news: number
+  score_weight_social: number
   news_enable_alpha_vantage: boolean
   news_enable_yahoo_finance: boolean
   social_enable_reddit: boolean
@@ -31,10 +35,14 @@ export const DEFAULT_UI_SETTINGS: UISettings = {
   run_overrides: {
     news_limit: 50,
     news_pool_size: 240,
-    news_lookback_days: 21,
+    news_lookback_days: 30,
     social_limit: 50,
     social_pool_size: 260,
-    social_lookback_days: 21,
+    social_lookback_days: 30,
+    score_weight_transcript: 40,
+    score_weight_fundamentals: 35,
+    score_weight_news: 15,
+    score_weight_social: 10,
     news_enable_alpha_vantage: true,
     news_enable_yahoo_finance: true,
     social_enable_reddit: true,
@@ -61,6 +69,10 @@ export function sanitizeAnalyzeRunOverrides(overrides?: Partial<AnalyzeRunOverri
     social_limit: clampInt(incoming.social_limit, 10, 120),
     social_pool_size: clampInt(incoming.social_pool_size, 80, 1000),
     social_lookback_days: clampInt(incoming.social_lookback_days, 3, 365),
+    score_weight_transcript: clampInt(incoming.score_weight_transcript, 0, 100),
+    score_weight_fundamentals: clampInt(incoming.score_weight_fundamentals, 0, 100),
+    score_weight_news: clampInt(incoming.score_weight_news, 0, 100),
+    score_weight_social: clampInt(incoming.score_weight_social, 0, 100),
     news_enable_alpha_vantage: Boolean(incoming.news_enable_alpha_vantage),
     news_enable_yahoo_finance: Boolean(incoming.news_enable_yahoo_finance),
     social_enable_reddit: Boolean(incoming.social_enable_reddit),

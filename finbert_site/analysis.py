@@ -491,6 +491,24 @@ def _fundamentals_blended_signal(growth_signal: float, analyst_signal: Optional[
     return _clamp_unit(growth_signal * 0.80 + float(analyst_signal) * 0.20)
 
 
+def _resolve_score_weights(settings: Settings) -> dict[str, float]:
+    raw = {
+        "transcript": float(getattr(settings, "score_weight_transcript", 40.0)),
+        "fundamentals": float(getattr(settings, "score_weight_fundamentals", 35.0)),
+        "news": float(getattr(settings, "score_weight_news", 15.0)),
+        "social": float(getattr(settings, "score_weight_social", 10.0)),
+    }
+    cleaned = {
+        key: (value if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0 else 0.0)
+        for key, value in raw.items()
+    }
+    total = sum(cleaned.values())
+    if total <= 0:
+        cleaned = {"transcript": 40.0, "fundamentals": 35.0, "news": 15.0, "social": 10.0}
+        total = 100.0
+    return {key: value / total for key, value in cleaned.items()}
+
+
 def _summary_sentence_count(text: str) -> int:
     cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
     if not cleaned:
@@ -573,8 +591,12 @@ def _generate_executive_summary_with_openai(
             starts_with_ticker = summary.lower().startswith(ticker.lower())
             if not starts_with_company and not starts_with_ticker:
                 summary = f"{company_name} {summary.lstrip(' .:-')}"
-        sentence_count = _summary_sentence_count(summary)
-        if sentence_count < 5 or sentence_count > 6:
+        sentence_parts = _split_sentences(summary)
+        if len(sentence_parts) > 6:
+            summary = " ".join(sentence_parts[:6]).strip()
+            sentence_parts = _split_sentences(summary)
+        sentence_count = len(sentence_parts)
+        if sentence_count < 5:
             return "", f"OpenAI summary must be 5-6 sentences (received {sentence_count})."
         return summary, None
     except Exception as exc:
@@ -963,6 +985,9 @@ def _classify_audit_messages(messages: list[str]) -> tuple[list[str], list[str],
         if "fundamentals validation:" in lowered:
             notices.append(cleaned)
             continue
+        if "fundamentals validation found low/medium provider drift" in lowered:
+            notices.append(cleaned)
+            continue
         if "no yahoo finance news items returned" in lowered:
             notices.append(cleaned)
             continue
@@ -1274,6 +1299,7 @@ def _build_legacy_fields(
     fundamentals: FundamentalsSummary,
     news: list[NewsArticle],
     social: list[SocialPost],
+    score_weights: dict[str, float],
 ) -> tuple[list[AnalystSignal], ResearchDebate, TraderProposal, RiskManagementSummary, ManagerDecision]:
     transcript_signal = (
         mean(item.sentiment.directional_score for item in transcript_results)
@@ -1346,7 +1372,12 @@ def _build_legacy_fields(
         ),
     ]
 
-    composite = transcript_signal * 0.40 + fundamentals_signal * 0.35 + news_signal * 0.15 + social_signal * 0.10
+    composite = (
+        transcript_signal * score_weights.get("transcript", 0.40)
+        + fundamentals_signal * score_weights.get("fundamentals", 0.35)
+        + news_signal * score_weights.get("news", 0.15)
+        + social_signal * score_weights.get("social", 0.10)
+    )
 
     research_team = ResearchDebate(
         bullish_points=[f"{a.name}: {a.key_points[0]}" for a in analyst_team if a.signal_score > 0.05]
@@ -1392,6 +1423,7 @@ def _build_legacy_fields(
 
 def build_sentiment_snapshot(ticker: str, settings: Settings) -> dict[str, Any]:
     symbol = _normalize_ticker(ticker)
+    score_weights = _resolve_score_weights(settings)
     fundamentals_dict = fetch_fundamentals(symbol)
     company_name = str(fundamentals_dict.get("company_name") or symbol)
 
@@ -1440,7 +1472,21 @@ def build_sentiment_snapshot(ticker: str, settings: Settings) -> dict[str, Any]:
             upside_pct = None
     analyst_signal = _analyst_signal(fundamentals_dict.get("recommendation_mean"), upside_pct)
     fundamentals_signal = _fundamentals_blended_signal(growth_signal, analyst_signal)
-    overall_score = _clamp_unit(news_avg * 0.15 + social_avg * 0.10 + fundamentals_signal * 0.35)
+    non_transcript_total = (
+        score_weights.get("fundamentals", 0.35)
+        + score_weights.get("news", 0.15)
+        + score_weights.get("social", 0.10)
+    )
+    if non_transcript_total <= 0:
+        non_transcript_total = 1.0
+    overall_score = _clamp_unit(
+        (
+            news_avg * score_weights.get("news", 0.15)
+            + social_avg * score_weights.get("social", 0.10)
+            + fundamentals_signal * score_weights.get("fundamentals", 0.35)
+        )
+        / non_transcript_total
+    )
     overall_label = _label_from_sentiment_score(overall_score)
 
     overview = OverviewSection(
@@ -1498,6 +1544,7 @@ def build_analysis(
     progress: Optional[RunProgressTracker] = None,
     run_id: Optional[str] = None,
 ) -> AnalysisResponse:
+    score_weights = _resolve_score_weights(settings)
     task_breakdown: list[AuditTaskBreakdown] = []
 
     def _record_task(key: str, label: str, start_ts: float, detail: str = "", status: str = "done") -> None:
@@ -1841,10 +1888,10 @@ def build_analysis(
 
     transcript_component = transcript_direction if normalized_documents else 0.0
     overall_score = _clamp_unit(
-        transcript_component * 0.40
-        + fundamentals_signal * 0.35
-        + news_avg * 0.15
-        + social_avg * 0.10
+        transcript_component * score_weights.get("transcript", 0.40)
+        + fundamentals_signal * score_weights.get("fundamentals", 0.35)
+        + news_avg * score_weights.get("news", 0.15)
+        + social_avg * score_weights.get("social", 0.10)
     )
 
     overall_label = _label_from_sentiment_score(overall_score)
@@ -2135,7 +2182,7 @@ def build_analysis(
         )
     elif mismatch_medium or mismatch_low:
         audit_candidates.append(
-            "Fundamentals validation found low/medium provider drift; see mismatch table for details."
+            "Fundamentals validation: low/medium provider drift; see mismatch table for details."
         )
     warnings, notices, diagnostics = _classify_audit_messages(audit_candidates)
 
@@ -2214,6 +2261,7 @@ def build_analysis(
         fundamentals=fundamentals,
         news=news,
         social=social,
+        score_weights=score_weights,
     )
 
     run_summary = RunSummary(

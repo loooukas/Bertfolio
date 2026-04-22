@@ -444,7 +444,7 @@ def _topic_label(text: str) -> tuple[str, float]:
     return best_topic, best_score
 
 
-def _truncate_block_text(text: str, max_chars: int = 1000) -> str:
+def _truncate_block_text(text: str, max_chars: int = 700) -> str:
     compact = re.sub(r"\s+", " ", text).strip()
     if len(compact) <= max_chars:
         return compact
@@ -609,10 +609,16 @@ def _classify_block_features_with_openai(
         cursor += attempt_batch_size
 
     if failed_batches > 0:
-        warnings.append(
+        total_blocks = max(1, len(target_sections))
+        fallback_ratio = failed_blocks / total_blocks
+        degradation_message = (
             "OpenAI feature classification degraded: "
             f"{failed_batches} batches failed after retries; lexical fallback used for {failed_blocks} blocks."
         )
+        if fallback_ratio <= 0.08 and failed_blocks <= 3:
+            diagnostics.append(f"minor_fallback: {degradation_message}")
+        else:
+            warnings.append(degradation_message)
 
     return results, warnings, diagnostics
 

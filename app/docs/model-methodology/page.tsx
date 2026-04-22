@@ -66,7 +66,7 @@ export default function ModelMethodologyPage() {
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
         <h2 className="text-xl font-semibold text-foreground">Overall Scoring and Fundamentals Analyst Blend</h2>
-        <p className="text-sm text-muted-foreground">Locked aggregate weighting:</p>
+        <p className="text-sm text-muted-foreground">Default aggregate weighting (user-adjustable in Run Settings):</p>
         <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
           overall = transcript*0.40 + fundamentals*0.35 + news*0.15 + social*0.10
         </div>
