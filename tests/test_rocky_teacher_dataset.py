@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from rocky.build_teacher_dataset import _flatten_document, _infer_year_quarter, _parse_published_date, _skip_flags
+from rocky.build_teacher_dataset import (
+    _flatten_document,
+    _infer_year_quarter,
+    _parse_published_date,
+    _reformat_kaggle_transcript,
+    _skip_flags,
+)
 
 
 def test_skip_flags_marks_operator_fluff() -> None:
@@ -79,3 +85,25 @@ def test_parse_published_date_handles_kaggle_style_timestamp() -> None:
 def test_infer_year_quarter_prefers_q_label() -> None:
     year, quarter = _infer_year_quarter("2021-Q3", "2021-08-05")
     assert (year, quarter) == (2021, 3)
+
+
+def test_reformat_kaggle_transcript_converts_speaker_lines() -> None:
+    raw = """
+Prepared Remarks:
+Operator
+Hello and welcome.
+Patty Yahn-Urlaub -- Senior Vice President of Investor Relations
+Thanks, operator.
+Bill Newlands -- Chief Executive Officer
+Good morning everyone.
+Duration: 83 minutes
+Call participants:
+Patty Yahn-Urlaub -- Senior Vice President of Investor Relations
+"""
+    reformatted, participants, warnings = _reformat_kaggle_transcript(raw)
+    assert "Operator: Hello and welcome." in reformatted
+    assert "Patty Yahn-Urlaub: Thanks, operator." in reformatted
+    assert "Bill Newlands: Good morning everyone." in reformatted
+    assert "Duration:" not in reformatted
+    assert any(item["name"] == "Bill Newlands" for item in participants)
+    assert isinstance(warnings, list)

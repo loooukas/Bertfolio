@@ -78,6 +78,15 @@ _ADMIN_RE = re.compile(
 _ACK_RE = re.compile(r"^(?:thanks?|thank you|okay|great|good morning|good afternoon)[.! ]*$", flags=re.IGNORECASE)
 _OPERATOR_HINT_RE = re.compile(r"\b(operator|moderator|host)\b", flags=re.IGNORECASE)
 _QUARTER_RE = re.compile(r"^\s*(\d{4})-Q([1-4])\s*$", flags=re.IGNORECASE)
+_INLINE_SPEAKER_RE = re.compile(r"^([A-Za-z][A-Za-z .,'&()/-]{1,90}):\s*(.+)$")
+_SPEAKER_LABEL_RE = re.compile(r"^[A-Z][A-Za-z.'\-&]+(?: [A-Z][A-Za-z.'\-&]+){0,7}$")
+_KAGGLE_SECTION_HEADINGS = {"prepared remarks", "questions and answers", "q&a", "closing remarks"}
+_KAGGLE_END_MARKERS = (
+    "all earnings call transcripts",
+    "more ",
+    "duration:",
+    "call participants:",
+)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -422,6 +431,104 @@ def _infer_year_quarter(q_value: str | None, published_date: str | None) -> tupl
     return None, None
 
 
+def _looks_like_speaker_label(line: str) -> bool:
+    compact = re.sub(r"\s+", " ", str(line or "").strip())
+    if not compact:
+        return False
+    lowered = compact.lower()
+    if lowered in _KAGGLE_SECTION_HEADINGS:
+        return False
+    if compact.startswith("[") and compact.endswith("]"):
+        return False
+    if any(ch.isdigit() for ch in compact):
+        return False
+    if len(compact) > 80:
+        return False
+    if "," in compact or ";" in compact:
+        return False
+    return bool(_SPEAKER_LABEL_RE.match(compact))
+
+
+def _split_speaker_role(line: str) -> tuple[str | None, str | None]:
+    compact = re.sub(r"\s+", " ", str(line or "").strip())
+    for sep in (" -- ", " — ", " - "):
+        if sep in compact:
+            left, right = [part.strip() for part in compact.split(sep, 1)]
+            if _looks_like_speaker_label(left):
+                return left, right or None
+    return None, None
+
+
+def _reformat_kaggle_transcript(transcript_text: str) -> tuple[str, list[dict[str, str]], list[str]]:
+    lines = [re.sub(r"\s+", " ", line).strip() for line in str(transcript_text or "").splitlines()]
+    lines = [line for line in lines if line]
+
+    output_lines: list[str] = []
+    participants_map: dict[str, str] = {}
+    warnings: list[str] = []
+    active_speaker: str | None = None
+    pending_new_block = False
+
+    for idx, line in enumerate(lines):
+        lowered = line.lower().strip()
+        if any(marker in lowered for marker in _KAGGLE_END_MARKERS):
+            if lowered.startswith("more ") or "all earnings call transcripts" in lowered or lowered.startswith("duration:"):
+                break
+
+        if lowered in _KAGGLE_SECTION_HEADINGS or lowered.rstrip(":") in _KAGGLE_SECTION_HEADINGS:
+            output_lines.append(line if line.endswith(":") else f"{line}:")
+            active_speaker = None
+            pending_new_block = False
+            continue
+
+        inline_match = _INLINE_SPEAKER_RE.match(line)
+        if inline_match:
+            speaker = re.sub(r"\s+", " ", inline_match.group(1)).strip()
+            spoken = inline_match.group(2).strip()
+            if spoken:
+                output_lines.append(f"{speaker}: {spoken}")
+                active_speaker = speaker
+                pending_new_block = False
+            continue
+
+        split_speaker, split_role = _split_speaker_role(line)
+        if split_speaker:
+            active_speaker = split_speaker
+            pending_new_block = True
+            if split_role:
+                existing = participants_map.get(split_speaker, "")
+                if not existing or len(split_role) > len(existing):
+                    participants_map[split_speaker] = split_role
+            continue
+
+        if _looks_like_speaker_label(line):
+            active_speaker = re.sub(r"\s+", " ", line).strip()
+            pending_new_block = True
+            continue
+
+        if active_speaker:
+            if pending_new_block:
+                output_lines.append(f"{active_speaker}: {line}")
+                pending_new_block = False
+            else:
+                output_lines.append(line)
+            continue
+
+        # Keep non-speaker transcript lines so section headings/context stay visible.
+        output_lines.append(line)
+
+    reformatted = "\n".join(output_lines).strip()
+    if not reformatted:
+        return str(transcript_text or ""), [], ["kaggle_reformat_empty_fallback"]
+
+    speaker_line_count = sum(1 for line in reformatted.splitlines() if _INLINE_SPEAKER_RE.match(line))
+    if speaker_line_count < 3:
+        warnings.append(f"kaggle_low_speaker_line_count:{speaker_line_count}")
+
+    participants = [{"name": name, "role": role or ""} for name, role in sorted(participants_map.items())]
+    return reformatted, participants, warnings
+
+
 def _load_kaggle_records(
     *,
     pkl_path: Path,
@@ -452,18 +559,23 @@ def _load_kaggle_records(
         if ticker_filter is not None and ticker not in ticker_filter:
             continue
 
-        transcript = str(getattr(row, "transcript", "") or "").strip()
-        if not transcript:
+        transcript_raw = str(getattr(row, "transcript", "") or "").strip()
+        if not transcript_raw:
             continue
+        transcript, inferred_participants, reformat_warnings = _reformat_kaggle_transcript(transcript_raw)
         q_value = str(getattr(row, "q", "") or "").strip()
         date_raw = str(getattr(row, "date", "") or "").strip()
         date_iso = _parse_published_date(date_raw)
         year, quarter = _infer_year_quarter(q_value, date_iso)
 
-        dedupe_key = "|".join([ticker, q_value, date_raw, transcript[:220]])
+        dedupe_key = "|".join([ticker, q_value, date_raw, transcript_raw[:220]])
         if dedupe_key in dedupe_keys:
             continue
         dedupe_keys.add(dedupe_key)
+
+        parsing_warnings = ["Imported from local Kaggle pickle."]
+        parsing_warnings.extend(reformat_warnings)
+        extraction_confidence = 0.78 if len(inferred_participants) >= 2 else 0.64
 
         record = SimpleNamespace(
             symbol=ticker,
@@ -474,13 +586,14 @@ def _load_kaggle_records(
             source="kaggle_motley_fool_dataset",
             source_url=None,
             title=f"{ticker} {q_value} earnings call transcript".strip(),
-            extraction_confidence=0.58,
-            parsing_warnings=["Imported from local Kaggle pickle."],
-            participants=[],
+            extraction_confidence=extraction_confidence,
+            parsing_warnings=parsing_warnings,
+            participants=inferred_participants,
             source_metadata={
                 "kaggle_q": q_value,
                 "kaggle_date_raw": date_raw,
                 "kaggle_exchange": str(getattr(row, "exchange", "") or "").strip(),
+                "kaggle_reformatted": True,
             },
         )
         records_by_ticker.setdefault(ticker, []).append(record)

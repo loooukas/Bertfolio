@@ -53,6 +53,13 @@ Default output directory: `output/teacher_dataset/`
   --max-transcripts 100
 ```
 
+Kaggle mode automatically converts common Motley transcript formats like:
+
+- `Operator` on one line + speech on following lines
+- `Name -- Title` speaker cues
+
+into `Speaker: ...` blocks before calling the existing normalizer, so block counts stay close to full-call structure.
+
 ### Use local Kaggle pickle for specific tickers
 
 ```bash
