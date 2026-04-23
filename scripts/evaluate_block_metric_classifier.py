@@ -58,6 +58,15 @@ def _resolve_device() -> torch.device:
     return torch.device("cpu")
 
 
+def _load_tokenizer_with_fallback(model_dir: str) -> Any:
+    try:
+        return AutoTokenizer.from_pretrained(model_dir, use_fast=True)
+    except Exception as exc:
+        print(f"[eval] Fast tokenizer load failed for {model_dir}: {exc}")
+        print("[eval] Falling back to slow tokenizer (use_fast=False).")
+        return AutoTokenizer.from_pretrained(model_dir, use_fast=False)
+
+
 class EvalDataset(Dataset):
     def __init__(self, rows: list[dict[str, Any]], tokenizer: Any, max_length: int, metric: str):
         self.rows = rows
@@ -91,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError("No valid test rows found for evaluation.")
 
     device = _resolve_device()
-    tokenizer = AutoTokenizer.from_pretrained(args.model_dir, use_fast=True)
+    tokenizer = _load_tokenizer_with_fallback(args.model_dir)
     model = AutoModelForSequenceClassification.from_pretrained(args.model_dir).to(device)
     model.eval()
 

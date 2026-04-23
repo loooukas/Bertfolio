@@ -93,6 +93,15 @@ def _resolve_device() -> torch.device:
     return torch.device("cpu")
 
 
+def _load_tokenizer_with_fallback(model_name: str) -> Any:
+    try:
+        return AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    except Exception as exc:
+        print(f"[train] Fast tokenizer load failed for {model_name}: {exc}")
+        print("[train] Falling back to slow tokenizer (use_fast=False).")
+        return AutoTokenizer.from_pretrained(model_name, use_fast=False)
+
+
 @dataclass
 class Example:
     text: str
@@ -186,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
         f"train_rows={len(train_examples)} validation_rows={len(validation_examples)}"
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    tokenizer = _load_tokenizer_with_fallback(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
         num_labels=len(BAND_LABELS),

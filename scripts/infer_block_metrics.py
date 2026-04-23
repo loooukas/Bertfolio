@@ -40,6 +40,15 @@ def _resolve_device() -> torch.device:
     return torch.device("cpu")
 
 
+def _load_tokenizer_with_fallback(model_dir: str) -> Any:
+    try:
+        return AutoTokenizer.from_pretrained(model_dir, use_fast=True)
+    except Exception as exc:
+        print(f"[infer] Fast tokenizer load failed for {model_dir}: {exc}")
+        print("[infer] Falling back to slow tokenizer (use_fast=False).")
+        return AutoTokenizer.from_pretrained(model_dir, use_fast=False)
+
+
 def _flatten_normalized_document(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if "document" in payload and isinstance(payload["document"], dict):
         document = payload["document"]
@@ -187,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError("No valid rows found for inference.")
 
     device = _resolve_device()
-    tokenizer = AutoTokenizer.from_pretrained(args.model_dir, use_fast=True)
+    tokenizer = _load_tokenizer_with_fallback(args.model_dir)
     model = AutoModelForSequenceClassification.from_pretrained(args.model_dir).to(device)
 
     dataset = InferenceDataset(rows, tokenizer, max_length=int(args.max_length))
