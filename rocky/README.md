@@ -45,6 +45,23 @@ Default output directory: `output/teacher_dataset/`
 .venv/bin/python scripts/build_teacher_dataset.py --max-transcripts 100
 ```
 
+### Use local Kaggle pickle (normalize + flatten without remote fetch)
+
+```bash
+.venv/bin/python scripts/build_teacher_dataset.py \
+  --kaggle-pkl rocky/motley-fool-data.pkl \
+  --max-transcripts 100
+```
+
+### Use local Kaggle pickle for specific tickers
+
+```bash
+.venv/bin/python scripts/build_teacher_dataset.py \
+  --kaggle-pkl rocky/motley-fool-data.pkl \
+  --tickers AAPL MSFT NVDA \
+  --max-transcripts 100
+```
+
 ### Inline tickers
 
 ```bash
@@ -69,6 +86,7 @@ Default output directory: `output/teacher_dataset/`
 - `--max-transcripts`
 - `--transcripts-per-ticker`
 - `--output-dir`
+- `--kaggle-pkl`
 - `--resume`
 
 ## Block Row Format

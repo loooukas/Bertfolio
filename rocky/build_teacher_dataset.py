@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+from datetime import datetime
+import hashlib
 import json
 from pathlib import Path
 import re
 import sys
+from types import SimpleNamespace
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +26,7 @@ from rocky.common import (
     count_words,
     ensure_dir,
     iso_now_utc,
+    normalize_ticker,
     parse_ticker_inputs,
     quarter_label,
     read_json,
@@ -73,6 +77,7 @@ _ADMIN_RE = re.compile(
 )
 _ACK_RE = re.compile(r"^(?:thanks?|thank you|okay|great|good morning|good afternoon)[.! ]*$", flags=re.IGNORECASE)
 _OPERATOR_HINT_RE = re.compile(r"\b(operator|moderator|host)\b", flags=re.IGNORECASE)
+_QUARTER_RE = re.compile(r"^\s*(\d{4})-Q([1-4])\s*$", flags=re.IGNORECASE)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -96,6 +101,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_OUTPUT_DIR,
         help=f"Output directory (default: {DEFAULT_OUTPUT_DIR}).",
     )
+    parser.add_argument(
+        "--kaggle-pkl",
+        help="Optional path to pre-downloaded Kaggle transcript pickle with columns: ticker,q,date,transcript.",
+    )
     parser.add_argument("--resume", action="store_true", help="Resume from existing run_manifest.json.")
     return parser.parse_args(argv)
 
@@ -111,6 +120,7 @@ def _new_manifest(args: argparse.Namespace, tickers: list[str]) -> dict[str, Any
             "max_transcripts": int(args.max_transcripts),
             "transcripts_per_ticker": int(args.transcripts_per_ticker),
             "output_dir": str(args.output_dir),
+            "kaggle_pkl": str(args.kaggle_pkl or ""),
             "resume": bool(args.resume),
         },
         "processed_transcript_ids": [],
@@ -352,9 +362,165 @@ def _raw_envelope_payload(
         "parsing_warnings": list(record.parsing_warnings or []),
         "participants": list(record.participants or []),
         "content": record.content,
+        "source_metadata": dict(getattr(record, "source_metadata", {}) or {}),
         "normalization_warnings": normalization_warnings,
         "fetch_context_file": fetch_context_file,
     }
+
+
+def _parse_published_date(raw: str | None) -> str | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+
+    formats = (
+        "%Y-%m-%d",
+        "%b %d, %Y",
+        "%B %d, %Y",
+        "%b %d, %Y, %I:%M %p",
+        "%B %d, %Y, %I:%M %p",
+    )
+    normalized = (
+        value.replace("a.m.", "AM")
+        .replace("p.m.", "PM")
+        .replace("a.m", "AM")
+        .replace("p.m", "PM")
+        .replace(" ET", "")
+        .replace("PT", "")
+        .replace("UTC", "")
+        .strip()
+    )
+
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(normalized, fmt)
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    # Last resort: try common ISO-ish slices.
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", normalized)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    return None
+
+
+def _infer_year_quarter(q_value: str | None, published_date: str | None) -> tuple[int | None, int | None]:
+    q_raw = str(q_value or "").strip()
+    quarter_match = _QUARTER_RE.match(q_raw)
+    if quarter_match:
+        return int(quarter_match.group(1)), int(quarter_match.group(2))
+
+    date_raw = str(published_date or "").strip()
+    if date_raw:
+        try:
+            dt = datetime.strptime(date_raw, "%Y-%m-%d")
+            quarter = ((dt.month - 1) // 3) + 1
+            return int(dt.year), int(quarter)
+        except ValueError:
+            pass
+    return None, None
+
+
+def _load_kaggle_records(
+    *,
+    pkl_path: Path,
+    ticker_filter: set[str] | None,
+    max_transcripts: int,
+) -> tuple[list[str], dict[str, list[Any]], dict[str, Any]]:
+    try:
+        import pandas as pd
+    except Exception as exc:
+        raise RuntimeError("Pandas is required for --kaggle-pkl mode.") from exc
+
+    if not pkl_path.exists():
+        raise RuntimeError(f"Kaggle pickle not found: {pkl_path}")
+
+    df = pd.read_pickle(pkl_path)
+    required = {"ticker", "q", "date", "transcript"}
+    missing = required - set(df.columns)
+    if missing:
+        raise RuntimeError(f"Kaggle pickle missing required columns: {sorted(missing)}")
+
+    dedupe_keys: set[str] = set()
+    records_by_ticker: dict[str, list[Any]] = {}
+
+    for row in df.itertuples(index=False):
+        ticker = normalize_ticker(getattr(row, "ticker", ""))
+        if not ticker:
+            continue
+        if ticker_filter is not None and ticker not in ticker_filter:
+            continue
+
+        transcript = str(getattr(row, "transcript", "") or "").strip()
+        if not transcript:
+            continue
+        q_value = str(getattr(row, "q", "") or "").strip()
+        date_raw = str(getattr(row, "date", "") or "").strip()
+        date_iso = _parse_published_date(date_raw)
+        year, quarter = _infer_year_quarter(q_value, date_iso)
+
+        dedupe_key = "|".join([ticker, q_value, date_raw, transcript[:220]])
+        if dedupe_key in dedupe_keys:
+            continue
+        dedupe_keys.add(dedupe_key)
+
+        record = SimpleNamespace(
+            symbol=ticker,
+            year=year,
+            quarter=quarter,
+            date=date_iso,
+            content=transcript,
+            source="kaggle_motley_fool_dataset",
+            source_url=None,
+            title=f"{ticker} {q_value} earnings call transcript".strip(),
+            extraction_confidence=0.58,
+            parsing_warnings=["Imported from local Kaggle pickle."],
+            participants=[],
+            source_metadata={
+                "kaggle_q": q_value,
+                "kaggle_date_raw": date_raw,
+                "kaggle_exchange": str(getattr(row, "exchange", "") or "").strip(),
+            },
+        )
+        records_by_ticker.setdefault(ticker, []).append(record)
+
+    ordered_tickers = sorted(records_by_ticker.keys(), key=lambda item: hashlib.sha1(item.encode("utf-8")).hexdigest())
+    if not ordered_tickers:
+        return [], {}, {"rows_in_pickle": int(len(df)), "rows_selected": 0, "rows_deduped": 0}
+
+    # Apply max cap with deterministic round-robin to avoid one-ticker concentration.
+    total_available = sum(len(v) for v in records_by_ticker.values())
+    if total_available > max_transcripts:
+        cursor = {ticker: 0 for ticker in ordered_tickers}
+        trimmed: dict[str, list[Any]] = {ticker: [] for ticker in ordered_tickers}
+        picked = 0
+        while picked < max_transcripts:
+            progressed = False
+            for ticker in ordered_tickers:
+                idx = cursor[ticker]
+                rows = records_by_ticker[ticker]
+                if idx >= len(rows):
+                    continue
+                trimmed[ticker].append(rows[idx])
+                cursor[ticker] = idx + 1
+                picked += 1
+                progressed = True
+                if picked >= max_transcripts:
+                    break
+            if not progressed:
+                break
+        records_by_ticker = trimmed
+
+    rows_selected = sum(len(v) for v in records_by_ticker.values())
+    info = {
+        "rows_in_pickle": int(len(df)),
+        "rows_selected": int(rows_selected),
+        "unique_tickers_selected": int(sum(1 for v in records_by_ticker.values() if v)),
+        "pkl_path": str(pkl_path),
+        "filter_tickers_count": int(len(ticker_filter)) if ticker_filter is not None else None,
+    }
+    return ordered_tickers, records_by_ticker, info
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -363,7 +529,28 @@ def main(argv: list[str] | None = None) -> int:
     from finbert_site.settings import Settings
     from finbert_site.transcript_pipeline import fetch_transcripts_for_analysis
 
-    tickers = parse_ticker_inputs(inline_tickers=args.tickers, tickers_file=args.tickers_file)
+    has_explicit_tickers = bool(args.tickers or args.tickers_file)
+    tickers: list[str]
+    if args.kaggle_pkl and not has_explicit_tickers:
+        tickers = []
+    else:
+        tickers = parse_ticker_inputs(inline_tickers=args.tickers, tickers_file=args.tickers_file)
+
+    ticker_filter = set(tickers) if tickers else None
+    max_transcripts = max(1, int(args.max_transcripts))
+    per_ticker = max(1, int(args.transcripts_per_ticker))
+
+    records_by_ticker: dict[str, list[Any]] = {}
+    kaggle_info: dict[str, Any] | None = None
+    if args.kaggle_pkl:
+        pkl_tickers, records_by_ticker, kaggle_info = _load_kaggle_records(
+            pkl_path=Path(args.kaggle_pkl),
+            ticker_filter=ticker_filter,
+            max_transcripts=max_transcripts,
+        )
+        if not has_explicit_tickers:
+            tickers = [ticker for ticker in pkl_tickers if records_by_ticker.get(ticker)]
+
     if not tickers:
         raise RuntimeError("No tickers available after parsing inputs.")
 
@@ -388,12 +575,17 @@ def main(argv: list[str] | None = None) -> int:
     counts.setdefault("ticker_errors", 0)
 
     settings = Settings()
-    max_transcripts = max(1, int(args.max_transcripts))
-    per_ticker = max(1, int(args.transcripts_per_ticker))
 
     print(
-        f"[rocky] Starting teacher dataset build | tickers={len(tickers)} max_transcripts={max_transcripts} resume={args.resume}"
+        "[rocky] Starting teacher dataset build"
+        f" | mode={'kaggle_pkl' if args.kaggle_pkl else 'fetch_pipeline'}"
+        f" tickers={len(tickers)} max_transcripts={max_transcripts} resume={args.resume}"
     )
+    if kaggle_info:
+        print(
+            f"[rocky] Kaggle source rows_in_pickle={kaggle_info.get('rows_in_pickle')} "
+            f"rows_selected={kaggle_info.get('rows_selected')}"
+        )
 
     for ticker in tickers:
         if len(processed_transcript_ids) >= max_transcripts:
@@ -405,32 +597,60 @@ def main(argv: list[str] | None = None) -> int:
         ensure_dir(ticker_dir)
         ensure_dir(normalized_root / ticker)
 
-        print(f"[rocky] Fetching transcripts for {ticker} (target={target_count}, remaining={remaining})")
-        try:
-            transcript_records, warnings, diagnostics, discovery = fetch_transcripts_for_analysis(
-                symbol=ticker,
-                company_name=None,
-                settings=settings,
-                target_count=target_count,
-            )
-        except Exception as exc:
-            counts["ticker_errors"] = int(counts.get("ticker_errors", 0)) + 1
-            error_payload = {
-                "ticker": ticker,
-                "stage": "fetch",
-                "error": str(exc),
-                "timestamp": iso_now_utc(),
+        if args.kaggle_pkl:
+            transcript_records = list(records_by_ticker.get(ticker) or [])[:target_count]
+            warnings = []
+            diagnostics_payload = {
+                "mode": "kaggle_pkl",
+                "requested_quarters": [],
+                "found_quarters": [quarter_label(r.year, r.quarter) for r in transcript_records if quarter_label(r.year, r.quarter)],
+                "missing_quarters": [],
+                "errors": [],
             }
-            manifest.setdefault("errors", []).append(error_payload)
-            manifest["ticker_results"][ticker] = {
-                "status": "error",
-                "error": str(exc),
-                "updated_at": iso_now_utc(),
+            discovery_payload = {
+                "pages_scanned": 0,
+                "candidates_total": len(transcript_records),
+                "transcript_like_count": len(transcript_records),
+                "match_filtered_count": len(transcript_records),
+                "selected_count": len(transcript_records),
+                "discarded_near_matches": [],
+                "fetch_failures": [],
+                "playwright_fallback_used": False,
             }
-            manifest["updated_at"] = iso_now_utc()
-            write_json(manifest_path, manifest)
-            print(f"[rocky] Fetch failed for {ticker}: {exc}")
-            continue
+            missing_quarters: list[str] = []
+            discovery_failures: list[str] = []
+            print(f"[rocky] Loading transcripts from Kaggle PKL for {ticker} (target={target_count}, remaining={remaining})")
+        else:
+            print(f"[rocky] Fetching transcripts for {ticker} (target={target_count}, remaining={remaining})")
+            try:
+                transcript_records, warnings, diagnostics, discovery = fetch_transcripts_for_analysis(
+                    symbol=ticker,
+                    company_name=None,
+                    settings=settings,
+                    target_count=target_count,
+                )
+                diagnostics_payload = asdict(diagnostics)
+                discovery_payload = asdict(discovery)
+                missing_quarters = list(getattr(diagnostics, "missing_quarters", []) or [])
+                discovery_failures = list(getattr(discovery, "fetch_failures", []) or [])
+            except Exception as exc:
+                counts["ticker_errors"] = int(counts.get("ticker_errors", 0)) + 1
+                error_payload = {
+                    "ticker": ticker,
+                    "stage": "fetch",
+                    "error": str(exc),
+                    "timestamp": iso_now_utc(),
+                }
+                manifest.setdefault("errors", []).append(error_payload)
+                manifest["ticker_results"][ticker] = {
+                    "status": "error",
+                    "error": str(exc),
+                    "updated_at": iso_now_utc(),
+                }
+                manifest["updated_at"] = iso_now_utc()
+                write_json(manifest_path, manifest)
+                print(f"[rocky] Fetch failed for {ticker}: {exc}")
+                continue
 
         fetch_stamp = re.sub(r"[^0-9T]", "", iso_now_utc().replace(":", "").replace("-", ""))
         fetch_file = ticker_dir / f"fetch_{fetch_stamp}.json"
@@ -439,9 +659,11 @@ def main(argv: list[str] | None = None) -> int:
             "fetched_at": iso_now_utc(),
             "target_count": target_count,
             "transcripts_found": len(transcript_records),
+            "source_mode": "kaggle_pkl" if args.kaggle_pkl else "fetch_pipeline",
+            "kaggle_info": kaggle_info if args.kaggle_pkl else None,
             "warnings": list(warnings or []),
-            "diagnostics": asdict(diagnostics),
-            "discovery_audit": asdict(discovery),
+            "diagnostics": diagnostics_payload,
+            "discovery_audit": discovery_payload,
         }
         write_json(fetch_file, fetch_payload)
         fetch_context_file = str(fetch_file.relative_to(output_dir))
@@ -526,9 +748,10 @@ def main(argv: list[str] | None = None) -> int:
                 "updated_at": iso_now_utc(),
                 "transcripts_returned": len(transcript_records),
                 "transcripts_processed_this_run": processed_for_ticker,
+                "source_mode": "kaggle_pkl" if args.kaggle_pkl else "fetch_pipeline",
                 "warnings": list(warnings or []),
-                "diagnostics_missing_quarters": list(getattr(diagnostics, "missing_quarters", []) or []),
-                "discovery_failures": list(getattr(discovery, "fetch_failures", []) or []),
+                "diagnostics_missing_quarters": missing_quarters,
+                "discovery_failures": discovery_failures,
             }
             manifest["updated_at"] = iso_now_utc()
             write_json(manifest_path, manifest)
