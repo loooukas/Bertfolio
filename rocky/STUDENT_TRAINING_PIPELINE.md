@@ -25,6 +25,14 @@ Shared helpers:
 
 - `rocky/training_utils.py`
 
+## Prerequisites
+
+For DeBERTa-v3 runs, install SentencePiece in the repo venv:
+
+```bash
+.venv/bin/pip install sentencepiece
+```
+
 ## 1) Prepare data
 
 ```bash

@@ -63,8 +63,24 @@ def _load_tokenizer_with_fallback(model_dir: str) -> Any:
         return AutoTokenizer.from_pretrained(model_dir, use_fast=True)
     except Exception as exc:
         print(f"[eval] Fast tokenizer load failed for {model_dir}: {exc}")
-        print("[eval] Falling back to slow tokenizer (use_fast=False).")
-        return AutoTokenizer.from_pretrained(model_dir, use_fast=False)
+        print("[eval] Falling back to slow tokenizer.")
+        try:
+            if "deberta-v3" in model_dir.lower() or "deberta-v2" in model_dir.lower():
+                try:
+                    import sentencepiece  # noqa: F401
+                except Exception as sp_exc:
+                    raise RuntimeError(
+                        "DeBERTa slow tokenizer requires `sentencepiece`. "
+                        "Install it with `.venv/bin/pip install sentencepiece`."
+                    ) from sp_exc
+                from transformers.models.deberta_v2.tokenization_deberta_v2 import DebertaV2Tokenizer
+
+                return DebertaV2Tokenizer.from_pretrained(model_dir)
+            return AutoTokenizer.from_pretrained(model_dir, use_fast=False)
+        except Exception as slow_exc:
+            raise RuntimeError(
+                f"Tokenizer load failed for {model_dir}. fast_error={exc} slow_error={slow_exc}"
+            ) from slow_exc
 
 
 class EvalDataset(Dataset):
