@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 from rocky.training_utils import (
     BAND_LABELS,
+    LABEL_MODES,
     METRICS,
     build_input_text,
     get_dataset_quality_score,
@@ -24,10 +25,13 @@ from rocky.training_utils import (
     get_teacher_confidence,
     infer_group_key,
     looks_like_admin_or_junk,
+    normalize_label_mode,
     read_jsonl,
+    remap_band,
     split_group_keys,
     target_metric_band_key,
     target_metric_score_key,
+    labels_for_mode,
     write_json,
     write_jsonl,
 )
@@ -71,10 +75,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Drop obvious junk rows instead of routing them to review_bucket.jsonl.",
     )
+    parser.add_argument(
+        "--label-mode",
+        choices=list(LABEL_MODES),
+        default="five_band",
+        help="Band target mode: five_band | three_band | binary (default: five_band).",
+    )
     return parser.parse_args(argv)
 
 
-def _prepare_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+def _prepare_row(row: dict[str, Any], *, label_mode: str) -> tuple[dict[str, Any] | None, list[str]]:
     reasons: list[str] = []
     text = str(row.get("text") or "").strip()
     if not text:
@@ -88,12 +98,17 @@ def _prepare_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]
     )
 
     for metric in METRICS:
-        band = get_metric_band(row, metric)
+        band = get_metric_band(row, metric, label_mode="five_band")
         score = get_metric_score(row, metric)
         if band is None or band not in BAND_LABELS:
             reasons.append(f"missing_{metric}_band")
         else:
-            prepared[target_metric_band_key(metric)] = band
+            prepared[f"{target_metric_band_key(metric)}_raw"] = band
+            mapped_band = remap_band(band, label_mode)
+            if mapped_band is None:
+                reasons.append(f"unmappable_{metric}_band")
+            else:
+                prepared[target_metric_band_key(metric)] = mapped_band
         if score is None:
             reasons.append(f"missing_{metric}_score")
         else:
@@ -115,14 +130,16 @@ def _prepare_row(row: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]
     return prepared, []
 
 
-def _band_distribution(rows: list[dict[str, Any]], metric: str) -> dict[str, int]:
+def _band_distribution(rows: list[dict[str, Any]], metric: str, *, labels: tuple[str, ...]) -> dict[str, int]:
     key = target_metric_band_key(metric)
     counts = Counter(str(row.get(key) or "missing") for row in rows)
-    return {label: int(counts.get(label, 0)) for label in list(BAND_LABELS) + ["missing"]}
+    return {label: int(counts.get(label, 0)) for label in list(labels) + ["missing"]}
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    label_mode = normalize_label_mode(str(args.label_mode))
+    label_vocab = labels_for_mode(label_mode)
     input_path = Path(args.input)
     if not input_path.exists():
         raise RuntimeError(f"Input labeled dataset not found: {input_path}")
@@ -139,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     bucket_reason_counts = Counter()
 
     for row in rows:
-        prepared, hard_reasons = _prepare_row(row)
+        prepared, hard_reasons = _prepare_row(row, label_mode=label_mode)
         if prepared is None:
             dropped = dict(row)
             dropped["bucket"] = "dropped"
@@ -218,6 +235,8 @@ def main(argv: list[str] | None = None) -> int:
             "min_dataset_quality": float(args.min_dataset_quality),
             "min_teacher_confidence": float(args.min_teacher_confidence),
             "drop_obvious_junk": bool(args.drop_obvious_junk),
+            "label_mode": label_mode,
+            "label_vocab": list(label_vocab),
         },
         "split": {
             "seed": int(args.seed),
@@ -244,9 +263,9 @@ def main(argv: list[str] | None = None) -> int:
         "bucket_reason_counts": dict(bucket_reason_counts),
         "metric_band_distribution": {
             metric: {
-                "train": _band_distribution(split_rows["train"], metric),
-                "validation": _band_distribution(split_rows["validation"], metric),
-                "test": _band_distribution(split_rows["test"], metric),
+                "train": _band_distribution(split_rows["train"], metric, labels=label_vocab),
+                "validation": _band_distribution(split_rows["validation"], metric, labels=label_vocab),
+                "test": _band_distribution(split_rows["test"], metric, labels=label_vocab),
             }
             for metric in METRICS
         },

@@ -14,6 +14,12 @@ METRICS = ("confidence", "specificity", "outlook_strength", "directness", "risk_
 BAND_LABELS = ("very_low", "low", "medium", "high", "very_high")
 BAND_TO_ID = {label: idx for idx, label in enumerate(BAND_LABELS)}
 ID_TO_BAND = {idx: label for label, idx in BAND_TO_ID.items()}
+LABEL_MODES = ("five_band", "three_band", "binary")
+LABELS_BY_MODE = {
+    "five_band": BAND_LABELS,
+    "three_band": ("low", "medium", "high"),
+    "binary": ("low", "high"),
+}
 BAND_TO_SCORE_DEFAULT = {
     "very_low": 0.10,
     "low": 0.30,
@@ -91,19 +97,53 @@ def target_metric_score_key(metric: str) -> str:
     return f"target_{metric}_score"
 
 
+def normalize_label_mode(label_mode: str) -> str:
+    mode = normalize_text(label_mode).lower()
+    if mode not in LABELS_BY_MODE:
+        raise ValueError(f"Unsupported label_mode={label_mode}. Expected one of: {', '.join(LABEL_MODES)}")
+    return mode
+
+
+def labels_for_mode(label_mode: str) -> tuple[str, ...]:
+    return tuple(LABELS_BY_MODE[normalize_label_mode(label_mode)])
+
+
+def remap_band(band: str, label_mode: str) -> str | None:
+    if not isinstance(band, str) or band not in BAND_TO_ID:
+        return None
+    mode = normalize_label_mode(label_mode)
+    if mode == "five_band":
+        return band
+    if mode == "three_band":
+        if band in {"very_low", "low"}:
+            return "low"
+        if band == "medium":
+            return "medium"
+        return "high"
+    if mode == "binary":
+        if band in {"high", "very_high"}:
+            return "high"
+        return "low"
+    return None
+
+
 def get_teacher_label(row: dict[str, Any]) -> dict[str, Any]:
     payload = row.get("teacher_label")
     return payload if isinstance(payload, dict) else {}
 
 
-def get_metric_band(row: dict[str, Any], metric: str) -> str | None:
+def get_metric_band(row: dict[str, Any], metric: str, *, label_mode: str = "five_band") -> str | None:
     direct = row.get(target_metric_band_key(metric))
-    if isinstance(direct, str) and direct in BAND_TO_ID:
-        return direct
+    if isinstance(direct, str):
+        mapped = remap_band(direct, label_mode)
+        if mapped is not None:
+            return mapped
     teacher = get_teacher_label(row)
     nested = teacher.get(metric_band_key(metric))
-    if isinstance(nested, str) and nested in BAND_TO_ID:
-        return nested
+    if isinstance(nested, str):
+        mapped = remap_band(nested, label_mode)
+        if mapped is not None:
+            return mapped
     return None
 
 
@@ -270,4 +310,3 @@ def compute_classification_metrics(
         },
         "total_examples": total,
     }
-

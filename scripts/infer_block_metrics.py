@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rocky.training_utils import BAND_LABELS, BAND_TO_SCORE_DEFAULT, build_input_text, iter_jsonl, write_jsonl
+from rocky.training_utils import BAND_TO_SCORE_DEFAULT, build_input_text, iter_jsonl, write_jsonl
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -167,6 +167,7 @@ def _iter_predictions(
     dataloader: DataLoader,
     device: torch.device,
     metric: str,
+    labels: tuple[str, ...],
 ) -> Iterable[dict[str, Any]]:
     model.eval()
     with torch.no_grad():
@@ -179,7 +180,7 @@ def _iter_predictions(
             for local_idx, row_idx in enumerate(row_idxs):
                 row = rows[row_idx]
                 pred_id = int(preds[local_idx].item())
-                pred_band = BAND_LABELS[pred_id]
+                pred_band = labels[pred_id]
                 prob_values = probs[local_idx].tolist()
                 yield {
                     "sample_id": row.get("sample_id"),
@@ -187,7 +188,7 @@ def _iter_predictions(
                     "predicted_band": pred_band,
                     "predicted_score": BAND_TO_SCORE_DEFAULT.get(pred_band),
                     "predicted_probabilities": {
-                        label: float(prob_values[idx]) for idx, label in enumerate(BAND_LABELS)
+                        label: float(prob_values[idx]) for idx, label in enumerate(labels)
                     },
                     "predicted_confidence": float(max(prob_values)),
                     "ticker": row.get("ticker"),
@@ -198,6 +199,26 @@ def _iter_predictions(
                     "text": row.get("text"),
                     "metadata": row.get("metadata"),
                 }
+
+
+def _labels_from_model(model: Any) -> tuple[str, ...]:
+    id2label = getattr(model.config, "id2label", None)
+    if isinstance(id2label, dict) and id2label:
+        parsed: list[tuple[int, str]] = []
+        for key, value in id2label.items():
+            try:
+                idx = int(key)
+            except Exception:
+                continue
+            parsed.append((idx, str(value)))
+        parsed.sort(key=lambda item: item[0])
+        labels = tuple(value for _, value in parsed)
+        if labels:
+            return labels
+    num_labels = int(getattr(model.config, "num_labels", 0))
+    if num_labels <= 0:
+        raise RuntimeError("Could not infer class labels from model config.")
+    return tuple(f"class_{idx}" for idx in range(num_labels))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -214,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     device = _resolve_device()
     tokenizer = _load_tokenizer_with_fallback(args.model_dir)
     model = AutoModelForSequenceClassification.from_pretrained(args.model_dir).to(device)
+    labels = _labels_from_model(model)
 
     dataset = InferenceDataset(rows, tokenizer, max_length=int(args.max_length))
     collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True, return_tensors="pt")
@@ -226,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
             dataloader=dataloader,
             device=device,
             metric=args.metric,
+            labels=labels,
         )
     )
     write_jsonl(Path(args.output), predictions)

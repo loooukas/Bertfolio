@@ -28,12 +28,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rocky.training_utils import (
-    BAND_LABELS,
-    BAND_TO_ID,
-    ID_TO_BAND,
+    LABEL_MODES,
     METRICS,
     compute_classification_metrics,
     get_metric_band,
+    labels_for_mode,
+    normalize_label_mode,
     read_jsonl,
     write_json,
 )
@@ -54,6 +54,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--train-file", required=True, help="Prepared train.jsonl.")
     parser.add_argument("--validation-file", required=True, help="Prepared validation.jsonl.")
     parser.add_argument("--metric", required=True, choices=list(METRICS), help="Metric target to train.")
+    parser.add_argument(
+        "--label-mode",
+        choices=list(LABEL_MODES),
+        default="five_band",
+        help="Band target mode: five_band | three_band | binary (default: five_band).",
+    )
     parser.add_argument(
         "--model-name",
         default="deberta-v3-base",
@@ -173,17 +179,31 @@ class Example:
     label_id: int
 
 
-def _load_examples(path: Path, *, metric: str, max_rows: int = 0) -> list[Example]:
+def _build_label_maps(label_mode: str) -> tuple[tuple[str, ...], dict[str, int], dict[int, str]]:
+    labels = labels_for_mode(label_mode)
+    label_to_id = {label: idx for idx, label in enumerate(labels)}
+    id_to_label = {idx: label for label, idx in label_to_id.items()}
+    return labels, label_to_id, id_to_label
+
+
+def _load_examples(
+    path: Path,
+    *,
+    metric: str,
+    label_mode: str,
+    label_to_id: dict[str, int],
+    max_rows: int = 0,
+) -> list[Example]:
     rows = read_jsonl(path, max_rows=max_rows)
     examples: list[Example] = []
     missing = 0
     for row in rows:
         text = str(row.get("input_text") or "").strip()
-        band = get_metric_band(row, metric)
-        if not text or band not in BAND_TO_ID:
+        band = get_metric_band(row, metric, label_mode=label_mode)
+        if not text or band not in label_to_id:
             missing += 1
             continue
-        examples.append(Example(text=text, label_id=BAND_TO_ID[band]))
+        examples.append(Example(text=text, label_id=label_to_id[band]))
     if not examples:
         raise RuntimeError(f"No valid examples found in {path} for metric={metric}.")
     if missing:
@@ -215,6 +235,7 @@ def _evaluate(
     model: Any,
     dataloader: DataLoader,
     device: torch.device,
+    label_names: tuple[str, ...],
 ) -> dict[str, Any]:
     model.eval()
     y_true: list[int] = []
@@ -222,22 +243,24 @@ def _evaluate(
     losses: list[float] = []
     with torch.no_grad():
         for batch in dataloader:
-            labels = batch["labels"].to(device)
+            target_labels = batch["labels"].to(device)
             model_inputs = {key: value.to(device) for key, value in batch.items() if key != "labels"}
-            outputs = model(**model_inputs, labels=labels)
+            outputs = model(**model_inputs, labels=target_labels)
             losses.append(float(outputs.loss.detach().cpu().item()))
             logits = outputs.logits.detach().cpu()
             preds = torch.argmax(logits, dim=1)
-            y_true.extend(labels.detach().cpu().tolist())
+            y_true.extend(target_labels.detach().cpu().tolist())
             y_pred.extend(preds.tolist())
 
-    metrics = compute_classification_metrics(y_true=y_true, y_pred=y_pred, labels=BAND_LABELS)
+    metrics = compute_classification_metrics(y_true=y_true, y_pred=y_pred, labels=label_names)
     metrics["loss"] = float(sum(losses) / len(losses)) if losses else math.nan
     return metrics
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    label_mode = normalize_label_mode(str(args.label_mode))
+    labels, label_to_id, id_to_label = _build_label_maps(label_mode)
     _set_seed(int(args.seed))
 
     output_dir = Path(args.output_dir)
@@ -251,25 +274,31 @@ def main(argv: list[str] | None = None) -> int:
     train_examples = _load_examples(
         Path(args.train_file),
         metric=args.metric,
+        label_mode=label_mode,
+        label_to_id=label_to_id,
         max_rows=max(0, int(args.max_train_rows)),
     )
     validation_examples = _load_examples(
         Path(args.validation_file),
         metric=args.metric,
+        label_mode=label_mode,
+        label_to_id=label_to_id,
         max_rows=max(0, int(args.max_validation_rows)),
     )
     print(
         f"[train] metric={args.metric} model={model_name} device={device} "
         f"train_rows={len(train_examples)} validation_rows={len(validation_examples)} "
-        f"batch={int(args.batch_size)} eval_batch={eval_batch_size} grad_accum={grad_accum_steps}"
+        f"batch={int(args.batch_size)} eval_batch={eval_batch_size} grad_accum={grad_accum_steps} "
+        f"label_mode={label_mode} labels={list(labels)}"
     )
 
     tokenizer = _load_tokenizer_with_fallback(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
-        num_labels=len(BAND_LABELS),
-        id2label=ID_TO_BAND,
-        label2id=BAND_TO_ID,
+        num_labels=len(labels),
+        id2label=dict(id_to_label),
+        label2id=dict(label_to_id),
+        ignore_mismatched_sizes=True,
     ).to(device)
 
     train_dataset = TextDataset(train_examples, tokenizer, max_length=int(args.max_length))
@@ -314,9 +343,9 @@ def main(argv: list[str] | None = None) -> int:
         optimizer.zero_grad(set_to_none=True)
         try:
             for step_idx, batch in enumerate(train_loader, start=1):
-                labels = batch["labels"].to(device)
+                target_labels = batch["labels"].to(device)
                 model_inputs = {key: value.to(device) for key, value in batch.items() if key != "labels"}
-                outputs = model(**model_inputs, labels=labels)
+                outputs = model(**model_inputs, labels=target_labels)
                 loss = outputs.loss
                 (loss / grad_accum_steps).backward()
                 should_step = (step_idx % grad_accum_steps == 0) or (step_idx == len(train_loader))
@@ -336,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
             raise
 
         train_loss = float(sum(train_losses) / len(train_losses)) if train_losses else math.nan
-        validation_metrics = _evaluate(model=model, dataloader=validation_loader, device=device)
+        validation_metrics = _evaluate(model=model, dataloader=validation_loader, device=device, label_names=labels)
         epoch_metrics = {
             "epoch": epoch,
             "train_loss": train_loss,
@@ -363,9 +392,10 @@ def main(argv: list[str] | None = None) -> int:
     tokenizer.save_pretrained(model_dir)
 
     label_mapping = {
-        "labels": list(BAND_LABELS),
-        "label2id": BAND_TO_ID,
-        "id2label": ID_TO_BAND,
+        "labels": list(labels),
+        "label2id": {label: int(idx) for label, idx in label_to_id.items()},
+        "id2label": {str(idx): label for idx, label in id_to_label.items()},
+        "label_mode": label_mode,
         "metric": args.metric,
     }
     write_json(output_dir / "label_mapping.json", label_mapping)

@@ -18,10 +18,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rocky.training_utils import (
-    BAND_LABELS,
+    LABEL_MODES,
     BAND_TO_SCORE_DEFAULT,
     compute_classification_metrics,
     get_metric_band,
+    labels_for_mode,
+    normalize_label_mode,
     read_jsonl,
     write_json,
     write_jsonl,
@@ -38,6 +40,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--test-file", required=True, help="Prepared test.jsonl file.")
     parser.add_argument("--output-dir", required=True, help="Evaluation artifact output directory.")
     parser.add_argument("--metric", required=True, help="Metric this model predicts.")
+    parser.add_argument(
+        "--label-mode",
+        choices=list(LABEL_MODES),
+        default="five_band",
+        help="Band target mode expected by model: five_band | three_band | binary (default: five_band).",
+    )
     parser.add_argument("--max-length", type=int, default=384, help="Tokenizer max length.")
     parser.add_argument("--batch-size", type=int, default=8, help="Evaluation batch size.")
     parser.add_argument("--max-rows", type=int, default=0, help="Optional cap on test rows.")
@@ -84,9 +92,19 @@ def _load_tokenizer_with_fallback(model_dir: str) -> Any:
 
 
 class EvalDataset(Dataset):
-    def __init__(self, rows: list[dict[str, Any]], tokenizer: Any, max_length: int, metric: str):
+    def __init__(
+        self,
+        rows: list[dict[str, Any]],
+        tokenizer: Any,
+        max_length: int,
+        metric: str,
+        label_mode: str,
+        label_to_id: dict[str, int],
+    ):
         self.rows = rows
         self.metric = metric
+        self.label_mode = label_mode
+        self.label_to_id = label_to_id
         self.encodings = tokenizer(
             [str(row.get("input_text") or "") for row in rows],
             truncation=True,
@@ -99,28 +117,48 @@ class EvalDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         payload = {key: self.encodings[key][idx] for key in self.encodings}
-        band = get_metric_band(self.rows[idx], self.metric)
-        payload["labels"] = BAND_LABELS.index(band) if band in BAND_LABELS else -1
+        band = get_metric_band(self.rows[idx], self.metric, label_mode=self.label_mode)
+        payload["labels"] = self.label_to_id.get(band, -1)
         payload["row_idx"] = idx
         return payload
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    label_mode = normalize_label_mode(str(args.label_mode))
+    label_names = labels_for_mode(label_mode)
+    label_to_id = {label: idx for idx, label in enumerate(label_names)}
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rows = read_jsonl(Path(args.test_file), max_rows=max(0, int(args.max_rows)))
-    rows = [row for row in rows if get_metric_band(row, args.metric) in BAND_LABELS and str(row.get("input_text") or "").strip()]
+    rows = [
+        row
+        for row in rows
+        if get_metric_band(row, args.metric, label_mode=label_mode) in label_to_id
+        and str(row.get("input_text") or "").strip()
+    ]
     if not rows:
         raise RuntimeError("No valid test rows found for evaluation.")
 
     device = _resolve_device()
     tokenizer = _load_tokenizer_with_fallback(args.model_dir)
     model = AutoModelForSequenceClassification.from_pretrained(args.model_dir).to(device)
+    if int(getattr(model.config, "num_labels", 0)) != len(label_names):
+        raise RuntimeError(
+            "Model label count does not match --label-mode. "
+            f"model_num_labels={getattr(model.config, 'num_labels', None)} expected={len(label_names)}"
+        )
     model.eval()
 
-    dataset = EvalDataset(rows, tokenizer, max_length=int(args.max_length), metric=args.metric)
+    dataset = EvalDataset(
+        rows,
+        tokenizer,
+        max_length=int(args.max_length),
+        metric=args.metric,
+        label_mode=label_mode,
+        label_to_id=label_to_id,
+    )
     collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True, return_tensors="pt")
     dataloader = DataLoader(dataset, batch_size=int(args.batch_size), shuffle=False, collate_fn=collator)
 
@@ -131,22 +169,22 @@ def main(argv: list[str] | None = None) -> int:
     with torch.no_grad():
         for batch in dataloader:
             row_idxs = batch.pop("row_idx").tolist()
-            labels = batch["labels"].to(device)
+            target_labels = batch["labels"].to(device)
             model_inputs = {key: value.to(device) for key, value in batch.items()}
             outputs = model(**model_inputs)
             probs = torch.softmax(outputs.logits.detach().cpu(), dim=1)
             preds = torch.argmax(probs, dim=1)
 
-            y_true.extend(labels.detach().cpu().tolist())
+            y_true.extend(target_labels.detach().cpu().tolist())
             y_pred.extend(preds.tolist())
 
             for local_idx, row_idx in enumerate(row_idxs):
                 row = rows[row_idx]
                 pred_id = int(preds[local_idx].item())
                 prob_values = probs[local_idx].tolist()
-                prob_map = {label: float(prob_values[i]) for i, label in enumerate(BAND_LABELS)}
-                predicted_label = BAND_LABELS[pred_id]
-                teacher_label = get_metric_band(row, args.metric)
+                prob_map = {label: float(prob_values[i]) for i, label in enumerate(label_names)}
+                predicted_label = label_names[pred_id]
+                teacher_label = get_metric_band(row, args.metric, label_mode=label_mode)
                 prediction_rows.append(
                     {
                         "sample_id": row.get("sample_id"),
@@ -168,9 +206,11 @@ def main(argv: list[str] | None = None) -> int:
                     }
                 )
 
-    metrics = compute_classification_metrics(y_true=y_true, y_pred=y_pred, labels=BAND_LABELS)
+    metrics = compute_classification_metrics(y_true=y_true, y_pred=y_pred, labels=label_names)
     metrics["created_at"] = _utc_now_iso()
     metrics["metric"] = args.metric
+    metrics["label_mode"] = label_mode
+    metrics["labels"] = list(label_names)
     metrics["rows_evaluated"] = len(prediction_rows)
     write_json(output_dir / "metrics.json", metrics)
     write_json(output_dir / "confusion_matrix.json", metrics["confusion_matrix"])

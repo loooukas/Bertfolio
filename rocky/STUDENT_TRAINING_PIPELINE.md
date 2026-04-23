@@ -41,6 +41,7 @@ For DeBERTa-v3 runs, install SentencePiece in the repo venv:
   --output-dir output/student_training_data \
   --min-dataset-quality 0.55 \
   --min-teacher-confidence 0.60 \
+  --label-mode five_band \
   --seed 42
 ```
 
@@ -55,6 +56,14 @@ Outputs:
 
 Split grouping is transcript-first (`transcript_id`, fallback `ticker+quarter`) to reduce leakage.
 
+Label modes:
+
+- `five_band`: `very_low/low/medium/high/very_high`
+- `three_band`: merges to `low/medium/high`
+- `binary`: merges to `low/high` (maps `very_low|low|medium -> low`, `high|very_high -> high`)
+
+Use `three_band` or `binary` when a metric is too imbalanced for stable 5-band training.
+
 ## 2) Train one metric classifier
 
 Confidence example:
@@ -64,6 +73,7 @@ Confidence example:
   --train-file output/student_training_data/train.jsonl \
   --validation-file output/student_training_data/validation.jsonl \
   --metric confidence \
+  --label-mode five_band \
   --model-name deberta-v3-base \
   --output-dir output/student_models/confidence_deberta_v3_base \
   --epochs 3 \
@@ -80,6 +90,7 @@ Memory-constrained Apple Silicon example (recommended starting point):
   --train-file output/student_training_data/train.jsonl \
   --validation-file output/student_training_data/validation.jsonl \
   --metric confidence \
+  --label-mode five_band \
   --model-name deberta-v3-base \
   --output-dir output/student_models/confidence_deberta_v3_base \
   --epochs 3 \
@@ -97,6 +108,26 @@ Supported model aliases:
 - `deberta-v3-base` -> `microsoft/deberta-v3-base`
 - `modernbert-base` -> `answerdotai/ModernBERT-base`
 
+Confidence 3-band example:
+
+```bash
+.venv/bin/python scripts/train_block_metric_classifier.py \
+  --train-file output/student_training_data_three_band/train.jsonl \
+  --validation-file output/student_training_data_three_band/validation.jsonl \
+  --metric confidence \
+  --label-mode three_band \
+  --model-name deberta-v3-base \
+  --output-dir output/student_models/confidence_three_band_deberta_v3_base \
+  --epochs 3 \
+  --batch-size 4 \
+  --eval-batch-size 4 \
+  --gradient-accumulation-steps 2 \
+  --learning-rate 2e-5 \
+  --max-length 256 \
+  --device cpu \
+  --seed 42
+```
+
 ## 3) Evaluate held-out test split
 
 ```bash
@@ -105,6 +136,7 @@ Supported model aliases:
   --test-file output/student_training_data/test.jsonl \
   --output-dir output/student_models/confidence_deberta_v3_base/eval \
   --metric confidence \
+  --label-mode five_band \
   --max-length 384
 ```
 
@@ -133,3 +165,5 @@ Inference output includes class probabilities and a default band-to-score mappin
 - `medium=0.50`
 - `high=0.70`
 - `very_high=0.90`
+
+`infer_block_metrics.py` now reads the class labels from the saved model config, so 5-band/3-band/binary models are supported automatically.
