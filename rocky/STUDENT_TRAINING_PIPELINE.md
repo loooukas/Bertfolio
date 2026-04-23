@@ -73,6 +73,25 @@ Confidence example:
   --seed 42
 ```
 
+Memory-constrained Apple Silicon example (recommended starting point):
+
+```bash
+.venv/bin/python scripts/train_block_metric_classifier.py \
+  --train-file output/student_training_data/train.jsonl \
+  --validation-file output/student_training_data/validation.jsonl \
+  --metric confidence \
+  --model-name deberta-v3-base \
+  --output-dir output/student_models/confidence_deberta_v3_base \
+  --epochs 3 \
+  --batch-size 4 \
+  --eval-batch-size 4 \
+  --gradient-accumulation-steps 2 \
+  --learning-rate 2e-5 \
+  --max-length 320 \
+  --mps-memory-fraction 0.75 \
+  --seed 42
+```
+
 Supported model aliases:
 
 - `deberta-v3-base` -> `microsoft/deberta-v3-base`

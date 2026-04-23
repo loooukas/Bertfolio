@@ -62,10 +62,34 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True, help="Directory to save model and artifacts.")
     parser.add_argument("--epochs", type=int, default=3, help="Training epochs (default: 3).")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size (default: 8).")
+    parser.add_argument(
+        "--eval-batch-size",
+        type=int,
+        default=0,
+        help="Validation batch size (default: use --batch-size).",
+    )
+    parser.add_argument(
+        "--gradient-accumulation-steps",
+        type=int,
+        default=1,
+        help="Gradient accumulation steps (default: 1).",
+    )
     parser.add_argument("--learning-rate", type=float, default=2e-5, help="Learning rate (default: 2e-5).")
     parser.add_argument("--weight-decay", type=float, default=0.01, help="Weight decay (default: 0.01).")
     parser.add_argument("--warmup-ratio", type=float, default=0.1, help="Warmup ratio (default: 0.1).")
     parser.add_argument("--max-length", type=int, default=384, help="Tokenizer max length (default: 384).")
+    parser.add_argument(
+        "--device",
+        choices=["auto", "mps", "cuda", "cpu"],
+        default="auto",
+        help="Device selection (default: auto).",
+    )
+    parser.add_argument(
+        "--mps-memory-fraction",
+        type=float,
+        default=0.0,
+        help="Optional per-process MPS memory fraction in (0,1], e.g. 0.75.",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--max-train-rows", type=int, default=0, help="Optional cap on train rows.")
     parser.add_argument("--max-validation-rows", type=int, default=0, help="Optional cap on validation rows.")
@@ -85,12 +109,36 @@ def _set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def _resolve_device() -> torch.device:
-    if torch.backends.mps.is_available():
+def _resolve_device(preference: str) -> torch.device:
+    pref = preference.strip().lower()
+    if pref == "auto":
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        return torch.device("cpu")
+    if pref == "mps":
+        if not torch.backends.mps.is_available():
+            raise RuntimeError("Requested --device mps but MPS is not available.")
         return torch.device("mps")
-    if torch.cuda.is_available():
+    if pref == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("Requested --device cuda but CUDA is not available.")
         return torch.device("cuda")
+    if pref == "cpu":
+        return torch.device("cpu")
     return torch.device("cpu")
+
+
+def _configure_mps_memory(device: torch.device, fraction: float) -> None:
+    if device.type != "mps":
+        return
+    if fraction <= 0:
+        return
+    if fraction > 1:
+        raise RuntimeError("--mps-memory-fraction must be in (0, 1].")
+    torch.mps.set_per_process_memory_fraction(float(fraction))
+    print(f"[train] Set MPS per-process memory fraction={fraction:.3f}")
 
 
 def _load_tokenizer_with_fallback(model_name: str) -> Any:
@@ -195,7 +243,10 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     model_name = _resolve_model_name(args.model_name)
-    device = _resolve_device()
+    device = _resolve_device(str(args.device))
+    _configure_mps_memory(device, float(args.mps_memory_fraction))
+    grad_accum_steps = max(1, int(args.gradient_accumulation_steps))
+    eval_batch_size = int(args.eval_batch_size) if int(args.eval_batch_size) > 0 else int(args.batch_size)
 
     train_examples = _load_examples(
         Path(args.train_file),
@@ -209,7 +260,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(
         f"[train] metric={args.metric} model={model_name} device={device} "
-        f"train_rows={len(train_examples)} validation_rows={len(validation_examples)}"
+        f"train_rows={len(train_examples)} validation_rows={len(validation_examples)} "
+        f"batch={int(args.batch_size)} eval_batch={eval_batch_size} grad_accum={grad_accum_steps}"
     )
 
     tokenizer = _load_tokenizer_with_fallback(model_name)
@@ -232,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     validation_loader = DataLoader(
         validation_dataset,
-        batch_size=int(args.batch_size),
+        batch_size=eval_batch_size,
         shuffle=False,
         collate_fn=collator,
     )
@@ -242,7 +294,8 @@ def main(argv: list[str] | None = None) -> int:
         lr=float(args.learning_rate),
         weight_decay=float(args.weight_decay),
     )
-    total_steps = max(1, len(train_loader) * max(1, int(args.epochs)))
+    optimizer_steps_per_epoch = math.ceil(len(train_loader) / grad_accum_steps)
+    total_steps = max(1, optimizer_steps_per_epoch * max(1, int(args.epochs)))
     warmup_steps = int(total_steps * max(0.0, float(args.warmup_ratio)))
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
@@ -258,17 +311,29 @@ def main(argv: list[str] | None = None) -> int:
     for epoch in range(1, max(1, int(args.epochs)) + 1):
         model.train()
         train_losses: list[float] = []
-        for batch in train_loader:
-            labels = batch["labels"].to(device)
-            model_inputs = {key: value.to(device) for key, value in batch.items() if key != "labels"}
-            outputs = model(**model_inputs, labels=labels)
-            loss = outputs.loss
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad(set_to_none=True)
-            train_losses.append(float(loss.detach().cpu().item()))
+        optimizer.zero_grad(set_to_none=True)
+        try:
+            for step_idx, batch in enumerate(train_loader, start=1):
+                labels = batch["labels"].to(device)
+                model_inputs = {key: value.to(device) for key, value in batch.items() if key != "labels"}
+                outputs = model(**model_inputs, labels=labels)
+                loss = outputs.loss
+                (loss / grad_accum_steps).backward()
+                should_step = (step_idx % grad_accum_steps == 0) or (step_idx == len(train_loader))
+                if should_step:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad(set_to_none=True)
+                train_losses.append(float(loss.detach().cpu().item()))
+        except RuntimeError as exc:
+            if "MPS backend out of memory" in str(exc):
+                raise RuntimeError(
+                    "MPS out of memory during training. Try smaller --batch-size (e.g. 2-4), "
+                    "smaller --max-length (e.g. 256-320), higher --gradient-accumulation-steps "
+                    "(e.g. 2-4), and/or set --mps-memory-fraction (e.g. 0.65-0.80)."
+                ) from exc
+            raise
 
         train_loss = float(sum(train_losses) / len(train_losses)) if train_losses else math.nan
         validation_metrics = _evaluate(model=model, dataloader=validation_loader, device=device)
