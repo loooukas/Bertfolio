@@ -488,6 +488,18 @@ Output shape (per ticker):
 - HTML reports now include a top "Jump To" navigation with ticker-level and transcript-level anchors.
 - Verbose logging now emits phase separators (`DISCOVERY:SITEMAP`, `DISCOVERY:AUTHOR`, `DISCOVERY:OPENAI_FALLBACK`, `SCRAPE`, `RUN COMPLETE`) plus phase timings and failure categories.
 
+## Historical Score Calibration
+
+Historical event-study calibration docs and CLI usage live in:
+
+- `docs/score_calibration_pipeline.md`
+
+New calibration scripts:
+
+- `scripts/build_historical_event_table.py`
+- `scripts/prepare_score_calibration_dataset.py`
+- `scripts/calibrate_score_weights.py`
+
 ## Notes
 
 - FinBERT (`ProsusAI/finbert`) is BERT-base scale and runs locally on Apple Silicon.
