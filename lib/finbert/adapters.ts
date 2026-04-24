@@ -331,6 +331,7 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
       risk_language_intensity: row.risk_language_intensity,
       topic_label: row.topic_label,
       mentions: Math.max(1, Math.round((row.segment_char_count || 220) / 220)),
+      segment_diagnostics: row.segment_diagnostics || undefined,
     }
   })
 

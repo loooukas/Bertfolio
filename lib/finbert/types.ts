@@ -28,6 +28,23 @@ export interface BackendJobPayload {
   result?: AnalysisResponseBackend
 }
 
+export interface MetricSourceDebug {
+  source: "student_primary" | "lexical_primary" | "lexical_fallback" | string
+  final_band?: string
+  final_score?: number
+  lexical_score?: number | null
+  lexical_band?: string | null
+  student_band?: string | null
+  student_score?: number | null
+  student_probabilities?: Record<string, number> | null
+  student_predicted_confidence?: number | null
+  fallback_reason?: string
+  blend_mode?: string
+  blend_weight_student?: number
+  derived_from?: string
+  directness_source?: string
+}
+
 export interface CacheRunSummary {
   ticker: string
   updated_at: string
@@ -85,11 +102,7 @@ export interface AnalysisResponseBackend {
       topic_label: string
       segment_char_count?: number
       evidence_snippets?: string[]
-      segment_diagnostics?: {
-        transcript_source?: string
-        transcript_title?: string
-        transcript_published_date?: string
-      } | null
+      segment_diagnostics?: Record<string, unknown> | null
     }>
     speaker_rollup: Array<{
       speaker: string
@@ -264,6 +277,13 @@ export interface UIReportModel {
       risk_language_intensity: number
       topic_label: string
       mentions: number
+      segment_diagnostics?: {
+        feature_diagnostics?: {
+          metric_source_debug?: Record<string, MetricSourceDebug>
+          [key: string]: unknown
+        }
+        [key: string]: unknown
+      }
     }>
     speaker_rollup: Array<{
       speaker: string

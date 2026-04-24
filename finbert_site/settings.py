@@ -63,6 +63,42 @@ class Settings:
     transcript_feature_ai_min_batch_size: int = int(os.getenv("TRANSCRIPT_FEATURE_AI_MIN_BATCH_SIZE", "3"))
     transcript_feature_counter_weight: float = float(os.getenv("TRANSCRIPT_FEATURE_COUNTER_WEIGHT", "0.65"))
     transcript_feature_density_smoothing: float = float(os.getenv("TRANSCRIPT_FEATURE_DENSITY_SMOOTHING", "0.35"))
+    use_student_confidence: bool = _env_bool("USE_STUDENT_CONFIDENCE", True)
+    use_student_directness: bool = _env_bool("USE_STUDENT_DIRECTNESS", True)
+    use_student_outlook_strength: bool = _env_bool("USE_STUDENT_OUTLOOK_STRENGTH", True)
+    use_student_specificity: bool = _env_bool("USE_STUDENT_SPECIFICITY", False)
+    use_student_risk_intensity: bool = _env_bool("USE_STUDENT_RISK_INTENSITY", False)
+    student_metrics_shadow_compare: bool = _env_bool("STUDENT_METRICS_SHADOW_COMPARE", True)
+    student_metrics_force_lexical_fallback: bool = _env_bool("STUDENT_METRICS_FORCE_LEXICAL_FALLBACK", False)
+    student_metrics_specificity_blend_enabled: bool = _env_bool(
+        "STUDENT_METRICS_SPECIFICITY_BLEND_ENABLED",
+        False,
+    )
+    student_metrics_specificity_blend_weight: float = float(
+        os.getenv("STUDENT_METRICS_SPECIFICITY_BLEND_WEIGHT", "0.35")
+    )
+    student_metrics_batch_size: int = int(os.getenv("STUDENT_METRICS_BATCH_SIZE", "8"))
+    student_metrics_max_length: int = int(os.getenv("STUDENT_METRICS_MAX_LENGTH", "256"))
+    student_model_confidence_dir: str = os.getenv(
+        "STUDENT_MODEL_CONFIDENCE_DIR",
+        "output/student_models/confidence_three_band_deberta_v3_base_strict070/model",
+    )
+    student_model_directness_dir: str = os.getenv(
+        "STUDENT_MODEL_DIRECTNESS_DIR",
+        "output/student_models/directness_three_band_deberta_v3_base_strict070/model",
+    )
+    student_model_outlook_strength_dir: str = os.getenv(
+        "STUDENT_MODEL_OUTLOOK_STRENGTH_DIR",
+        "output/student_models/outlook_strength_five_band_deberta_v3_base_strict070/model",
+    )
+    student_model_specificity_dir: str = os.getenv(
+        "STUDENT_MODEL_SPECIFICITY_DIR",
+        "output/student_models/specificity_deberta_v3_base_cpu/model",
+    )
+    student_model_risk_intensity_dir: str = os.getenv(
+        "STUDENT_MODEL_RISK_INTENSITY_DIR",
+        "output/student_models/risk_intensity_three_band_deberta_v3_base_strict070/model",
+    )
 
     score_weight_transcript: float = float(os.getenv("SCORE_WEIGHT_TRANSCRIPT", "40"))
     score_weight_fundamentals: float = float(os.getenv("SCORE_WEIGHT_FUNDAMENTALS", "35"))

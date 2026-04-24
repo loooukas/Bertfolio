@@ -167,3 +167,35 @@ Inference output includes class probabilities and a default band-to-score mappin
 - `very_high=0.90`
 
 `infer_block_metrics.py` now reads the class labels from the saved model config, so 5-band/3-band/binary models are supported automatically.
+
+## 5) Site Hybrid Rollout (student + lexical)
+
+The backend transcript scorer now supports policy-driven hybrid routing:
+
+- Student-primary by default: `confidence`, `directness`, `outlook_strength`
+- Lexical-primary by default: `specificity`, `risk_intensity`
+
+Key runtime toggles:
+
+- `USE_STUDENT_CONFIDENCE`
+- `USE_STUDENT_DIRECTNESS`
+- `USE_STUDENT_OUTLOOK_STRENGTH`
+- `USE_STUDENT_SPECIFICITY`
+- `USE_STUDENT_RISK_INTENSITY`
+- `STUDENT_METRICS_SHADOW_COMPARE`
+- `STUDENT_METRICS_FORCE_LEXICAL_FALLBACK`
+- `STUDENT_METRICS_SPECIFICITY_BLEND_ENABLED` (experimental; default off)
+
+Model directories can be overridden with:
+
+- `STUDENT_MODEL_CONFIDENCE_DIR`
+- `STUDENT_MODEL_DIRECTNESS_DIR`
+- `STUDENT_MODEL_OUTLOOK_STRENGTH_DIR`
+- `STUDENT_MODEL_SPECIFICITY_DIR`
+- `STUDENT_MODEL_RISK_INTENSITY_DIR`
+
+Per-block source/debug metadata is written under:
+
+- `speaker_analysis[].segment_diagnostics.feature_diagnostics.metric_source_debug`
+
+This includes source selection (`student_primary`, `lexical_primary`, `lexical_fallback`) and shadow lexical/student values when enabled.

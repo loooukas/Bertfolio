@@ -51,18 +51,35 @@ export default function ModelMethodologyPage() {
       </section>
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xl font-semibold text-foreground">Transcript Lexicon + Anti-Signal Model</h2>
+        <h2 className="text-xl font-semibold text-foreground">Transcript Hybrid Metric Policy (Student + Lexical)</h2>
         <p className="text-sm text-muted-foreground">
-          Communication metrics use hybrid lexical densities with optional OpenAI block-feature blending. Each major signal includes positive and
-          counter lexicons, then uses net density and smoothing.
+          Transcript communication metrics are now policy-routed per block. Student classifiers are primary for the strongest metrics while lexical
+          scoring remains available for fallback and for weaker metrics.
         </p>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>
+            Student-primary by default: <code>confidence</code> (3-band), <code>directness</code> (3-band),{" "}
+            <code>outlook_strength</code> (5-band).
+          </li>
+          <li>
+            Lexical-primary by default: <code>specificity</code>, <code>risk_intensity</code>.
+          </li>
+          <li>
+            For student-primary metrics, lexical fallback is used on model load/inference failure, malformed text, or short/junk-like block text.
+          </li>
+          <li>
+            Evasiveness remains a first-class metric and is derived as inverse directness when student directness is selected.
+          </li>
+        </ul>
         <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
           net_density = positive_density - counter_weight * counter_density{"\n"}
           smoothed_pct = 100 * (0.5 + 0.5*tanh(net_density * curve)){"\n"}
-          confidence/evasiveness/specificity/outlook = bounded mixes of smoothed signals + numeric density + AI blend
+          lexical_metric = bounded mix(smoothed_signals, numeric_density, optional AI block-features){"\n"}
+          final_metric = policy_select(student_metric, lexical_metric, fallback_rules)
         </div>
         <p className="text-sm text-muted-foreground">
-          AI feature blending remains active and confidence-bounded; lexical layers provide broader directional coverage and anti-signal handling.
+          Segment diagnostics expose metric source provenance (<code>student_primary</code>, <code>lexical_primary</code>,{" "}
+          <code>lexical_fallback</code>) plus lexical/student counterparts when shadow compare is enabled.
         </p>
       </section>
 
@@ -160,6 +177,10 @@ export default function ModelMethodologyPage() {
           <li>
             Feature blending knobs: <code>TRANSCRIPT_FEATURE_AI_* </code>, <code>TRANSCRIPT_FEATURE_COUNTER_WEIGHT</code>,{" "}
             <code>TRANSCRIPT_FEATURE_DENSITY_SMOOTHING</code>.
+          </li>
+          <li>
+            Student rollout knobs: <code>USE_STUDENT_*</code>, <code>STUDENT_METRICS_SHADOW_COMPARE</code>,{" "}
+            <code>STUDENT_METRICS_FORCE_LEXICAL_FALLBACK</code>, and per-metric <code>STUDENT_MODEL_*_DIR</code> overrides.
           </li>
           <li>OpenAI request resiliency knobs: <code>OPENAI_REQUEST_RETRIES</code>, <code>OPENAI_RETRY_BACKOFF_SECONDS</code>.</li>
         </ul>

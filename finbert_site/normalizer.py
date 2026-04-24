@@ -23,6 +23,14 @@ from .schemas import (
     TranscriptSpeakerAnalysis,
 )
 from .settings import Settings
+from .student_metrics import (
+    BAND_LABELS_FIVE,
+    BAND_LABELS_THREE,
+    StudentMetricPrediction,
+    band_from_score,
+    infer_student_metric_blocks,
+    student_block_guard_reason,
+)
 
 _LEXICON_MAX_HITS_PER_TERM = 3
 _TOPIC_GENERAL_THRESHOLD = 0.03
@@ -1573,6 +1581,93 @@ def normalize_transcript_document(
     return NormalizationResult(document=deterministic, warnings=warnings)
 
 
+def _metric_band_labels(metric: str) -> tuple[str, ...]:
+    if metric in {"confidence", "directness"}:
+        return BAND_LABELS_THREE
+    if metric == "outlook_strength":
+        return BAND_LABELS_FIVE
+    return BAND_LABELS_FIVE
+
+
+def _resolve_metric_selection(
+    *,
+    metric: str,
+    lexical_score: float,
+    student_prediction: StudentMetricPrediction | None,
+    student_enabled: bool,
+    student_primary: bool,
+    force_lexical_fallback: bool,
+    shadow_compare: bool,
+    guard_reason: str | None,
+    fallback_error: str | None,
+    blend_enabled: bool = False,
+    blend_weight: float = 0.35,
+) -> tuple[float, str, dict[str, Any]]:
+    labels = _metric_band_labels(metric)
+    lexical_score = _clamp(lexical_score, 0.0, 100.0)
+    lexical_band = band_from_score(lexical_score, labels)
+
+    final_score = lexical_score
+    final_band = lexical_band
+    source = "lexical_primary"
+    fallback_reason: str | None = None
+    blend_applied = False
+
+    if student_enabled:
+        if force_lexical_fallback:
+            source = "lexical_fallback" if student_primary else "lexical_primary"
+            fallback_reason = "forced_lexical_fallback"
+        elif guard_reason:
+            source = "lexical_fallback" if student_primary else "lexical_primary"
+            fallback_reason = guard_reason
+        elif fallback_error:
+            source = "lexical_fallback" if student_primary else "lexical_primary"
+            fallback_reason = fallback_error
+        elif student_prediction is None:
+            source = "lexical_fallback" if student_primary else "lexical_primary"
+            fallback_reason = "student_prediction_missing"
+        else:
+            if blend_enabled:
+                safe_weight = _clamp(blend_weight, 0.0, 1.0)
+                final_score = _clamp(
+                    lexical_score * (1.0 - safe_weight) + student_prediction.score * safe_weight,
+                    0.0,
+                    100.0,
+                )
+                final_band = band_from_score(final_score, labels)
+                source = "lexical_primary"
+                blend_applied = True
+            elif student_primary:
+                final_score = _clamp(student_prediction.score, 0.0, 100.0)
+                final_band = student_prediction.band
+                source = "student_primary"
+            else:
+                source = "lexical_primary"
+
+    debug: dict[str, Any] = {
+        "source": source,
+        "final_band": final_band,
+        "final_score": round(final_score, 2),
+    }
+    if shadow_compare:
+        debug["lexical_score"] = round(lexical_score, 2)
+        debug["lexical_band"] = lexical_band
+        debug["student_band"] = student_prediction.band if student_prediction is not None else None
+        debug["student_score"] = (
+            round(float(student_prediction.score), 2) if student_prediction is not None else None
+        )
+        debug["student_probabilities"] = student_prediction.probabilities if student_prediction is not None else None
+        debug["student_predicted_confidence"] = (
+            round(float(student_prediction.predicted_confidence), 4) if student_prediction is not None else None
+        )
+    if fallback_reason:
+        debug["fallback_reason"] = fallback_reason
+    if blend_applied:
+        debug["blend_mode"] = "specificity_experimental_lexical_student"
+        debug["blend_weight_student"] = round(_clamp(blend_weight, 0.0, 1.0), 4)
+    return final_score, final_band, debug
+
+
 def build_speaker_analysis(
     sections: list[TranscriptSectionBlock],
     score_text_fn,
@@ -1594,6 +1689,27 @@ def build_speaker_analysis(
         _clamp_unit(settings.transcript_feature_ai_weight)
         if settings is not None and settings.transcript_feature_ai_enabled
         else 0.0
+    )
+    student_inference = infer_student_metric_blocks(sections=sections, settings=settings)
+    if classifier_warnings is not None and student_inference.warnings:
+        classifier_warnings.extend(student_inference.warnings)
+    if classifier_diagnostics is not None and student_inference.diagnostics:
+        classifier_diagnostics.extend(student_inference.diagnostics)
+
+    use_student_confidence = bool(settings.use_student_confidence) if settings is not None else False
+    use_student_directness = bool(settings.use_student_directness) if settings is not None else False
+    use_student_outlook_strength = bool(settings.use_student_outlook_strength) if settings is not None else False
+    use_student_specificity = bool(settings.use_student_specificity) if settings is not None else False
+    use_student_risk_intensity = bool(settings.use_student_risk_intensity) if settings is not None else False
+    force_lexical_fallback = bool(settings.student_metrics_force_lexical_fallback) if settings is not None else False
+    shadow_compare = bool(settings.student_metrics_shadow_compare) if settings is not None else False
+    specificity_blend_enabled = (
+        bool(settings.student_metrics_specificity_blend_enabled) and use_student_specificity
+        if settings is not None
+        else False
+    )
+    specificity_blend_weight = (
+        _clamp(float(settings.student_metrics_specificity_blend_weight), 0.0, 1.0) if settings is not None else 0.35
     )
 
     for idx, block in enumerate(sections):
@@ -1750,6 +1866,98 @@ def build_speaker_analysis(
             0,
             100,
         )
+        lexical_directness = _clamp(100.0 - evasiveness, 0.0, 100.0)
+
+        student_predictions = student_inference.by_index.get(idx, {})
+        student_guard_reason = student_block_guard_reason(block.text)
+
+        confidence_value, confidence_band, confidence_debug = _resolve_metric_selection(
+            metric="confidence",
+            lexical_score=confidence,
+            student_prediction=student_predictions.get("confidence"),
+            student_enabled=use_student_confidence,
+            student_primary=True,
+            force_lexical_fallback=force_lexical_fallback,
+            shadow_compare=shadow_compare,
+            guard_reason=student_guard_reason if use_student_confidence else None,
+            fallback_error=student_inference.metric_errors.get("confidence") if use_student_confidence else None,
+        )
+        directness_value, directness_band, directness_debug = _resolve_metric_selection(
+            metric="directness",
+            lexical_score=lexical_directness,
+            student_prediction=student_predictions.get("directness"),
+            student_enabled=use_student_directness,
+            student_primary=True,
+            force_lexical_fallback=force_lexical_fallback,
+            shadow_compare=shadow_compare,
+            guard_reason=student_guard_reason if use_student_directness else None,
+            fallback_error=student_inference.metric_errors.get("directness") if use_student_directness else None,
+        )
+        outlook_value, outlook_band, outlook_debug = _resolve_metric_selection(
+            metric="outlook_strength",
+            lexical_score=forward_strength,
+            student_prediction=student_predictions.get("outlook_strength"),
+            student_enabled=use_student_outlook_strength,
+            student_primary=True,
+            force_lexical_fallback=force_lexical_fallback,
+            shadow_compare=shadow_compare,
+            guard_reason=student_guard_reason if use_student_outlook_strength else None,
+            fallback_error=(
+                student_inference.metric_errors.get("outlook_strength") if use_student_outlook_strength else None
+            ),
+        )
+        specificity_value, specificity_band, specificity_debug = _resolve_metric_selection(
+            metric="specificity",
+            lexical_score=specificity,
+            student_prediction=student_predictions.get("specificity"),
+            student_enabled=use_student_specificity or specificity_blend_enabled,
+            student_primary=use_student_specificity and not specificity_blend_enabled,
+            force_lexical_fallback=force_lexical_fallback,
+            shadow_compare=shadow_compare,
+            guard_reason=student_guard_reason if (use_student_specificity or specificity_blend_enabled) else None,
+            fallback_error=(
+                student_inference.metric_errors.get("specificity")
+                if (use_student_specificity or specificity_blend_enabled)
+                else None
+            ),
+            blend_enabled=specificity_blend_enabled,
+            blend_weight=specificity_blend_weight,
+        )
+        risk_value, risk_band, risk_debug = _resolve_metric_selection(
+            metric="risk_intensity",
+            lexical_score=risk_intensity,
+            student_prediction=student_predictions.get("risk_intensity"),
+            student_enabled=use_student_risk_intensity,
+            student_primary=use_student_risk_intensity,
+            force_lexical_fallback=force_lexical_fallback,
+            shadow_compare=shadow_compare,
+            guard_reason=student_guard_reason if use_student_risk_intensity else None,
+            fallback_error=(
+                student_inference.metric_errors.get("risk_intensity") if use_student_risk_intensity else None
+            ),
+        )
+
+        if directness_debug.get("source") == "student_primary":
+            evasiveness_value = _clamp(100.0 - directness_value, 0.0, 100.0)
+            evasiveness_source = "student_primary"
+            evasiveness_fallback_reason = None
+        else:
+            evasiveness_value = evasiveness
+            evasiveness_source = directness_debug.get("source", "lexical_primary")
+            evasiveness_fallback_reason = directness_debug.get("fallback_reason")
+        evasiveness_debug: dict[str, Any] = {
+            "source": evasiveness_source,
+            "final_band": band_from_score(evasiveness_value, BAND_LABELS_FIVE),
+            "final_score": round(evasiveness_value, 2),
+            "derived_from": "inverse_of_directness",
+            "directness_source": directness_debug.get("source", "lexical_primary"),
+        }
+        if shadow_compare:
+            evasiveness_debug["lexical_score"] = round(evasiveness, 2)
+            evasiveness_debug["lexical_band"] = band_from_score(evasiveness, BAND_LABELS_FIVE)
+            evasiveness_debug["inverse_directness_score"] = round(_clamp(100.0 - directness_value, 0.0, 100.0), 2)
+        if evasiveness_fallback_reason:
+            evasiveness_debug["fallback_reason"] = str(evasiveness_fallback_reason)
 
         topic_label = topic_label_lex
         if ai_features is not None and ai_features.topic_label != "general" and ai_blend_weight >= 0.2:
@@ -1795,6 +2003,22 @@ def build_speaker_analysis(
                 "specificity_counter": specificity_counter_terms[:8],
                 "directness": directness_terms[:8],
             },
+            "metric_source_debug": {
+                "confidence": confidence_debug,
+                "directness": directness_debug,
+                "outlook_strength": outlook_debug,
+                "specificity": specificity_debug,
+                "risk_intensity": risk_debug,
+                "evasiveness": evasiveness_debug,
+            },
+            "metric_band_debug": {
+                "confidence": confidence_band,
+                "directness": directness_band,
+                "outlook_strength": outlook_band,
+                "specificity": specificity_band,
+                "risk_intensity": risk_band,
+                "evasiveness": evasiveness_debug["final_band"],
+            },
         }
         if ai_features is not None:
             feature_diagnostics["ai"] = {
@@ -1817,11 +2041,11 @@ def build_speaker_analysis(
                 order_index=block.order_index,
                 sentiment_direction=_clamp(directional, -1.0, 1.0),
                 segment_char_count=len(block.text.strip()),
-                confidence=round(confidence, 2),
-                evasiveness=round(evasiveness, 2),
-                specificity=round(specificity, 2),
-                forward_looking_strength=round(forward_strength, 2),
-                risk_language_intensity=round(risk_intensity, 2),
+                confidence=round(confidence_value, 2),
+                evasiveness=round(evasiveness_value, 2),
+                specificity=round(specificity_value, 2),
+                forward_looking_strength=round(outlook_value, 2),
+                risk_language_intensity=round(risk_value, 2),
                 topic_label=topic_label,
                 evidence_snippets=evidence,
                 segment_diagnostics=merged_segment_diagnostics,

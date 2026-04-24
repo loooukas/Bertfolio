@@ -23,6 +23,25 @@ interface SpeakerAnalysis {
   risk_language_intensity: number
   topic_label: string
   mentions: number
+  segment_diagnostics?: {
+    feature_diagnostics?: {
+      metric_source_debug?: Record<string, MetricSourceDebug>
+      [key: string]: unknown
+    }
+    [key: string]: unknown
+  }
+}
+
+interface MetricSourceDebug {
+  source?: string
+  final_band?: string
+  final_score?: number
+  lexical_score?: number | null
+  lexical_band?: string | null
+  student_score?: number | null
+  student_band?: string | null
+  fallback_reason?: string
+  blend_mode?: string
 }
 
 interface SpeakerRollup {
@@ -442,6 +461,35 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
     }
     return null
   }, [activeBlock, data.transcripts])
+
+  const activeMetricDebug = useMemo(() => {
+    const metricDebugRaw = activeBlock?.segment_diagnostics?.feature_diagnostics?.metric_source_debug
+    if (!metricDebugRaw || typeof metricDebugRaw !== "object") {
+      return []
+    }
+    const orderedMetrics = ["confidence", "directness", "outlook_strength", "specificity", "risk_intensity", "evasiveness"]
+    const rows = orderedMetrics
+      .map((metric) => {
+        const raw = metricDebugRaw[metric]
+        if (!raw || typeof raw !== "object") return null
+        const item = raw as MetricSourceDebug
+        return {
+          metric,
+          source: String(item.source || "n/a"),
+          finalBand: item.final_band ? String(item.final_band) : undefined,
+          finalScore: typeof item.final_score === "number" ? item.final_score : undefined,
+          lexicalScore: typeof item.lexical_score === "number" ? item.lexical_score : undefined,
+          lexicalBand: item.lexical_band ? String(item.lexical_band) : undefined,
+          studentScore: typeof item.student_score === "number" ? item.student_score : undefined,
+          studentBand: item.student_band ? String(item.student_band) : undefined,
+          fallbackReason: item.fallback_reason ? String(item.fallback_reason) : undefined,
+          blendMode: item.blend_mode ? String(item.blend_mode) : undefined,
+        }
+      })
+    return rows.filter(
+      (item): item is NonNullable<(typeof rows)[number]> => item !== null,
+    )
+  }, [activeBlock])
 
   return (
     <TooltipProvider>
@@ -1027,6 +1075,54 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                     {activeBlockTranscript?.section.text || "No source transcript text available for this row."}
                   </p>
                 </div>
+
+                {activeMetricDebug.length > 0 ? (
+                  <div className="rounded-lg border border-border bg-secondary/20 p-4">
+                    <div className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Metric Source Debug
+                    </div>
+                    <div className="space-y-2 text-xs text-foreground">
+                      {activeMetricDebug.map((item) => (
+                        <div key={item.metric} className="grid grid-cols-1 gap-1 sm:grid-cols-[140px_1fr] sm:gap-2">
+                          <div className="font-medium">{formatTopicLabel(item.metric)}</div>
+                          <div className="text-muted-foreground">
+                            source=<span className="font-mono text-foreground">{item.source}</span>
+                            {typeof item.finalScore === "number" ? (
+                              <>
+                                {" "}final=<span className="font-mono text-foreground">{item.finalScore.toFixed(2)}</span>
+                              </>
+                            ) : null}
+                            {item.finalBand ? (
+                              <>
+                                {" "}band=<span className="font-mono text-foreground">{item.finalBand}</span>
+                              </>
+                            ) : null}
+                            {typeof item.lexicalScore === "number" ? (
+                              <>
+                                {" "}lex=<span className="font-mono text-foreground">{item.lexicalScore.toFixed(2)}</span>
+                              </>
+                            ) : null}
+                            {typeof item.studentScore === "number" ? (
+                              <>
+                                {" "}student=<span className="font-mono text-foreground">{item.studentScore.toFixed(2)}</span>
+                              </>
+                            ) : null}
+                            {item.fallbackReason ? (
+                              <>
+                                {" "}fallback=<span className="font-mono text-foreground">{item.fallbackReason}</span>
+                              </>
+                            ) : null}
+                            {item.blendMode ? (
+                              <>
+                                {" "}mode=<span className="font-mono text-foreground">{item.blendMode}</span>
+                              </>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </DialogContent>
