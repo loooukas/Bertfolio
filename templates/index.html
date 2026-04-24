@@ -23,7 +23,7 @@
         </nav>
         <div class="top-actions" aria-label="Secondary actions">
           <a href="/docs" class="docs-link">Docs</a>
-          <button class="icon-btn" type="button" aria-label="Settings">
+          <button id="settings-btn" class="icon-btn" type="button" aria-label="Settings">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M10.3 2.5h3.4l.5 2.1a7.9 7.9 0 0 1 1.8.8l2-1 2.4 2.4-1 2a7.9 7.9 0 0 1 .8 1.8l2.1.5v3.4l-2.1.5a7.9 7.9 0 0 1-.8 1.8l1 2-2.4 2.4-2-1a7.9 7.9 0 0 1-1.8.8l-.5 2.1h-3.4l-.5-2.1a7.9 7.9 0 0 1-1.8-.8l-2 1L3.4 19l1-2a7.9 7.9 0 0 1-.8-1.8l-2.1-.5v-3.4l2.1-.5a7.9 7.9 0 0 1 .8-1.8l-1-2 2.4-2.4 2 1a7.9 7.9 0 0 1 1.8-.8zM12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z" />
             </svg>
@@ -408,6 +408,59 @@
       </article>
     </dialog>
 
+    <dialog id="settings-modal" class="modal">
+      <article class="modal-card">
+        <header>
+          <h3>Scoring Settings</h3>
+          <button id="settings-close" class="ghost-btn" type="button">Close</button>
+        </header>
+        <div class="settings-grid">
+          <label class="settings-inline-toggle">
+            <input id="settings-use-optimized" type="checkbox" checked />
+            <span>Use 126d transcript-optimized defaults</span>
+          </label>
+
+          <label>
+            Transcript Weight (%)
+            <input id="settings-score-weight-transcript" type="number" min="0" max="100" step="0.1" />
+          </label>
+
+          <label>
+            Intercept
+            <input id="settings-transcript-intercept" type="number" min="-5" max="5" step="0.0001" />
+          </label>
+          <label>
+            Sentiment Weight
+            <input id="settings-transcript-weight-sentiment" type="number" min="-5" max="5" step="0.0001" />
+          </label>
+          <label>
+            Confidence Weight
+            <input id="settings-transcript-weight-confidence" type="number" min="-5" max="5" step="0.0001" />
+          </label>
+          <label>
+            Directness Weight
+            <input id="settings-transcript-weight-directness" type="number" min="-5" max="5" step="0.0001" />
+          </label>
+          <label>
+            Outlook Weight
+            <input id="settings-transcript-weight-outlook" type="number" min="-5" max="5" step="0.0001" />
+          </label>
+          <label>
+            Specificity Weight
+            <input id="settings-transcript-weight-specificity" type="number" min="-5" max="5" step="0.0001" />
+          </label>
+          <label>
+            Risk Intensity Weight
+            <input id="settings-transcript-weight-risk" type="number" min="-5" max="5" step="0.0001" />
+          </label>
+        </div>
+        <div class="settings-actions">
+          <button id="settings-reset-optimized" class="ghost-btn" type="button">Reset To Optimized</button>
+          <button id="settings-save" type="button">Save</button>
+        </div>
+      </article>
+    </dialog>
+
     <script>
       const STAGE_DESCRIPTIONS = {
         overview: "Generating executive summary",
@@ -435,6 +488,16 @@
         fundamentals: svgIcon("M4 4h16v16H4Zm2 2v4h4V6Zm6 0v4h6V6Zm-6 6v6h4v-6Zm6 0v6h6v-6Z"),
         data_audit: svgIcon("M12 2 4 5v6c0 5.1 3.4 9.8 8 11 4.6-1.2 8-5.9 8-11V5Zm0 5a4 4 0 1 1-4 4 4 4 0 0 1 4-4Z"),
       };
+      const OPTIMIZED_TRANSCRIPT_PRESET = Object.freeze({
+        score_weight_transcript: 40.0,
+        transcript_internal_intercept: -0.019738131823252437,
+        transcript_internal_weight_sentiment: -0.1401634692187762,
+        transcript_internal_weight_confidence: -0.018278288860921532,
+        transcript_internal_weight_directness: 0.015206414272671791,
+        transcript_internal_weight_outlook_strength: -0.11552397904346766,
+        transcript_internal_weight_specificity: -0.08887882362418172,
+        transcript_internal_weight_risk_intensity: -0.0394870057888973,
+      });
 
       const state = {
         payload: null,
@@ -452,6 +515,10 @@
         speakerRoleMap: {},
         transcriptQuarterDocs: {},
         speakerSort: { key: "statements", direction: "desc" },
+        scoringSettings: {
+          useOptimizedTranscriptDefaults: true,
+          ...OPTIMIZED_TRANSCRIPT_PRESET,
+        },
       };
 
       const elements = {
@@ -466,6 +533,7 @@
 
         tickerInput: document.getElementById("ticker"),
         analyzeBtn: document.getElementById("analyze-btn"),
+        settingsBtn: document.getElementById("settings-btn"),
         tickerChips: Array.from(document.querySelectorAll(".ticker-chip")),
 
         reportTabs: document.getElementById("report-tabs"),
@@ -540,6 +608,20 @@
         transcriptModalTitle: document.getElementById("transcript-modal-title"),
         transcriptModalMeta: document.getElementById("transcript-modal-meta"),
         transcriptModalBody: document.getElementById("transcript-modal-body"),
+
+        settingsModal: document.getElementById("settings-modal"),
+        settingsClose: document.getElementById("settings-close"),
+        settingsSave: document.getElementById("settings-save"),
+        settingsResetOptimized: document.getElementById("settings-reset-optimized"),
+        settingsUseOptimized: document.getElementById("settings-use-optimized"),
+        settingsScoreWeightTranscript: document.getElementById("settings-score-weight-transcript"),
+        settingsTranscriptIntercept: document.getElementById("settings-transcript-intercept"),
+        settingsTranscriptWeightSentiment: document.getElementById("settings-transcript-weight-sentiment"),
+        settingsTranscriptWeightConfidence: document.getElementById("settings-transcript-weight-confidence"),
+        settingsTranscriptWeightDirectness: document.getElementById("settings-transcript-weight-directness"),
+        settingsTranscriptWeightOutlook: document.getElementById("settings-transcript-weight-outlook"),
+        settingsTranscriptWeightSpecificity: document.getElementById("settings-transcript-weight-specificity"),
+        settingsTranscriptWeightRisk: document.getElementById("settings-transcript-weight-risk"),
       };
 
       function sleep(ms) {
@@ -602,6 +684,145 @@
           .replaceAll("_", " ")
           .toLowerCase()
           .replace(/\b\w/g, (m) => m.toUpperCase());
+      }
+
+      function parseFiniteOrFallback(rawValue, fallback) {
+        const numeric = Number(rawValue);
+        return Number.isFinite(numeric) ? numeric : Number(fallback);
+      }
+
+      function applyScoringSettingsToInputs() {
+        const model = state.scoringSettings || {};
+        const useOptimized = Boolean(model.useOptimizedTranscriptDefaults);
+        elements.settingsUseOptimized.checked = useOptimized;
+
+        elements.settingsScoreWeightTranscript.value = String(model.score_weight_transcript ?? OPTIMIZED_TRANSCRIPT_PRESET.score_weight_transcript);
+        elements.settingsTranscriptIntercept.value = String(model.transcript_internal_intercept ?? OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_intercept);
+        elements.settingsTranscriptWeightSentiment.value = String(
+          model.transcript_internal_weight_sentiment ?? OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_sentiment
+        );
+        elements.settingsTranscriptWeightConfidence.value = String(
+          model.transcript_internal_weight_confidence ?? OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_confidence
+        );
+        elements.settingsTranscriptWeightDirectness.value = String(
+          model.transcript_internal_weight_directness ?? OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_directness
+        );
+        elements.settingsTranscriptWeightOutlook.value = String(
+          model.transcript_internal_weight_outlook_strength ?? OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_outlook_strength
+        );
+        elements.settingsTranscriptWeightSpecificity.value = String(
+          model.transcript_internal_weight_specificity ?? OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_specificity
+        );
+        elements.settingsTranscriptWeightRisk.value = String(
+          model.transcript_internal_weight_risk_intensity ?? OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_risk_intensity
+        );
+
+        const lockFields = useOptimized;
+        [
+          elements.settingsTranscriptIntercept,
+          elements.settingsTranscriptWeightSentiment,
+          elements.settingsTranscriptWeightConfidence,
+          elements.settingsTranscriptWeightDirectness,
+          elements.settingsTranscriptWeightOutlook,
+          elements.settingsTranscriptWeightSpecificity,
+          elements.settingsTranscriptWeightRisk,
+        ].forEach((input) => {
+          input.disabled = lockFields;
+        });
+      }
+
+      function readScoringSettingsFromInputs() {
+        const useOptimized = Boolean(elements.settingsUseOptimized.checked);
+        const source = useOptimized
+          ? OPTIMIZED_TRANSCRIPT_PRESET
+          : {
+              score_weight_transcript: parseFiniteOrFallback(
+                elements.settingsScoreWeightTranscript.value,
+                OPTIMIZED_TRANSCRIPT_PRESET.score_weight_transcript
+              ),
+              transcript_internal_intercept: parseFiniteOrFallback(
+                elements.settingsTranscriptIntercept.value,
+                OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_intercept
+              ),
+              transcript_internal_weight_sentiment: parseFiniteOrFallback(
+                elements.settingsTranscriptWeightSentiment.value,
+                OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_sentiment
+              ),
+              transcript_internal_weight_confidence: parseFiniteOrFallback(
+                elements.settingsTranscriptWeightConfidence.value,
+                OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_confidence
+              ),
+              transcript_internal_weight_directness: parseFiniteOrFallback(
+                elements.settingsTranscriptWeightDirectness.value,
+                OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_directness
+              ),
+              transcript_internal_weight_outlook_strength: parseFiniteOrFallback(
+                elements.settingsTranscriptWeightOutlook.value,
+                OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_outlook_strength
+              ),
+              transcript_internal_weight_specificity: parseFiniteOrFallback(
+                elements.settingsTranscriptWeightSpecificity.value,
+                OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_specificity
+              ),
+              transcript_internal_weight_risk_intensity: parseFiniteOrFallback(
+                elements.settingsTranscriptWeightRisk.value,
+                OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_risk_intensity
+              ),
+            };
+
+        return {
+          useOptimizedTranscriptDefaults: useOptimized,
+          score_weight_transcript: parseFiniteOrFallback(
+            elements.settingsScoreWeightTranscript.value,
+            OPTIMIZED_TRANSCRIPT_PRESET.score_weight_transcript
+          ),
+          transcript_internal_intercept: source.transcript_internal_intercept,
+          transcript_internal_weight_sentiment: source.transcript_internal_weight_sentiment,
+          transcript_internal_weight_confidence: source.transcript_internal_weight_confidence,
+          transcript_internal_weight_directness: source.transcript_internal_weight_directness,
+          transcript_internal_weight_outlook_strength: source.transcript_internal_weight_outlook_strength,
+          transcript_internal_weight_specificity: source.transcript_internal_weight_specificity,
+          transcript_internal_weight_risk_intensity: source.transcript_internal_weight_risk_intensity,
+        };
+      }
+
+      function buildRuntimeOverrides() {
+        const settingsState = state.scoringSettings || {};
+        return {
+          score_weight_transcript: parseFiniteOrFallback(
+            settingsState.score_weight_transcript,
+            OPTIMIZED_TRANSCRIPT_PRESET.score_weight_transcript
+          ),
+          transcript_internal_model_enabled: true,
+          transcript_internal_intercept: parseFiniteOrFallback(
+            settingsState.transcript_internal_intercept,
+            OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_intercept
+          ),
+          transcript_internal_weight_sentiment: parseFiniteOrFallback(
+            settingsState.transcript_internal_weight_sentiment,
+            OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_sentiment
+          ),
+          transcript_internal_weight_confidence: parseFiniteOrFallback(
+            settingsState.transcript_internal_weight_confidence,
+            OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_confidence
+          ),
+          transcript_internal_weight_directness: parseFiniteOrFallback(
+            settingsState.transcript_internal_weight_directness,
+            OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_directness
+          ),
+          transcript_internal_weight_outlook_strength: parseFiniteOrFallback(
+            settingsState.transcript_internal_weight_outlook_strength,
+            OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_outlook_strength
+          ),
+          transcript_internal_weight_specificity: parseFiniteOrFallback(
+            settingsState.transcript_internal_weight_specificity,
+            OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_specificity
+          ),
+          transcript_internal_weight_risk_intensity: parseFiniteOrFallback(
+            settingsState.transcript_internal_weight_risk_intensity,
+            OPTIMIZED_TRANSCRIPT_PRESET.transcript_internal_weight_risk_intensity
+          ),
+        };
       }
 
       function sentimentClass(labelOrScore) {
@@ -1837,10 +2058,11 @@
         setLoadingOverlay(true, "Bootstrapping analysis", "Waiting for backend job start");
 
         try {
+          const runtimeOverrides = buildRuntimeOverrides();
           const startResponse = await fetch("/api/analyze/jobs", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ticker }),
+            body: JSON.stringify({ ticker, runtime_overrides: runtimeOverrides }),
           });
           const startPayload = await startResponse.json();
           if (!startResponse.ok) throw new Error(startPayload.detail || "Failed to create analysis job.");
@@ -1862,7 +2084,53 @@
         }
       }
 
+      function openSettingsModal() {
+        applyScoringSettingsToInputs();
+        elements.settingsModal.showModal();
+      }
+
+      function closeSettingsModal() {
+        if (elements.settingsModal.open) {
+          elements.settingsModal.close();
+        }
+      }
+
       elements.analyzeBtn.addEventListener("click", runAnalysis);
+      elements.settingsBtn.addEventListener("click", openSettingsModal);
+      elements.settingsClose.addEventListener("click", closeSettingsModal);
+      elements.settingsModal.addEventListener("click", (event) => {
+        if (event.target === elements.settingsModal) closeSettingsModal();
+      });
+      elements.settingsUseOptimized.addEventListener("change", () => {
+        if (elements.settingsUseOptimized.checked) {
+          state.scoringSettings = {
+            ...state.scoringSettings,
+            useOptimizedTranscriptDefaults: true,
+            ...OPTIMIZED_TRANSCRIPT_PRESET,
+          };
+        } else {
+          state.scoringSettings = {
+            ...state.scoringSettings,
+            useOptimizedTranscriptDefaults: false,
+          };
+        }
+        applyScoringSettingsToInputs();
+      });
+      elements.settingsResetOptimized.addEventListener("click", () => {
+        state.scoringSettings = {
+          ...state.scoringSettings,
+          useOptimizedTranscriptDefaults: true,
+          ...OPTIMIZED_TRANSCRIPT_PRESET,
+        };
+        applyScoringSettingsToInputs();
+      });
+      elements.settingsSave.addEventListener("click", () => {
+        state.scoringSettings = readScoringSettingsFromInputs();
+        applyScoringSettingsToInputs();
+        closeSettingsModal();
+        elements.status.className = "status-line";
+        elements.status.textContent = "Scoring settings saved for this session.";
+      });
       elements.tickerInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter") runAnalysis();
       });
@@ -1918,6 +2186,7 @@
       buildTabs();
       renderStageSummary();
       renderLoadingProgress();
+      applyScoringSettingsToInputs();
       setMarketFeedTab("news");
     </script>
   </body>

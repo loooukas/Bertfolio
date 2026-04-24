@@ -105,6 +105,66 @@ class Settings:
     score_weight_news: float = float(os.getenv("SCORE_WEIGHT_NEWS", "15"))
     score_weight_social: float = float(os.getenv("SCORE_WEIGHT_SOCIAL", "10"))
 
+    # Transcript-internal calibrated scorer (defaults from 126d binary stage-1 calibration).
+    transcript_internal_model_enabled: bool = _env_bool("TRANSCRIPT_INTERNAL_MODEL_ENABLED", True)
+    transcript_internal_intercept: float = float(os.getenv("TRANSCRIPT_INTERNAL_INTERCEPT", "-0.019738131823252437"))
+    transcript_internal_weight_sentiment: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_WEIGHT_SENTIMENT", "-0.1401634692187762")
+    )
+    transcript_internal_weight_confidence: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_WEIGHT_CONFIDENCE", "-0.018278288860921532")
+    )
+    transcript_internal_weight_directness: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_WEIGHT_DIRECTNESS", "0.015206414272671791")
+    )
+    transcript_internal_weight_outlook_strength: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_WEIGHT_OUTLOOK_STRENGTH", "-0.11552397904346766")
+    )
+    transcript_internal_weight_specificity: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_WEIGHT_SPECIFICITY", "-0.08887882362418172")
+    )
+    transcript_internal_weight_risk_intensity: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_WEIGHT_RISK_INTENSITY", "-0.0394870057888973")
+    )
+
+    transcript_internal_mean_sentiment: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_MEAN_SENTIMENT", "0.21078121062965025")
+    )
+    transcript_internal_mean_confidence: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_MEAN_CONFIDENCE", "66.75376972941926")
+    )
+    transcript_internal_mean_directness: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_MEAN_DIRECTNESS", "66.07434537052912")
+    )
+    transcript_internal_mean_outlook_strength: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_MEAN_OUTLOOK_STRENGTH", "43.44859716002433")
+    )
+    transcript_internal_mean_specificity: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_MEAN_SPECIFICITY", "55.778186220330234")
+    )
+    transcript_internal_mean_risk_intensity: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_MEAN_RISK_INTENSITY", "58.85238912055554")
+    )
+
+    transcript_internal_std_sentiment: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_STD_SENTIMENT", "0.19059907568499407")
+    )
+    transcript_internal_std_confidence: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_STD_CONFIDENCE", "2.6604270552701204")
+    )
+    transcript_internal_std_directness: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_STD_DIRECTNESS", "3.489541394240505")
+    )
+    transcript_internal_std_outlook_strength: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_STD_OUTLOOK_STRENGTH", "3.6659477149803137")
+    )
+    transcript_internal_std_specificity: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_STD_SPECIFICITY", "5.680196748327937")
+    )
+    transcript_internal_std_risk_intensity: float = float(
+        os.getenv("TRANSCRIPT_INTERNAL_STD_RISK_INTENSITY", "2.562695988859408")
+    )
+
     news_limit: int = int(os.getenv("NEWS_LIMIT", "50"))
     news_pool_size: int = int(os.getenv("NEWS_POOL_SIZE", "240"))
     news_lookback_days: int = int(os.getenv("NEWS_LOOKBACK_DAYS", "30"))

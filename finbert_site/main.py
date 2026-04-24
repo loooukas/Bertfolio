@@ -26,6 +26,7 @@ from .analysis import (
     _management_only_rows,
     _normalize_speaker_role,
     _resolve_score_weights,
+    _resolve_transcript_component,
     _stance_from_score,
     build_analysis,
     build_sentiment_snapshot,
@@ -71,6 +72,14 @@ _OVERRIDABLE_SETTING_KEYS: tuple[str, ...] = (
     "score_weight_fundamentals",
     "score_weight_news",
     "score_weight_social",
+    "transcript_internal_model_enabled",
+    "transcript_internal_intercept",
+    "transcript_internal_weight_sentiment",
+    "transcript_internal_weight_confidence",
+    "transcript_internal_weight_directness",
+    "transcript_internal_weight_outlook_strength",
+    "transcript_internal_weight_specificity",
+    "transcript_internal_weight_risk_intensity",
     "news_enable_alpha_vantage",
     "news_enable_yahoo_finance",
     "social_enable_reddit",
@@ -90,6 +99,14 @@ class AnalyzeRuntimeOverrides(BaseModel):
     score_weight_fundamentals: Optional[float] = Field(default=None, ge=0, le=100)
     score_weight_news: Optional[float] = Field(default=None, ge=0, le=100)
     score_weight_social: Optional[float] = Field(default=None, ge=0, le=100)
+    transcript_internal_model_enabled: Optional[bool] = None
+    transcript_internal_intercept: Optional[float] = Field(default=None, ge=-5, le=5)
+    transcript_internal_weight_sentiment: Optional[float] = Field(default=None, ge=-5, le=5)
+    transcript_internal_weight_confidence: Optional[float] = Field(default=None, ge=-5, le=5)
+    transcript_internal_weight_directness: Optional[float] = Field(default=None, ge=-5, le=5)
+    transcript_internal_weight_outlook_strength: Optional[float] = Field(default=None, ge=-5, le=5)
+    transcript_internal_weight_specificity: Optional[float] = Field(default=None, ge=-5, le=5)
+    transcript_internal_weight_risk_intensity: Optional[float] = Field(default=None, ge=-5, le=5)
     news_enable_alpha_vantage: Optional[bool] = None
     news_enable_yahoo_finance: Optional[bool] = None
     social_enable_reddit: Optional[bool] = None
@@ -331,7 +348,10 @@ def _refresh_cached_result_from_local_data(
     scoring_settings = _settings_for_runtime_overrides(runtime_overrides)
     score_weights = _resolve_score_weights(scoring_settings)
 
-    transcript_component = transcript_direction if management_rows else 0.0
+    transcript_component, _ = _resolve_transcript_component(
+        management_speaker_analysis=management_rows,
+        settings=scoring_settings,
+    )
     overall_score = _clamp_unit(
         transcript_component * score_weights.get("transcript", 0.40)
         + fundamentals_signal * score_weights.get("fundamentals", 0.35)

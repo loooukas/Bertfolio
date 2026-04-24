@@ -509,6 +509,106 @@ def _resolve_score_weights(settings: Settings) -> dict[str, float]:
     return {key: value / total for key, value in cleaned.items()}
 
 
+def _resolve_transcript_component(
+    *,
+    management_speaker_analysis: list[TranscriptSpeakerAnalysis],
+    settings: Settings,
+) -> tuple[float, dict[str, Any]]:
+    transcript_direction = (
+        mean(row.sentiment_direction for row in management_speaker_analysis)
+        if management_speaker_analysis
+        else 0.0
+    )
+    if not management_speaker_analysis:
+        return 0.0, {
+            "mode": "no_management_rows",
+            "transcript_direction": 0.0,
+        }
+
+    if not bool(getattr(settings, "transcript_internal_model_enabled", True)):
+        return _clamp_unit(transcript_direction), {
+            "mode": "legacy_direction_only",
+            "transcript_direction": round(_clamp_unit(transcript_direction), 6),
+        }
+
+    confidence = mean(row.confidence for row in management_speaker_analysis)
+    evasiveness = mean(row.evasiveness for row in management_speaker_analysis)
+    directness = _clamp(100.0 - evasiveness, 0.0, 100.0)
+    outlook_strength = mean(row.forward_looking_strength for row in management_speaker_analysis)
+    specificity = mean(row.specificity for row in management_speaker_analysis)
+    risk_intensity = mean(row.risk_language_intensity for row in management_speaker_analysis)
+
+    def _z(value: float, mean_value: float, std_value: float) -> float:
+        std_safe = float(std_value) if isinstance(std_value, (int, float)) and math.isfinite(std_value) and std_value > 0 else 1.0
+        return (float(value) - float(mean_value)) / std_safe
+
+    z_sentiment = _z(
+        transcript_direction,
+        float(getattr(settings, "transcript_internal_mean_sentiment", 0.0)),
+        float(getattr(settings, "transcript_internal_std_sentiment", 1.0)),
+    )
+    z_confidence = _z(
+        confidence,
+        float(getattr(settings, "transcript_internal_mean_confidence", 50.0)),
+        float(getattr(settings, "transcript_internal_std_confidence", 1.0)),
+    )
+    z_directness = _z(
+        directness,
+        float(getattr(settings, "transcript_internal_mean_directness", 50.0)),
+        float(getattr(settings, "transcript_internal_std_directness", 1.0)),
+    )
+    z_outlook = _z(
+        outlook_strength,
+        float(getattr(settings, "transcript_internal_mean_outlook_strength", 50.0)),
+        float(getattr(settings, "transcript_internal_std_outlook_strength", 1.0)),
+    )
+    z_specificity = _z(
+        specificity,
+        float(getattr(settings, "transcript_internal_mean_specificity", 50.0)),
+        float(getattr(settings, "transcript_internal_std_specificity", 1.0)),
+    )
+    z_risk = _z(
+        risk_intensity,
+        float(getattr(settings, "transcript_internal_mean_risk_intensity", 50.0)),
+        float(getattr(settings, "transcript_internal_std_risk_intensity", 1.0)),
+    )
+
+    linear_score = float(getattr(settings, "transcript_internal_intercept", 0.0))
+    linear_score += float(getattr(settings, "transcript_internal_weight_sentiment", 0.0)) * z_sentiment
+    linear_score += float(getattr(settings, "transcript_internal_weight_confidence", 0.0)) * z_confidence
+    linear_score += float(getattr(settings, "transcript_internal_weight_directness", 0.0)) * z_directness
+    linear_score += float(getattr(settings, "transcript_internal_weight_outlook_strength", 0.0)) * z_outlook
+    linear_score += float(getattr(settings, "transcript_internal_weight_specificity", 0.0)) * z_specificity
+    linear_score += float(getattr(settings, "transcript_internal_weight_risk_intensity", 0.0)) * z_risk
+
+    prob = 1.0 / (1.0 + math.exp(-max(-35.0, min(35.0, linear_score))))
+    transcript_component = _clamp_unit((2.0 * prob) - 1.0)
+
+    return transcript_component, {
+        "mode": "calibrated_internal_logistic",
+        "transcript_direction": round(_clamp_unit(transcript_direction), 6),
+        "raw_features": {
+            "sentiment": round(transcript_direction, 6),
+            "confidence": round(confidence, 4),
+            "directness": round(directness, 4),
+            "outlook_strength": round(outlook_strength, 4),
+            "specificity": round(specificity, 4),
+            "risk_intensity": round(risk_intensity, 4),
+        },
+        "z_features": {
+            "sentiment": round(z_sentiment, 6),
+            "confidence": round(z_confidence, 6),
+            "directness": round(z_directness, 6),
+            "outlook_strength": round(z_outlook, 6),
+            "specificity": round(z_specificity, 6),
+            "risk_intensity": round(z_risk, 6),
+        },
+        "linear_score": round(linear_score, 6),
+        "probability_up": round(prob, 6),
+        "transcript_component": round(transcript_component, 6),
+    }
+
+
 def _summary_sentence_count(text: str) -> int:
     cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
     if not cleaned:
@@ -1958,7 +2058,10 @@ def build_analysis(
     analyst_signal = _analyst_signal(recommendation_mean, upside_pct)
     fundamentals_signal = _fundamentals_blended_signal(growth_signal, analyst_signal)
 
-    transcript_component = transcript_direction if management_speaker_analysis else 0.0
+    transcript_component, transcript_component_details = _resolve_transcript_component(
+        management_speaker_analysis=management_speaker_analysis,
+        settings=settings,
+    )
     overall_score = _clamp_unit(
         transcript_component * score_weights.get("transcript", 0.40)
         + fundamentals_signal * score_weights.get("fundamentals", 0.35)
@@ -2032,6 +2135,8 @@ def build_analysis(
     executive_summary_payload = {
         "overall_label": _stance_from_score(overall_score),
         "overall_score": round(overall_score, 4),
+        "transcript_component": round(transcript_component, 4),
+        "transcript_component_mode": transcript_component_details.get("mode"),
         "confidence_score": round(confidence_score, 2),
         "evasiveness_score": round(evasiveness_score, 2),
         "outlook_strength": round(forward_strength, 2),
