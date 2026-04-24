@@ -12,6 +12,7 @@ This pipeline builds an event-level historical table and calibrates score weight
 - `scripts/build_historical_event_table.py`
 - `scripts/prepare_score_calibration_dataset.py`
 - `scripts/calibrate_score_weights.py`
+- `scripts/compare_weight_methodologies.py`
 - `scripts/run_walkforward_calibration.py`
 - `scripts/run_walkforward_binary_long_horizons.sh`
 - `scripts/audit_event_table_failures.py`
@@ -132,6 +133,32 @@ Transcript metric modes:
 - `predictions_test.csv`
 - `comparison_table.json`
 - `calibration_summary.md`
+
+## Methodology Head-to-Head (Fixed Weights vs Stage Models)
+
+`compare_weight_methodologies.py` lets you compare specific top-level weight profiles against:
+- `model_stage1` (transcript-stage calibrated score)
+- `model_direct` (single-stage calibrated model, if present in coefficients)
+
+It reuses the prepared split (`train`/`validation`/`test`), tunes binary thresholds on validation, and reports test metrics for each method.
+
+Example:
+
+```bash
+.venv/bin/python scripts/compare_weight_methodologies.py \
+  --input output/score_calibration_126d/binary_v2/prepared_calibration_dataset.csv \
+  --coefficients output/score_calibration_126d/binary_v2/calibration_run/coefficients.json \
+  --target-mode binary \
+  --target-column target \
+  --profile blend_43_5_15_10:43,5,15,10 \
+  --profile blend_40_35_15_10:40,35,15,10 \
+  --profile blend_100_0_0_0:100,0,0,0 \
+  --output-dir output/score_calibration_126d/binary_v2/method_compare
+```
+
+Outputs:
+- `methodology_comparison.json`
+- `methodology_comparison.md`
 
 Binary outputs include:
 - per-model tuned threshold in `metrics.json` (`models.<name>.threshold`)
