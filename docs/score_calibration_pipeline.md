@@ -12,6 +12,7 @@ This pipeline builds an event-level historical table and calibrates score weight
 - `scripts/build_historical_event_table.py`
 - `scripts/prepare_score_calibration_dataset.py`
 - `scripts/calibrate_score_weights.py`
+- `scripts/audit_event_table_failures.py`
 - `scripts/score_calibration_utils.py` (shared helpers)
 
 ## Phase 1: Build Historical Event Table
@@ -39,6 +40,9 @@ This pipeline builds an event-level historical table and calibrates score weight
   - benchmark returns (`1d`, `3d`, `5d`)
   - abnormal returns (`1d`, `3d`, `5d`)
   - binary abnormal-up labels (`1d`, `3d`, `5d`)
+- Phase-1 diagnostics artifacts:
+  - `event_table_summary.json`
+  - `event_table_failures.json` (ticker-level price-fetch attempts plus live component-fetch diagnostics)
 
 ### Event alignment assumptions
 - Event date priority:
@@ -143,6 +147,13 @@ Transcript metric modes:
   --target-mode continuous \
   --target-horizon 3 \
   --output-dir output/score_calibration/calibration_run
+
+# Optional: audit missing targets + per-ticker failure causes
+.venv/bin/python scripts/audit_event_table_failures.py \
+  --input output/score_calibration/historical_event_table.csv \
+  --failures-json output/score_calibration/event_table_failures.json \
+  --horizon 3 \
+  --output output/score_calibration/event_table_audit.json
 ```
 
 Progress UX:

@@ -22,7 +22,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from finbert_site.normalizer import build_speaker_analysis
-from finbert_site.providers import fetch_fundamentals, fetch_news_multi_source, fetch_social_multi_source
+from finbert_site.providers import (
+    enrich_fundamentals_with_alpha_validation,
+    fetch_fundamentals,
+    fetch_news_multi_source,
+    fetch_social_multi_source,
+)
 from finbert_site.schemas import TranscriptSectionBlock
 from finbert_site.settings import Settings
 from scripts.score_calibration_utils import (
@@ -32,6 +37,7 @@ from scripts.score_calibration_utils import (
     date_to_str,
     ensure_dir,
     fetch_close_series,
+    fetch_close_series_with_diagnostics,
     mean_or_none,
     parse_date,
     read_structured_records,
@@ -496,13 +502,47 @@ class LiveComponentFetcher:
         self.settings = settings
         self.sentiment_fn = sentiment_fn
         self.cache: dict[str, dict[str, Any]] = {}
+        self.diag_cache: dict[str, dict[str, Any]] = {}
 
     def fetch(self, ticker: str, company_name: Optional[str]) -> dict[str, Any]:
-        symbol = ticker.upper().strip()
-        if symbol in self.cache:
-            return dict(self.cache[symbol])
+        payload, _diag = self.fetch_with_diagnostics(ticker=ticker, company_name=company_name)
+        return payload
 
-        fundamentals = fetch_fundamentals(symbol)
+    def fetch_with_diagnostics(self, ticker: str, company_name: Optional[str]) -> tuple[dict[str, Any], dict[str, Any]]:
+        symbol = ticker.upper().strip()
+        if symbol in self.cache and symbol in self.diag_cache:
+            return dict(self.cache[symbol]), dict(self.diag_cache[symbol])
+
+        diagnostics: dict[str, Any] = {
+            "ticker": symbol,
+            "fundamentals": {"status": "not_attempted"},
+            "news": {"status": "not_attempted"},
+            "social": {"status": "not_attempted"},
+        }
+
+        fundamentals: dict[str, Any] = {}
+        fundamentals_validation: dict[str, Any] = {}
+        try:
+            fundamentals_raw = fetch_fundamentals(symbol)
+            fundamentals, fundamentals_validation = enrich_fundamentals_with_alpha_validation(
+                symbol=symbol,
+                settings=self.settings,
+                yahoo_payload=fundamentals_raw,
+            )
+            diagnostics["fundamentals"] = {
+                "status": "ok",
+                "alpha_source_used": bool(fundamentals_validation.get("alpha_source_used", False)),
+                "mismatch_count": int(len(fundamentals_validation.get("mismatches") or [])),
+                "notes": [str(item) for item in (fundamentals_validation.get("notes") or [])[:5]],
+            }
+        except Exception as exc:
+            fundamentals = {}
+            fundamentals_validation = {}
+            diagnostics["fundamentals"] = {
+                "status": "error",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
         rev_qoq = safe_float(fundamentals.get("revenue_qoq_growth_pct"))
         eps_qoq = safe_float(fundamentals.get("eps_qoq_growth_pct"))
         fundamentals_signal = None
@@ -517,7 +557,7 @@ class LiveComponentFetcher:
         social_count = 0
 
         try:
-            news, _warnings, _audit = fetch_news_multi_source(
+            news, warnings, audit = fetch_news_multi_source(
                 symbol,
                 self.settings,
                 company_name=company_name,
@@ -527,11 +567,23 @@ class LiveComponentFetcher:
             news_values = [safe_float(getattr(item, "sentiment_score", None)) for item in news]
             news_signal = mean_or_none(news_values)
             news_count = len(news)
-        except Exception:
+            diagnostics["news"] = {
+                "status": "ok",
+                "records": int(len(news)),
+                "warnings": [str(item) for item in warnings[:5]],
+                "fetched_pool": int(getattr(audit, "fetched_pool", 0)),
+                "parsed_records": int(getattr(audit, "parsed_records", 0)),
+                "normalized_records": int(getattr(audit, "normalized_records", 0)),
+            }
+        except Exception as exc:
             news_signal = None
+            diagnostics["news"] = {
+                "status": "error",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
 
         try:
-            social, _warnings, _audit = fetch_social_multi_source(
+            social, warnings, audit = fetch_social_multi_source(
                 symbol,
                 self.settings,
                 company_name=company_name,
@@ -545,8 +597,20 @@ class LiveComponentFetcher:
                 social_values.append(safe_float(scored.get("directional_score")))
             social_signal = mean_or_none(social_values)
             social_count = len(social)
-        except Exception:
+            diagnostics["social"] = {
+                "status": "ok",
+                "records": int(len(social)),
+                "warnings": [str(item) for item in warnings[:5]],
+                "fetched_pool": int(getattr(audit, "fetched_pool", 0)),
+                "parsed_records": int(getattr(audit, "parsed_records", 0)),
+                "normalized_records": int(getattr(audit, "normalized_records", 0)),
+            }
+        except Exception as exc:
             social_signal = None
+            diagnostics["social"] = {
+                "status": "error",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
 
         payload = {
             "fundamentals_signal": fundamentals_signal,
@@ -559,9 +623,11 @@ class LiveComponentFetcher:
             "news_count_snapshot": float(news_count),
             "social_count_snapshot": float(social_count),
             "component_source": "live_current_snapshot",
+            "fundamentals_alpha_source_used": bool(fundamentals_validation.get("alpha_source_used", False)),
         }
         self.cache[symbol] = payload
-        return dict(payload)
+        self.diag_cache[symbol] = diagnostics
+        return dict(payload), dict(diagnostics)
 
 
 def _build_event_rows(
@@ -572,7 +638,7 @@ def _build_event_rows(
     analysis_lookup: ComponentFeatureLookup,
     external_lookup: ComponentFeatureLookup,
     live_fetcher: LiveComponentFetcher,
-) -> list[EventRow]:
+) -> tuple[list[EventRow], dict[str, dict[str, Any]]]:
     normalized_dir = Path(args.normalized_transcripts_dir)
     if not normalized_dir.exists():
         raise RuntimeError(f"Normalized transcript directory not found: {normalized_dir}")
@@ -596,6 +662,7 @@ def _build_event_rows(
         paths = paths[: int(args.max_events)]
 
     rows: list[EventRow] = []
+    component_fetch_diagnostics: dict[str, dict[str, Any]] = {}
     progress = ProgressBar(total=len(paths), label="Phase1 Event Rows", enabled=not args.no_progress)
 
     for path in paths:
@@ -700,7 +767,8 @@ def _build_event_rows(
                 component_payload = dict(analysis_hit)
 
         if component_payload is None and args.component_source in {"live_current", "analysis_cache_then_live"}:
-            component_payload = live_fetcher.fetch(ticker=ticker, company_name=company_name)
+            component_payload, live_diag = live_fetcher.fetch_with_diagnostics(ticker=ticker, company_name=company_name)
+            component_fetch_diagnostics[ticker] = live_diag
 
         if component_payload is not None:
             event_row.fundamentals_signal = safe_float(component_payload.get("fundamentals_signal"))
@@ -735,7 +803,7 @@ def _build_event_rows(
 
     progress.close()
 
-    return rows
+    return rows, component_fetch_diagnostics
 
 
 def _apply_event_date_filters(
@@ -765,33 +833,39 @@ def _attach_market_outcomes(
     benchmark_ticker: str,
     alignment_mode: str,
     show_progress: bool,
-) -> None:
+) -> dict[str, Any]:
     if not rows:
-        return
+        return {"ticker_price_diagnostics": {}, "benchmark_price_diagnostics": {}}
 
     event_dates = [parse_date(row.event_date) for row in rows if row.event_date]
     event_dates = [item for item in event_dates if item is not None]
     if not event_dates:
-        return
+        return {"ticker_price_diagnostics": {}, "benchmark_price_diagnostics": {}}
 
     start = min(event_dates) - timedelta(days=30)
     end = max(event_dates) + timedelta(days=30)
 
     per_ticker: dict[str, pd.Series] = {}
+    ticker_price_diag: dict[str, Any] = {}
     tickers = sorted({row.ticker for row in rows})
     fetch_progress = ProgressBar(total=len(tickers), label="Phase1 Prices", enabled=show_progress)
     for ticker in tickers:
         try:
-            per_ticker[ticker] = fetch_close_series(ticker, start, end)
+            series, diag = fetch_close_series_with_diagnostics(ticker, start, end)
+            per_ticker[ticker] = series
+            ticker_price_diag[ticker] = diag
         except Exception:
             per_ticker[ticker] = pd.Series(dtype=float)
+            ticker_price_diag[ticker] = {"ticker_requested": ticker, "status": "exception", "attempts": []}
         fetch_progress.update(1)
     fetch_progress.close()
 
+    benchmark_diag: dict[str, Any]
     try:
-        benchmark_series = fetch_close_series(benchmark_ticker, start, end)
+        benchmark_series, benchmark_diag = fetch_close_series_with_diagnostics(benchmark_ticker, start, end)
     except Exception:
         benchmark_series = pd.Series(dtype=float)
+        benchmark_diag = {"ticker_requested": benchmark_ticker, "status": "exception", "attempts": []}
 
     outcome_progress = ProgressBar(total=len(rows), label="Phase1 Outcomes", enabled=show_progress)
     for row in rows:
@@ -833,6 +907,10 @@ def _attach_market_outcomes(
             row.binary_abnormal_up_5d = int(row.abnormal_return_5d > 0)
         outcome_progress.update(1)
     outcome_progress.close()
+    return {
+        "ticker_price_diagnostics": ticker_price_diag,
+        "benchmark_price_diagnostics": benchmark_diag,
+    }
 
 
 def _summary_payload(rows: list[EventRow], args: argparse.Namespace) -> dict[str, Any]:
@@ -885,6 +963,59 @@ def _summary_payload(rows: list[EventRow], args: argparse.Namespace) -> dict[str
     }
 
 
+def _failure_payload(
+    rows: list[EventRow],
+    price_diag: dict[str, Any],
+    benchmark_ticker: str,
+    component_diag: Optional[dict[str, dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    frame = pd.DataFrame([row.to_dict() for row in rows]) if rows else pd.DataFrame()
+    if frame.empty:
+        return {
+            "rows": 0,
+            "missing_abnormal_return_3d_rows": 0,
+            "missing_by_ticker": {},
+            "ticker_price_diagnostics": {},
+            "benchmark_ticker": benchmark_ticker,
+            "benchmark_price_diagnostics": {},
+            "component_missing_rows": 0,
+            "component_missing_by_ticker": {},
+            "component_fetch_diagnostics": {},
+        }
+
+    missing = frame.loc[frame["abnormal_return_3d"].isna()].copy()
+    missing_counts = missing["ticker"].value_counts().to_dict() if not missing.empty else {}
+
+    ticker_diag_all = (price_diag or {}).get("ticker_price_diagnostics") or {}
+    ticker_diag_subset = {
+        ticker: ticker_diag_all.get(ticker)
+        for ticker in sorted(missing_counts.keys())
+    }
+
+    component_diag_all = component_diag or {}
+    component_missing = frame.loc[
+        frame["fundamentals_signal"].isna() & frame["news_signal"].isna() & frame["social_signal"].isna()
+    ].copy()
+    component_missing_counts = component_missing["ticker"].value_counts().to_dict() if not component_missing.empty else {}
+    component_diag_subset = {
+        ticker: component_diag_all.get(ticker)
+        for ticker in sorted(component_missing_counts.keys())
+        if ticker in component_diag_all
+    }
+
+    return {
+        "rows": int(len(frame)),
+        "missing_abnormal_return_3d_rows": int(len(missing)),
+        "missing_by_ticker": missing_counts,
+        "ticker_price_diagnostics": ticker_diag_subset,
+        "benchmark_ticker": benchmark_ticker,
+        "benchmark_price_diagnostics": (price_diag or {}).get("benchmark_price_diagnostics") or {},
+        "component_missing_rows": int(len(component_missing)),
+        "component_missing_by_ticker": component_missing_counts,
+        "component_fetch_diagnostics": component_diag_subset,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
@@ -900,7 +1031,7 @@ def main(argv: list[str] | None = None) -> int:
     live_fetcher = LiveComponentFetcher(settings=settings, sentiment_fn=sentiment_fn)
 
     print("[event-table] Building event rows from normalized transcripts...")
-    rows = _build_event_rows(
+    rows, component_diag = _build_event_rows(
         args=args,
         settings=settings,
         sentiment_fn=sentiment_fn,
@@ -914,9 +1045,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[event-table] Rows after date filter: {len(rows)}")
 
     print("[event-table] Attaching price/benchmark outcomes...")
-    _attach_market_outcomes(
+    benchmark_ticker = str(args.benchmark_ticker).upper()
+    price_diag = _attach_market_outcomes(
         rows,
-        benchmark_ticker=str(args.benchmark_ticker).upper(),
+        benchmark_ticker=benchmark_ticker,
         alignment_mode=args.event_alignment_mode,
         show_progress=not args.no_progress,
     )
@@ -925,6 +1057,7 @@ def main(argv: list[str] | None = None) -> int:
     ensure_dir(out_dir)
     output_path = out_dir / args.output_file
     summary_path = out_dir / "event_table_summary.json"
+    failures_path = out_dir / "event_table_failures.json"
 
     frame = pd.DataFrame([row.to_dict() for row in rows])
     if not frame.empty:
@@ -933,9 +1066,17 @@ def main(argv: list[str] | None = None) -> int:
     frame.to_csv(output_path, index=False)
     summary = _summary_payload(rows, args)
     write_json(summary_path, summary)
+    failures = _failure_payload(
+        rows,
+        price_diag=price_diag,
+        benchmark_ticker=benchmark_ticker,
+        component_diag=component_diag,
+    )
+    write_json(failures_path, failures)
 
     print(f"[event-table] Wrote {len(frame)} rows -> {output_path}")
     print(f"[event-table] Wrote summary -> {summary_path}")
+    print(f"[event-table] Wrote failure diagnostics -> {failures_path}")
     return 0
 
 

@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import csv
+import io
 from dataclasses import dataclass
 from datetime import date, datetime
 import json
 from pathlib import Path
 import time
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Any, Iterable, Optional, Sequence
 
 import numpy as np
@@ -154,17 +156,11 @@ def fetch_close_series(
     end_date: date,
 ) -> pd.Series:
     """Load daily close series [start_date, end_date] from Yahoo Finance."""
-    start = pd.Timestamp(start_date)
-    end = pd.Timestamp(end_date) + pd.Timedelta(days=1)
-    frame = yf.download(
-        ticker,
-        start=start,
-        end=end,
-        interval="1d",
-        auto_adjust=False,
-        progress=False,
-        threads=False,
-    )
+    series, _diag = fetch_close_series_with_diagnostics(ticker, start_date, end_date)
+    return series
+
+
+def _extract_close_series_from_frame(frame: pd.DataFrame) -> pd.Series:
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return pd.Series(dtype=float)
 
@@ -178,7 +174,6 @@ def fetch_close_series(
             try:
                 close_df = frame.xs("Close", axis=1, level=0)
                 if isinstance(close_df, pd.DataFrame) and not close_df.empty:
-                    # For single ticker downloads, pick first/only column.
                     close = close_df.iloc[:, 0]
             except Exception:
                 close = None
@@ -204,6 +199,81 @@ def fetch_close_series(
     idx = pd.to_datetime(close.index).tz_localize(None)
     close.index = idx
     return close.sort_index()
+
+
+def _candidate_tickers(ticker: str) -> list[str]:
+    base = str(ticker or "").strip().upper()
+    if not base:
+        return []
+    candidates: list[str] = [base]
+    dot_dash = base.replace(".", "-")
+    if dot_dash not in candidates:
+        candidates.append(dot_dash)
+    # Some historical symbols include market suffixes like ".Y" that can fail
+    # under Yahoo. Try base prefix as a fallback probe.
+    if "." in base:
+        prefix = base.split(".", 1)[0].strip()
+        if prefix and prefix not in candidates:
+            candidates.append(prefix)
+    return candidates
+
+
+def fetch_close_series_with_diagnostics(
+    ticker: str,
+    start_date: date,
+    end_date: date,
+) -> tuple[pd.Series, dict[str, Any]]:
+    """Load daily close series and return detailed attempt diagnostics."""
+    start = pd.Timestamp(start_date)
+    end = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+    attempts: list[dict[str, Any]] = []
+    candidates = _candidate_tickers(ticker)
+
+    for candidate in candidates:
+        out_buf = io.StringIO()
+        err_buf = io.StringIO()
+        frame: pd.DataFrame | None = None
+        exc_text: Optional[str] = None
+        try:
+            with redirect_stdout(out_buf), redirect_stderr(err_buf):
+                frame = yf.download(
+                    candidate,
+                    start=start,
+                    end=end,
+                    interval="1d",
+                    auto_adjust=False,
+                    progress=False,
+                    threads=False,
+                )
+        except Exception as exc:
+            exc_text = str(exc)
+            frame = None
+
+        close = _extract_close_series_from_frame(frame) if isinstance(frame, pd.DataFrame) else pd.Series(dtype=float)
+        attempt = {
+            "candidate": candidate,
+            "frame_rows": int(len(frame)) if isinstance(frame, pd.DataFrame) else 0,
+            "close_rows": int(len(close)),
+            "stdout": out_buf.getvalue().strip(),
+            "stderr": err_buf.getvalue().strip(),
+            "exception": exc_text,
+        }
+        attempts.append(attempt)
+
+        if not close.empty:
+            return close, {
+                "ticker_requested": str(ticker),
+                "ticker_used": candidate,
+                "status": "ok",
+                "attempts": attempts,
+            }
+
+    return pd.Series(dtype=float), {
+        "ticker_requested": str(ticker),
+        "ticker_used": None,
+        "status": "no_data",
+        "attempts": attempts,
+    }
 
 
 @dataclass
