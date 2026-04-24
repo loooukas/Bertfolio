@@ -8,6 +8,7 @@ import io
 from dataclasses import dataclass
 from datetime import date, datetime
 import json
+import os
 from pathlib import Path
 import time
 from contextlib import redirect_stderr, redirect_stdout
@@ -15,6 +16,7 @@ from typing import Any, Iterable, Optional, Sequence
 
 import numpy as np
 import pandas as pd
+import requests
 import yfinance as yf
 
 
@@ -156,7 +158,12 @@ def fetch_close_series(
     end_date: date,
 ) -> pd.Series:
     """Load daily close series [start_date, end_date] from Yahoo Finance."""
-    series, _diag = fetch_close_series_with_diagnostics(ticker, start_date, end_date)
+    series, _diag = fetch_close_series_with_diagnostics(
+        ticker,
+        start_date,
+        end_date,
+        enable_alpha_fallback=False,
+    )
     return series
 
 
@@ -222,6 +229,8 @@ def fetch_close_series_with_diagnostics(
     ticker: str,
     start_date: date,
     end_date: date,
+    *,
+    enable_alpha_fallback: bool = False,
 ) -> tuple[pd.Series, dict[str, Any]]:
     """Load daily close series and return detailed attempt diagnostics."""
     start = pd.Timestamp(start_date)
@@ -251,6 +260,7 @@ def fetch_close_series_with_diagnostics(
 
         close = _extract_close_series_from_frame(frame) if isinstance(frame, pd.DataFrame) else pd.Series(dtype=float)
         attempt = {
+            "source": "yfinance",
             "candidate": candidate,
             "frame_rows": int(len(frame)) if isinstance(frame, pd.DataFrame) else 0,
             "close_rows": int(len(close)),
@@ -265,15 +275,113 @@ def fetch_close_series_with_diagnostics(
                 "ticker_requested": str(ticker),
                 "ticker_used": candidate,
                 "status": "ok",
+                "source_used": "yfinance",
                 "attempts": attempts,
             }
+
+    if enable_alpha_fallback:
+        for candidate in candidates:
+            close, alpha_diag = _fetch_close_series_alpha_vantage(candidate, start_date, end_date)
+            attempts.append(
+                {
+                    "source": "alpha_vantage",
+                    "candidate": candidate,
+                    "frame_rows": int(len(close)),
+                    "close_rows": int(len(close)),
+                    "stdout": "",
+                    "stderr": str(alpha_diag.get("error") or ""),
+                    "exception": None,
+                    "meta": alpha_diag,
+                }
+            )
+            if not close.empty:
+                return close, {
+                    "ticker_requested": str(ticker),
+                    "ticker_used": candidate,
+                    "status": "ok",
+                    "source_used": "alpha_vantage",
+                    "attempts": attempts,
+                }
 
     return pd.Series(dtype=float), {
         "ticker_requested": str(ticker),
         "ticker_used": None,
         "status": "no_data",
+        "source_used": None,
         "attempts": attempts,
     }
+
+
+def _fetch_close_series_alpha_vantage(
+    ticker: str,
+    start_date: date,
+    end_date: date,
+) -> tuple[pd.Series, dict[str, Any]]:
+    api_key = os.getenv("ALPHAVANTAGE_API_KEY", "").strip()
+    if not api_key:
+        return pd.Series(dtype=float), {"status": "error", "error": "ALPHAVANTAGE_API_KEY missing"}
+
+    try:
+        response = requests.get(
+            "https://www.alphavantage.co/query",
+            params={
+                "function": "TIME_SERIES_DAILY_ADJUSTED",
+                "symbol": ticker,
+                "outputsize": "full",
+                "apikey": api_key,
+            },
+            timeout=20,
+        )
+    except Exception as exc:
+        return pd.Series(dtype=float), {"status": "error", "error": f"request_error: {exc}"}
+
+    text = response.text or ""
+    try:
+        payload = response.json()
+    except Exception:
+        return pd.Series(dtype=float), {"status": "error", "error": f"non_json_response: {text[:220]}"}
+
+    if not isinstance(payload, dict):
+        return pd.Series(dtype=float), {"status": "error", "error": "invalid_json_payload"}
+
+    note = str(payload.get("Note") or "").strip()
+    info = str(payload.get("Information") or "").strip()
+    err = str(payload.get("Error Message") or "").strip()
+    if note:
+        return pd.Series(dtype=float), {"status": "error", "error": note}
+    if info:
+        return pd.Series(dtype=float), {"status": "error", "error": info}
+    if err:
+        return pd.Series(dtype=float), {"status": "error", "error": err}
+
+    ts = payload.get("Time Series (Daily)")
+    if not isinstance(ts, dict) or not ts:
+        return pd.Series(dtype=float), {"status": "error", "error": "missing_time_series_daily"}
+
+    values: list[tuple[pd.Timestamp, float]] = []
+    for raw_date, row in ts.items():
+        if not isinstance(row, dict):
+            continue
+        try:
+            day = pd.Timestamp(raw_date).tz_localize(None)
+        except Exception:
+            continue
+        if day.date() < start_date or day.date() > end_date:
+            continue
+        close_value = safe_float(row.get("5. adjusted close"))
+        if close_value is None:
+            close_value = safe_float(row.get("4. close"))
+        if close_value is None:
+            continue
+        values.append((day, float(close_value)))
+
+    if not values:
+        return pd.Series(dtype=float), {"status": "error", "error": "no_rows_in_requested_range"}
+
+    values.sort(key=lambda item: item[0])
+    idx = pd.DatetimeIndex([item[0] for item in values])
+    ser = pd.Series([item[1] for item in values], index=idx, dtype=float)
+    return ser, {"status": "ok", "rows": int(len(ser))}
 
 
 @dataclass

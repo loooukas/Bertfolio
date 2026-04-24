@@ -13,6 +13,7 @@ This pipeline builds an event-level historical table and calibrates score weight
 - `scripts/prepare_score_calibration_dataset.py`
 - `scripts/calibrate_score_weights.py`
 - `scripts/audit_event_table_failures.py`
+- `scripts/repair_historical_event_table.py`
 - `scripts/score_calibration_utils.py` (shared helpers)
 
 ## Phase 1: Build Historical Event Table
@@ -160,6 +161,26 @@ Progress UX:
 - Phase 1 shows live progress bars for event-row build, price fetch, and outcome enrichment.
 - Phase 2 and Phase 3 show explicit step counters (`Step X/Y`).
 - Disable progress output with `--no-progress` on any script.
+
+## Incremental Repair (No Full Rebuild)
+
+Use `repair_historical_event_table.py` to patch only missing/malformed rows in an existing event table.
+
+```bash
+.venv/bin/python scripts/repair_historical_event_table.py \
+  --input output/score_calibration/historical_event_table.csv \
+  --output output/score_calibration/historical_event_table.repaired.csv \
+  --target-horizon 3 \
+  --repair-market \
+  --market-row-filter missing_target \
+  --repair-components \
+  --component-row-filter any_missing_component \
+  --price-source yfinance_then_alpha
+```
+
+Notes:
+- `--price-source yfinance_then_alpha` enables Alpha Vantage fallback when Yahoo/yfinance fails.
+- Alpha Vantage rate limits can still leave unresolved rows for large batches on free keys.
 
 ## Binary-mode example
 

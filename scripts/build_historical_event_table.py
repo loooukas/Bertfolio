@@ -214,6 +214,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--benchmark-ticker", default="SPY")
     parser.add_argument(
+        "--price-source",
+        choices=["yfinance", "yfinance_then_alpha"],
+        default="yfinance",
+        help="Market price source for event outcomes.",
+    )
+    parser.add_argument(
         "--event-alignment-mode",
         choices=["on_or_next_trading_day", "next_trading_day"],
         default="on_or_next_trading_day",
@@ -833,6 +839,7 @@ def _attach_market_outcomes(
     benchmark_ticker: str,
     alignment_mode: str,
     show_progress: bool,
+    price_source: str,
 ) -> dict[str, Any]:
     if not rows:
         return {"ticker_price_diagnostics": {}, "benchmark_price_diagnostics": {}}
@@ -849,9 +856,15 @@ def _attach_market_outcomes(
     ticker_price_diag: dict[str, Any] = {}
     tickers = sorted({row.ticker for row in rows})
     fetch_progress = ProgressBar(total=len(tickers), label="Phase1 Prices", enabled=show_progress)
+    use_alpha_fallback = str(price_source) == "yfinance_then_alpha"
     for ticker in tickers:
         try:
-            series, diag = fetch_close_series_with_diagnostics(ticker, start, end)
+            series, diag = fetch_close_series_with_diagnostics(
+                ticker,
+                start,
+                end,
+                enable_alpha_fallback=use_alpha_fallback,
+            )
             per_ticker[ticker] = series
             ticker_price_diag[ticker] = diag
         except Exception:
@@ -862,7 +875,12 @@ def _attach_market_outcomes(
 
     benchmark_diag: dict[str, Any]
     try:
-        benchmark_series, benchmark_diag = fetch_close_series_with_diagnostics(benchmark_ticker, start, end)
+        benchmark_series, benchmark_diag = fetch_close_series_with_diagnostics(
+            benchmark_ticker,
+            start,
+            end,
+            enable_alpha_fallback=use_alpha_fallback,
+        )
     except Exception:
         benchmark_series = pd.Series(dtype=float)
         benchmark_diag = {"ticker_requested": benchmark_ticker, "status": "exception", "attempts": []}
@@ -948,6 +966,7 @@ def _summary_payload(rows: list[EventRow], args: argparse.Namespace) -> dict[str
         "Returns are post-event close-to-close: t->t+1, t->t+3, t->t+5.",
         f"Alignment mode: {args.event_alignment_mode}.",
         f"Benchmark ticker: {args.benchmark_ticker}.",
+        f"Price source: {args.price_source}.",
         "When component_source=live_current_snapshot, fundamentals/news/social are current snapshots and not event-time as-of values.",
     ]
 
@@ -1051,6 +1070,7 @@ def main(argv: list[str] | None = None) -> int:
         benchmark_ticker=benchmark_ticker,
         alignment_mode=args.event_alignment_mode,
         show_progress=not args.no_progress,
+        price_source=args.price_source,
     )
 
     out_dir = Path(args.output_dir)
