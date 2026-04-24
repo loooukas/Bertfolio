@@ -45,7 +45,7 @@ DEFAULT_META_COLUMNS = [
     "transcript_source_url",
     "component_source",
 ]
-TARGET_HORIZON_CHOICES = [1, 3, 5, 21]
+TARGET_HORIZON_CHOICES = [1, 3, 5, 21, 63, 126]
 
 
 @dataclass

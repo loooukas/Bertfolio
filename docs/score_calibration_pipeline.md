@@ -35,12 +35,12 @@ This pipeline builds an event-level historical table and calibrates score weight
   - `current_handset_overall_score`, `current_handset_transcript_score`
   - selected raw subfeatures (`fundamentals_revenue_qoq_growth_pct`, `fundamentals_eps_qoq_growth_pct`, etc.)
 - Market outcomes:
-  - stock closes (`t-1`, `t`, `t+1`, `t+3`, `t+5`, `t+21`)
-  - benchmark closes (`t-1`, `t`, `t+1`, `t+3`, `t+5`, `t+21`)
-  - stock returns (`1d`, `3d`, `5d`, `21d`)
-  - benchmark returns (`1d`, `3d`, `5d`, `21d`)
-  - abnormal returns (`1d`, `3d`, `5d`, `21d`)
-  - binary abnormal-up labels (`1d`, `3d`, `5d`, `21d`)
+  - stock closes (`t-1`, `t`, `t+1`, `t+3`, `t+5`, `t+21`, `t+63`, `t+126`)
+  - benchmark closes (`t-1`, `t`, `t+1`, `t+3`, `t+5`, `t+21`, `t+63`, `t+126`)
+  - stock returns (`1d`, `3d`, `5d`, `21d`, `63d`, `126d`)
+  - benchmark returns (`1d`, `3d`, `5d`, `21d`, `63d`, `126d`)
+  - abnormal returns (`1d`, `3d`, `5d`, `21d`, `63d`, `126d`)
+  - binary abnormal-up labels (`1d`, `3d`, `5d`, `21d`, `63d`, `126d`)
 - Phase-1 diagnostics artifacts:
   - `event_table_summary.json`
   - `event_table_failures.json` (ticker-level price-fetch attempts plus live component-fetch diagnostics)
@@ -58,6 +58,8 @@ This pipeline builds an event-level historical table and calibrates score weight
   - `3d`: `close(t+3) / close(t) - 1`
   - `5d`: `close(t+5) / close(t) - 1`
   - `21d`: `close(t+21) / close(t) - 1`
+  - `63d`: `close(t+63) / close(t) - 1` (about 3 trading months)
+  - `126d`: `close(t+126) / close(t) - 1` (about 6 trading months)
 
 ### Component-source modes
 - `analysis_cache`: use existing cached analysis outputs.
@@ -73,7 +75,7 @@ Transcript metric modes:
 
 `prepare_score_calibration_dataset.py`:
 - selects horizon and target mode
-- supported horizons: `1`, `3`, `5`, `21`
+- supported horizons: `1`, `3`, `5`, `21`, `63`, `126`
 - filters missing rows if requested
 - builds chronological train/validation/test splits
 - optionally standardizes features using train-split stats

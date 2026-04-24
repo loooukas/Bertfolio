@@ -393,10 +393,14 @@ class EventWindow:
     close_t_plus_3: Optional[float]
     close_t_plus_5: Optional[float]
     close_t_plus_21: Optional[float]
+    close_t_plus_63: Optional[float]
+    close_t_plus_126: Optional[float]
     return_1d: Optional[float]
     return_3d: Optional[float]
     return_5d: Optional[float]
     return_21d: Optional[float]
+    return_63d: Optional[float]
+    return_126d: Optional[float]
 
 
 def _return_between(start_value: Optional[float], end_value: Optional[float]) -> Optional[float]:
@@ -418,7 +422,23 @@ def compute_event_window(
     - next_trading_day: first close strictly after event_date
     """
     if close_series.empty:
-        return EventWindow(None, None, None, None, None, None, None, None, None, None, None)
+        return EventWindow(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
     trading_days = [ts.date() for ts in close_series.index]
     anchor_idx: Optional[int] = None
@@ -432,7 +452,23 @@ def compute_event_window(
                 anchor_idx = idx
                 break
     if anchor_idx is None:
-        return EventWindow(None, None, None, None, None, None, None, None, None, None, None)
+        return EventWindow(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
     def get_close(idx: int) -> Optional[float]:
         if idx < 0 or idx >= len(close_series):
@@ -446,6 +482,8 @@ def compute_event_window(
     close_tp3 = get_close(anchor_idx + 3)
     close_tp5 = get_close(anchor_idx + 5)
     close_tp21 = get_close(anchor_idx + 21)
+    close_tp63 = get_close(anchor_idx + 63)
+    close_tp126 = get_close(anchor_idx + 126)
 
     return EventWindow(
         aligned_trading_date=date_to_str(trading_days[anchor_idx]),
@@ -455,10 +493,14 @@ def compute_event_window(
         close_t_plus_3=close_tp3,
         close_t_plus_5=close_tp5,
         close_t_plus_21=close_tp21,
+        close_t_plus_63=close_tp63,
+        close_t_plus_126=close_tp126,
         return_1d=_return_between(close_t, close_tp1),
         return_3d=_return_between(close_t, close_tp3),
         return_5d=_return_between(close_t, close_tp5),
         return_21d=_return_between(close_t, close_tp21),
+        return_63d=_return_between(close_t, close_tp63),
+        return_126d=_return_between(close_t, close_tp126),
     )
 
 

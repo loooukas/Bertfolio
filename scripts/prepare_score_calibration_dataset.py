@@ -23,7 +23,7 @@ from scripts.score_calibration_utils import (
 )
 
 DEFAULT_OUTPUT_DIR = "output/score_calibration"
-TARGET_HORIZON_CHOICES = [1, 3, 5, 21]
+TARGET_HORIZON_CHOICES = [1, 3, 5, 21, 63, 126]
 
 DEFAULT_FEATURE_COLUMNS = [
     "management_confidence",

@@ -36,24 +36,34 @@ MARKET_COLUMNS = [
     "close_t_plus_3",
     "close_t_plus_5",
     "close_t_plus_21",
+    "close_t_plus_63",
+    "close_t_plus_126",
     "stock_return_1d",
     "stock_return_3d",
     "stock_return_5d",
     "stock_return_21d",
+    "stock_return_63d",
+    "stock_return_126d",
     "benchmark_t_minus_1",
     "benchmark_t",
     "benchmark_t_plus_1",
     "benchmark_t_plus_3",
     "benchmark_t_plus_5",
     "benchmark_t_plus_21",
+    "benchmark_t_plus_63",
+    "benchmark_t_plus_126",
     "benchmark_return_1d",
     "benchmark_return_3d",
     "benchmark_return_5d",
     "benchmark_return_21d",
+    "benchmark_return_63d",
+    "benchmark_return_126d",
     "abnormal_return_1d",
     "abnormal_return_3d",
     "abnormal_return_5d",
     "abnormal_return_21d",
+    "abnormal_return_63d",
+    "abnormal_return_126d",
 ]
 
 COMPONENT_COLUMNS = [
@@ -77,7 +87,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="output/score_calibration/event_table_repair_report.json",
         help="Repair report JSON path.",
     )
-    parser.add_argument("--target-horizon", type=int, choices=[1, 3, 5, 21], default=3)
+    parser.add_argument("--target-horizon", type=int, choices=[1, 3, 5, 21, 63, 126], default=3)
     parser.add_argument(
         "--repair-market",
         action=argparse.BooleanOptionalAction,
@@ -214,7 +224,17 @@ def _apply_market_repair(
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     out = frame.copy()
     _ensure_columns(out, MARKET_COLUMNS + ["aligned_trading_date"])
-    _ensure_columns(out, ["binary_abnormal_up_1d", "binary_abnormal_up_3d", "binary_abnormal_up_5d", "binary_abnormal_up_21d"])
+    _ensure_columns(
+        out,
+        [
+            "binary_abnormal_up_1d",
+            "binary_abnormal_up_3d",
+            "binary_abnormal_up_5d",
+            "binary_abnormal_up_21d",
+            "binary_abnormal_up_63d",
+            "binary_abnormal_up_126d",
+        ],
+    )
 
     selected = out.loc[row_mask].copy()
     selected = selected.loc[selected["event_date"].apply(parse_date).notna()].copy()
@@ -234,7 +254,7 @@ def _apply_market_repair(
         return out, diag
 
     start = min(event_dates) - timedelta(days=30)
-    end = max(event_dates) + timedelta(days=90)
+    end = max(event_dates) + timedelta(days=300)
 
     ticker_series: dict[str, pd.Series] = {}
     tickers = sorted({str(item).upper().strip() for item in selected["ticker"].tolist() if str(item).strip()})
@@ -279,20 +299,28 @@ def _apply_market_repair(
             "close_t_plus_3": stock_window.close_t_plus_3,
             "close_t_plus_5": stock_window.close_t_plus_5,
             "close_t_plus_21": stock_window.close_t_plus_21,
+            "close_t_plus_63": stock_window.close_t_plus_63,
+            "close_t_plus_126": stock_window.close_t_plus_126,
             "stock_return_1d": stock_window.return_1d,
             "stock_return_3d": stock_window.return_3d,
             "stock_return_5d": stock_window.return_5d,
             "stock_return_21d": stock_window.return_21d,
+            "stock_return_63d": stock_window.return_63d,
+            "stock_return_126d": stock_window.return_126d,
             "benchmark_t_minus_1": bench_window.close_t_minus_1,
             "benchmark_t": bench_window.close_t,
             "benchmark_t_plus_1": bench_window.close_t_plus_1,
             "benchmark_t_plus_3": bench_window.close_t_plus_3,
             "benchmark_t_plus_5": bench_window.close_t_plus_5,
             "benchmark_t_plus_21": bench_window.close_t_plus_21,
+            "benchmark_t_plus_63": bench_window.close_t_plus_63,
+            "benchmark_t_plus_126": bench_window.close_t_plus_126,
             "benchmark_return_1d": bench_window.return_1d,
             "benchmark_return_3d": bench_window.return_3d,
             "benchmark_return_5d": bench_window.return_5d,
             "benchmark_return_21d": bench_window.return_21d,
+            "benchmark_return_63d": bench_window.return_63d,
+            "benchmark_return_126d": bench_window.return_126d,
         }
         for key, value in scalar_updates.items():
             if key == "aligned_trading_date":
@@ -306,22 +334,28 @@ def _apply_market_repair(
         sr3 = _coerce_float_or_none(out.at[idx, "stock_return_3d"])
         sr5 = _coerce_float_or_none(out.at[idx, "stock_return_5d"])
         sr21 = _coerce_float_or_none(out.at[idx, "stock_return_21d"])
+        sr63 = _coerce_float_or_none(out.at[idx, "stock_return_63d"])
+        sr126 = _coerce_float_or_none(out.at[idx, "stock_return_126d"])
         br1 = _coerce_float_or_none(out.at[idx, "benchmark_return_1d"])
         br3 = _coerce_float_or_none(out.at[idx, "benchmark_return_3d"])
         br5 = _coerce_float_or_none(out.at[idx, "benchmark_return_5d"])
         br21 = _coerce_float_or_none(out.at[idx, "benchmark_return_21d"])
+        br63 = _coerce_float_or_none(out.at[idx, "benchmark_return_63d"])
+        br126 = _coerce_float_or_none(out.at[idx, "benchmark_return_126d"])
 
         abnormal_updates: dict[str, Optional[float]] = {
             "abnormal_return_1d": (None if sr1 is None or br1 is None else float(sr1 - br1)),
             "abnormal_return_3d": (None if sr3 is None or br3 is None else float(sr3 - br3)),
             "abnormal_return_5d": (None if sr5 is None or br5 is None else float(sr5 - br5)),
             "abnormal_return_21d": (None if sr21 is None or br21 is None else float(sr21 - br21)),
+            "abnormal_return_63d": (None if sr63 is None or br63 is None else float(sr63 - br63)),
+            "abnormal_return_126d": (None if sr126 is None or br126 is None else float(sr126 - br126)),
         }
         for key, value in abnormal_updates.items():
             if _should_update(out.at[idx, key], overwrite_existing):
                 out.at[idx, key] = value
 
-        for horizon in (1, 3, 5, 21):
+        for horizon in (1, 3, 5, 21, 63, 126):
             abnormal_key = f"abnormal_return_{horizon}d"
             binary_key = f"binary_abnormal_up_{horizon}d"
             abnormal_value = _coerce_float_or_none(out.at[idx, abnormal_key])
