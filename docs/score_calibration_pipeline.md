@@ -12,6 +12,8 @@ This pipeline builds an event-level historical table and calibrates score weight
 - `scripts/build_historical_event_table.py`
 - `scripts/prepare_score_calibration_dataset.py`
 - `scripts/calibrate_score_weights.py`
+- `scripts/run_walkforward_calibration.py`
+- `scripts/run_walkforward_binary_long_horizons.sh`
 - `scripts/audit_event_table_failures.py`
 - `scripts/repair_historical_event_table.py`
 - `scripts/score_calibration_utils.py` (shared helpers)
@@ -165,6 +167,37 @@ Progress UX:
 - Phase 1 shows live progress bars for event-row build, price fetch, and outcome enrichment.
 - Phase 2 and Phase 3 show explicit step counters (`Step X/Y`).
 - Disable progress output with `--no-progress` on any script.
+
+## Walk-Forward OOS Evaluation (Recommended for small samples)
+
+Use expanding chronological windows to evaluate stability across multiple out-of-sample slices.
+
+### One-shot binary run for 3-month and 6-month horizons
+
+```bash
+HORIZONS="63 126" ./scripts/run_walkforward_binary_long_horizons.sh \
+  output/score_calibration/historical_event_table.repaired.126d.csv \
+  output/score_calibration_walkforward
+```
+
+### Direct walk-forward command
+
+```bash
+.venv/bin/python scripts/run_walkforward_calibration.py \
+  --input output/score_calibration_126d/binary/prepared_calibration_dataset.csv \
+  --target-mode binary \
+  --target-horizon 126 \
+  --output-dir output/score_calibration_126d/binary/walkforward \
+  --min-train-size 36 \
+  --val-size 8 \
+  --test-size 8
+```
+
+### Walk-forward outputs
+
+- `walkforward_folds.json`: fold-by-fold date ranges, split sizes, and artifact paths.
+- `walkforward_comparison_table.json`: aggregate mean/std metrics over folds for models and baselines.
+- `walkforward_summary.json`: run config plus best aggregate row.
 
 ## Incremental Repair (No Full Rebuild)
 
