@@ -221,6 +221,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="lexical",
         help="Sentiment function for transcript directional scores when re-scoring blocks.",
     )
+    parser.add_argument(
+        "--transcript-metric-mode",
+        choices=["fast_recompute", "site_default"],
+        default="fast_recompute",
+        help=(
+            "Transcript metric mode: "
+            "fast_recompute disables student/AI extras for speed; "
+            "site_default uses current site Settings exactly."
+        ),
+    )
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--output-file", default=DEFAULT_OUTPUT_FILE)
     parser.add_argument("--no-progress", action="store_true", default=False, help="Disable terminal progress bars.")
@@ -567,16 +577,19 @@ def _build_event_rows(
     if not normalized_dir.exists():
         raise RuntimeError(f"Normalized transcript directory not found: {normalized_dir}")
 
-    metric_settings = replace(
-        settings,
-        transcript_feature_ai_enabled=False,
-        use_student_confidence=False,
-        use_student_directness=False,
-        use_student_outlook_strength=False,
-        use_student_specificity=False,
-        use_student_risk_intensity=False,
-        student_metrics_shadow_compare=False,
-    )
+    if args.transcript_metric_mode == "site_default":
+        metric_settings = settings
+    else:
+        metric_settings = replace(
+            settings,
+            transcript_feature_ai_enabled=False,
+            use_student_confidence=False,
+            use_student_directness=False,
+            use_student_outlook_strength=False,
+            use_student_specificity=False,
+            use_student_risk_intensity=False,
+            student_metrics_shadow_compare=False,
+        )
 
     paths = sorted(normalized_dir.glob(args.normalized_transcript_glob))
     if args.max_events > 0:

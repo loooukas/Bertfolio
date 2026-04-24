@@ -167,9 +167,38 @@ def fetch_close_series(
     )
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return pd.Series(dtype=float)
-    if "Close" not in frame.columns:
+
+    close: Optional[pd.Series] = None
+    columns = frame.columns
+    # yfinance can return either flat columns (e.g. "Close") or MultiIndex
+    # columns (e.g. ("Close", "AAPL")) depending on version/settings.
+    if isinstance(columns, pd.MultiIndex):
+        level0 = [str(item) for item in columns.get_level_values(0)]
+        if "Close" in level0:
+            try:
+                close_df = frame.xs("Close", axis=1, level=0)
+                if isinstance(close_df, pd.DataFrame) and not close_df.empty:
+                    # For single ticker downloads, pick first/only column.
+                    close = close_df.iloc[:, 0]
+            except Exception:
+                close = None
+        if close is None and "Adj Close" in level0:
+            try:
+                adj_df = frame.xs("Adj Close", axis=1, level=0)
+                if isinstance(adj_df, pd.DataFrame) and not adj_df.empty:
+                    close = adj_df.iloc[:, 0]
+            except Exception:
+                close = None
+    else:
+        if "Close" in frame.columns:
+            close = frame["Close"]
+        elif "Adj Close" in frame.columns:
+            close = frame["Adj Close"]
+
+    if close is None:
         return pd.Series(dtype=float)
-    close = frame["Close"].copy().dropna()
+
+    close = close.copy().dropna()
     if close.empty:
         return pd.Series(dtype=float)
     idx = pd.to_datetime(close.index).tz_localize(None)

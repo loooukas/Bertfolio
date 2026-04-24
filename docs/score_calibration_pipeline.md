@@ -59,6 +59,10 @@ This pipeline builds an event-level historical table and calibrates score weight
 - `analysis_cache_then_live` (default): analysis cache first, then live fallback.
 - `none`: no component enrichment.
 
+Transcript metric modes:
+- `--transcript-metric-mode fast_recompute` (default): recompute block metrics quickly with student/AI extras disabled.
+- `--transcript-metric-mode site_default`: recompute using the site's current `Settings` defaults (student metrics + feature classifier behavior as configured).
+
 ## Phase 2: Prepare Modeling Dataset
 
 `prepare_score_calibration_dataset.py`:
@@ -120,6 +124,7 @@ This pipeline builds an event-level historical table and calibrates score weight
   --normalized-transcripts-dir output/teacher_dataset_kaggle_v2/normalized_transcripts \
   --analysis-cache-glob "output/analysis_cache/*.json" \
   --component-source analysis_cache_then_live \
+  --transcript-metric-mode fast_recompute \
   --benchmark-ticker SPY \
   --event-alignment-mode on_or_next_trading_day \
   --output-dir output/score_calibration
