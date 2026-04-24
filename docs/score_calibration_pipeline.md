@@ -141,6 +141,8 @@ Transcript metric modes:
 - `model_direct` (single-stage calibrated model, if present in coefficients)
 
 It reuses the prepared split (`train`/`validation`/`test`), tunes binary thresholds on validation, and reports test metrics for each method.
+You can also freeze the threshold at `0.5` to match older runs:
+- `--no-tune-binary-threshold --binary-fixed-threshold 0.5`
 
 Example:
 

@@ -53,6 +53,20 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--binary-threshold-metric", choices=["macro_f1", "accuracy", "precision", "recall"], default="macro_f1")
     parser.add_argument("--binary-threshold-grid-size", type=int, default=201)
     parser.add_argument(
+        "--tune-binary-threshold",
+        dest="tune_binary_threshold",
+        action="store_true",
+        default=True,
+        help="Tune binary threshold on validation (default: on).",
+    )
+    parser.add_argument(
+        "--no-tune-binary-threshold",
+        dest="tune_binary_threshold",
+        action="store_false",
+        help="Disable threshold tuning and use --binary-fixed-threshold.",
+    )
+    parser.add_argument("--binary-fixed-threshold", type=float, default=0.5)
+    parser.add_argument(
         "--profile",
         action="append",
         default=[],
@@ -324,12 +338,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         val_score = score_all[val_mask.to_numpy()]
         test_score = score_all[test_mask.to_numpy()]
         if args.target_mode == "binary":
-            threshold = _tune_binary_threshold(
-                y_true=y_val.astype(int),
-                y_score=val_score,
-                metric_name=str(args.binary_threshold_metric),
-                grid_size=int(args.binary_threshold_grid_size),
-            )
+            if bool(args.tune_binary_threshold):
+                threshold = _tune_binary_threshold(
+                    y_true=y_val.astype(int),
+                    y_score=val_score,
+                    metric_name=str(args.binary_threshold_metric),
+                    grid_size=int(args.binary_threshold_grid_size),
+                )
+            else:
+                threshold = float(args.binary_fixed_threshold)
         else:
             threshold = 0.0
         val_metrics = _score_metrics(
