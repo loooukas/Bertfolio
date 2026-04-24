@@ -6,13 +6,13 @@ from finbert_site.settings import Settings
 from finbert_site.student_metrics import StudentMetricInferenceResult, StudentMetricPrediction
 
 
-def _section(text: str) -> TranscriptSectionBlock:
+def _section(text: str, *, order_index: int = 0) -> TranscriptSectionBlock:
     return TranscriptSectionBlock(
         section_type="prepared_remarks",
         speaker="Management Speaker",
         speaker_role="management",
         text=text,
-        order_index=0,
+        order_index=order_index,
         evidence_snippets=[],
     )
 
@@ -169,3 +169,34 @@ def test_specificity_experimental_blend(monkeypatch) -> None:
     assert debug["specificity"]["source"] == "lexical_primary"
     assert debug["specificity"]["blend_mode"] == "specificity_experimental_lexical_student"
     assert min(lexical_score, 70.0) <= row.specificity <= max(lexical_score, 70.0)
+
+
+def test_short_operator_fluff_blocks_are_skipped_before_scoring(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "finbert_site.normalizer.infer_student_metric_blocks",
+        lambda *, sections, settings: StudentMetricInferenceResult(
+            by_index={},
+            metric_errors={},
+            warnings=[],
+            diagnostics=[],
+        ),
+    )
+
+    calls: list[str] = []
+
+    def _tracked_score_text(text: str) -> dict[str, float]:
+        calls.append(text)
+        return _score_text(text)
+
+    rows = build_speaker_analysis(
+        [
+            _section("Operator, next question please.", order_index=0),
+            _section("Revenue grew 12% and we expect stronger demand next quarter.", order_index=1),
+        ],
+        _tracked_score_text,
+        settings=Settings(),
+    )
+
+    assert len(calls) == 1
+    assert len(rows) == 1
+    assert "revenue grew" in rows[0].evidence_snippets[0].lower()

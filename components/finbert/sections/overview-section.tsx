@@ -22,7 +22,7 @@ interface OverviewSectionProps {
 }
 
 const getMetricColor = (key: string, value: number) => {
-  if (value >= 65) return "text-bullish"
+  if (value >= 70) return "text-bullish"
   if (value >= 40) return "text-neutral"
   return "text-bearish"
 }
@@ -76,7 +76,7 @@ function metricContext(key: string, value: number): string {
     return "Full Coverage"
   }
   if (value < 45) return "Lower Confidence"
-  if (value < 65) return "Moderate Confidence"
+  if (value < 70) return "Moderate Confidence"
   return "High Confidence"
 }
 

@@ -672,6 +672,16 @@ def _sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def _should_skip_metric_scoring_for_fluff_block(block: TranscriptSectionBlock) -> bool:
+    compact = re.sub(r"\s+", " ", str(block.text or "")).strip()
+    if not compact:
+        return True
+    word_count = len(re.findall(r"\b\w+\b", compact))
+    if word_count < 7 and "operator" in compact.lower():
+        return True
+    return False
+
+
 _ROLE_OPERATOR = "operator"
 _ROLE_ANALYST = "analyst"
 _ROLE_MANAGEMENT = "management"
@@ -1711,8 +1721,12 @@ def build_speaker_analysis(
     specificity_blend_weight = (
         _clamp(float(settings.student_metrics_specificity_blend_weight), 0.0, 1.0) if settings is not None else 0.35
     )
+    skipped_fluff_blocks = 0
 
     for idx, block in enumerate(sections):
+        if _should_skip_metric_scoring_for_fluff_block(block):
+            skipped_fluff_blocks += 1
+            continue
         score = score_text_fn(block.text)
         directional = float(score.get("directional_score", 0.0))
         segment_diagnostics = score.get("segment_diagnostics") if isinstance(score, dict) else None
@@ -2050,6 +2064,11 @@ def build_speaker_analysis(
                 evidence_snippets=evidence,
                 segment_diagnostics=merged_segment_diagnostics,
             )
+        )
+
+    if classifier_diagnostics is not None and skipped_fluff_blocks > 0:
+        classifier_diagnostics.append(
+            f"Skipped {skipped_fluff_blocks} block(s) from sentiment/metric scoring due to short operator fluff rule."
         )
 
     return results
