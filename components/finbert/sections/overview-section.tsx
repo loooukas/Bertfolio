@@ -22,10 +22,9 @@ interface OverviewSectionProps {
 }
 
 const getMetricColor = (key: string, value: number) => {
-  const clamped = Math.max(0, Math.min(100, value))
-  const favorableScore = key === "evasiveness" ? 100 - clamped : clamped
-  const hue = Math.round((favorableScore / 100) * 120)
-  return `hsl(${hue} 78% 54%)`
+  if (value >= 65) return "text-bullish"
+  if (value >= 40) return "text-neutral"
+  return "text-bearish"
 }
 
 const getMetricIcon = (key: string) => {
@@ -98,7 +97,7 @@ export function OverviewSection({ data, onNavigate }: OverviewSectionProps) {
             return (
               <div key={metric.key} className="p-4 rounded-xl bg-card border border-border">
                 <div className="flex items-center gap-2 mb-3">
-                  <Icon className="w-4 h-4" style={{ color: colorClass }} />
+                  <Icon className={`w-4 h-4 ${colorClass}`} />
                   <span className="text-xs text-muted-foreground font-medium">{metric.label}</span>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -110,15 +109,20 @@ export function OverviewSection({ data, onNavigate }: OverviewSectionProps) {
                   </Tooltip>
                 </div>
                 <div className="mb-2 flex items-end gap-2">
-                  <span className="text-3xl font-bold" style={{ color: colorClass }}>{metric.value}</span>
+                  <span className={`text-3xl font-bold ${colorClass}`}>{metric.value}</span>
                   <span className="mb-1 text-sm text-muted-foreground">/100</span>
                 </div>
                 <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-primary/20">
                   <div
-                    className="h-full rounded-full transition-all"
+                    className={`h-full rounded-full transition-all ${
+                      colorClass === "text-bullish"
+                        ? "bg-bullish"
+                        : colorClass === "text-neutral"
+                          ? "bg-neutral"
+                          : "bg-bearish"
+                    }`}
                     style={{
                       width: `${Math.max(0, Math.min(100, metric.value))}%`,
-                      backgroundColor: colorClass,
                     }}
                   />
                 </div>
