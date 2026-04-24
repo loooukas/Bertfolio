@@ -57,6 +57,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-horizon", type=int, choices=TARGET_HORIZON_CHOICES, default=3)
     parser.add_argument("--target-mode", choices=["continuous", "binary"], default="continuous")
     parser.add_argument(
+        "--binary-deadzone-eps",
+        type=float,
+        default=0.0,
+        help="For binary mode, mark |abnormal_return| <= eps as neutral; optionally drop with --drop-binary-deadzone.",
+    )
+    parser.add_argument(
+        "--drop-binary-deadzone",
+        action="store_true",
+        default=False,
+        help="For binary mode, drop neutral rows inside the dead-zone after labeling.",
+    )
+    parser.add_argument(
         "--feature-columns",
         help="Comma-separated feature columns. Defaults to transcript + fundamentals/news/social columns.",
     )
@@ -80,6 +92,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def _target_column(horizon: int, mode: str) -> str:
     if mode == "binary":
         return f"binary_abnormal_up_{horizon}d"
+    return f"abnormal_return_{horizon}d"
+
+
+def _continuous_target_column(horizon: int) -> str:
     return f"abnormal_return_{horizon}d"
 
 
@@ -133,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     feature_columns = _parse_list_arg(args.feature_columns, DEFAULT_FEATURE_COLUMNS)
     meta_columns = _parse_list_arg(args.metadata_columns, DEFAULT_META_COLUMNS)
     target_column = _target_column(args.target_horizon, args.target_mode)
+    continuous_target_column = _continuous_target_column(args.target_horizon)
 
     if not args.no_progress:
         print("[prepare] Step 1/5: loading input table...")
@@ -149,11 +166,32 @@ def main(argv: list[str] | None = None) -> int:
     frame = frame.loc[date_mask].copy()
     frame["event_date"] = parsed_dates[date_mask].apply(lambda d: d.strftime("%Y-%m-%d"))
 
-    if target_column not in frame.columns:
+    if not args.no_progress:
+        print("[prepare] Step 2/5: parsing dates and selecting target...")
+
+    if target_column not in frame.columns and not (args.target_mode == "binary" and continuous_target_column in frame.columns):
         raise RuntimeError(f"Target column not found in input: {target_column}")
 
+    binary_deadzone_eps = max(0.0, float(args.binary_deadzone_eps))
+    binary_deadzone_rows = 0
     if args.target_mode == "binary":
-        frame[target_column] = frame[target_column].apply(lambda value: int(float(value)) if pd.notna(value) else None)
+        if continuous_target_column in frame.columns:
+            source_continuous = pd.to_numeric(frame[continuous_target_column], errors="coerce")
+            binary_target = pd.Series(float("nan"), index=frame.index, dtype=float)
+            valid_mask = source_continuous.notna()
+            binary_target.loc[valid_mask] = (source_continuous.loc[valid_mask] > 0.0).astype(float)
+
+            if binary_deadzone_eps > 0.0:
+                deadzone_mask = valid_mask & (source_continuous.abs() <= binary_deadzone_eps)
+                binary_deadzone_rows = int(deadzone_mask.sum())
+                if args.drop_binary_deadzone:
+                    binary_target.loc[deadzone_mask] = float("nan")
+            frame[target_column] = binary_target
+        else:
+            frame[target_column] = pd.to_numeric(frame[target_column], errors="coerce")
+            frame[target_column] = frame[target_column].apply(
+                lambda value: float(int(float(value) >= 0.5)) if pd.notna(value) else float("nan")
+            )
     else:
         frame[target_column] = pd.to_numeric(frame[target_column], errors="coerce")
 
@@ -161,6 +199,9 @@ def main(argv: list[str] | None = None) -> int:
         before = len(frame)
         frame = frame.loc[frame[target_column].notna()].copy()
         print(f"[prepare] Dropped missing target rows: {before - len(frame)}")
+
+    if not args.no_progress:
+        print("[prepare] Step 3/5: cleaning feature columns...")
 
     for col in feature_columns:
         if col not in frame.columns:
@@ -176,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError(f"Not enough events ({len(frame)}) after filtering; required at least {args.min_events}.")
 
     frame = frame.sort_values(["event_date", "ticker", "transcript_id"], ascending=[True, True, True]).reset_index(drop=True)
+
+    if not args.no_progress:
+        print("[prepare] Step 4/5: creating chronological split...")
 
     train_idx, val_idx, test_idx = chronological_split_indices(
         n_rows=len(frame),
@@ -216,6 +260,9 @@ def main(argv: list[str] | None = None) -> int:
     summary_path = out_dir / "prepared_dataset_summary.json"
     scaler_path = out_dir / "prepared_feature_scaler.json"
 
+    if not args.no_progress:
+        print("[prepare] Step 5/5: writing output artifacts...")
+
     prepared.to_csv(prepared_path, index=False)
     prepared.loc[prepared["split"] == "train"].to_csv(train_path, index=False)
     prepared.loc[prepared["split"] == "validation"].to_csv(val_path, index=False)
@@ -226,6 +273,9 @@ def main(argv: list[str] | None = None) -> int:
         "target_mode": args.target_mode,
         "target_horizon": int(args.target_horizon),
         "target_column": target_column,
+        "binary_deadzone_eps": float(binary_deadzone_eps) if args.target_mode == "binary" else 0.0,
+        "binary_deadzone_drop_enabled": bool(args.drop_binary_deadzone) if args.target_mode == "binary" else False,
+        "binary_deadzone_rows": int(binary_deadzone_rows) if args.target_mode == "binary" else 0,
         "events_total": int(len(prepared)),
         "split_counts": prepared["split"].value_counts().to_dict(),
         "feature_columns": feature_columns,
@@ -260,11 +310,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-    if not args.no_progress:
-        print("[prepare] Step 2/5: parsing dates and selecting target...")
-    if not args.no_progress:
-        print("[prepare] Step 3/5: cleaning feature columns...")
-    if not args.no_progress:
-        print("[prepare] Step 4/5: creating chronological split...")
-    if not args.no_progress:
-        print("[prepare] Step 5/5: writing output artifacts...")

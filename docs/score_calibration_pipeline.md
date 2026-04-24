@@ -78,6 +78,9 @@ Transcript metric modes:
 `prepare_score_calibration_dataset.py`:
 - selects horizon and target mode
 - supported horizons: `1`, `3`, `5`, `21`, `63`, `126`
+- in binary mode, can rebuild labels from abnormal return sign and apply a neutral dead-zone:
+  - `--binary-deadzone-eps <float>`
+  - `--drop-binary-deadzone`
 - filters missing rows if requested
 - builds chronological train/validation/test splits
 - optionally standardizes features using train-split stats
@@ -95,7 +98,10 @@ Transcript metric modes:
 
 ### Models
 - Continuous target: ridge regression
-- Binary target: logistic regression (L2)
+- Binary target: logistic regression (L2), with optional class balancing (`--binary-class-weight balanced|none`)
+- Binary decision threshold can be tuned on validation (`--tune-binary-threshold`, default on) using:
+  - `--binary-threshold-metric macro_f1|accuracy|precision|recall`
+  - `--binary-threshold-grid-size <int>`
 
 ### Two-stage calibration
 1. Transcript-internal stage
@@ -126,6 +132,12 @@ Transcript metric modes:
 - `predictions_test.csv`
 - `comparison_table.json`
 - `calibration_summary.md`
+
+Binary outputs include:
+- per-model tuned threshold in `metrics.json` (`models.<name>.threshold`)
+- selected model block in `metrics.json` (`model_selection`)
+- `model:selected_by_validation` row in `comparison_table.json`
+- label columns in `predictions_test.csv` for each model and selected-by-validation model
 
 ## End-to-End Example
 
@@ -226,6 +238,8 @@ Notes:
   --input output/score_calibration/historical_event_table.csv \
   --target-horizon 5 \
   --target-mode binary \
+  --binary-deadzone-eps 0.002 \
+  --drop-binary-deadzone \
   --drop-missing-target \
   --output-dir output/score_calibration/binary
 
@@ -233,5 +247,8 @@ Notes:
   --input output/score_calibration/binary/prepared_calibration_dataset.csv \
   --target-mode binary \
   --target-horizon 5 \
+  --binary-class-weight balanced \
+  --binary-threshold-metric macro_f1 \
+  --binary-threshold-grid-size 201 \
   --output-dir output/score_calibration/binary/calibration_run
 ```

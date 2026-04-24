@@ -107,6 +107,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--logistic-learning-rate", type=float, default=0.05)
     parser.add_argument("--logistic-max-iter", type=int, default=5000)
     parser.add_argument("--logistic-tol", type=float, default=1e-6)
+    parser.add_argument("--binary-class-weight", choices=["none", "balanced"], default="balanced")
+    parser.add_argument("--binary-threshold-metric", choices=["macro_f1", "accuracy", "precision", "recall"], default="macro_f1")
+    parser.add_argument("--binary-threshold-grid-size", type=int, default=201)
+    parser.add_argument(
+        "--tune-binary-threshold",
+        dest="tune_binary_threshold",
+        action="store_true",
+        default=True,
+        help="Tune binary classification threshold on validation data.",
+    )
+    parser.add_argument(
+        "--no-tune-binary-threshold",
+        dest="tune_binary_threshold",
+        action="store_false",
+        help="Disable validation threshold tuning and use 0.5 for all binary model predictions.",
+    )
     parser.add_argument("--transcript-feature-columns", help="Comma-separated transcript-internal feature list.")
     parser.add_argument("--component-feature-columns", help="Comma-separated full-score component feature list.")
     parser.add_argument("--meta-columns", help="Comma-separated metadata columns for test predictions export.")
@@ -193,6 +209,7 @@ def _fit_logistic_l2(
     learning_rate: float,
     max_iter: int,
     tol: float,
+    sample_weight: np.ndarray | None = None,
 ) -> LogisticModel:
     if X.ndim != 2:
         raise RuntimeError("Logistic regression expects 2D feature matrix.")
@@ -204,11 +221,20 @@ def _fit_logistic_l2(
 
     X_aug = np.column_stack([np.ones(n_rows, dtype=float), X])
     weights = np.zeros(X_aug.shape[1], dtype=float)
+    if sample_weight is None:
+        sample_weight = np.ones(n_rows, dtype=float)
+    sample_weight = np.asarray(sample_weight, dtype=float)
+    if sample_weight.shape[0] != n_rows:
+        raise RuntimeError("sample_weight length must match number of rows.")
+    denom = float(np.sum(sample_weight))
+    if denom <= 0.0:
+        raise RuntimeError("sample_weight must have positive sum.")
 
     for _ in range(max_iter):
         logits = np.clip(X_aug @ weights, -35.0, 35.0)
         probs = 1.0 / (1.0 + np.exp(-logits))
-        gradient = (X_aug.T @ (probs - y)) / float(n_rows)
+        residual = (probs - y) * sample_weight
+        gradient = (X_aug.T @ residual) / denom
         gradient[1:] += alpha * weights[1:]
         weights -= learning_rate * gradient
         grad_norm = float(np.linalg.norm(gradient))
@@ -234,11 +260,72 @@ def _evaluate_predictions(
     target_mode: str,
     y_true: np.ndarray,
     y_score: np.ndarray,
+    threshold: float = 0.5,
 ) -> dict[str, Optional[float]]:
     if target_mode == "binary":
-        y_label = (y_score >= 0.5).astype(int)
+        y_label = (y_score >= float(threshold)).astype(int)
         return classification_metrics(y_true=y_true.astype(int), y_pred_label=y_label, y_pred_score=y_score)
     return regression_metrics(y_true=y_true, y_pred=y_score)
+
+
+def _binary_sample_weight(y: np.ndarray, mode: str) -> np.ndarray:
+    y_arr = np.asarray(y, dtype=float)
+    weights = np.ones(len(y_arr), dtype=float)
+    if mode != "balanced" or len(y_arr) == 0:
+        return weights
+    n_pos = int(np.sum(y_arr == 1.0))
+    n_neg = int(np.sum(y_arr == 0.0))
+    if n_pos == 0 or n_neg == 0:
+        return weights
+    total = float(len(y_arr))
+    pos_weight = total / (2.0 * float(n_pos))
+    neg_weight = total / (2.0 * float(n_neg))
+    weights[y_arr == 1.0] = pos_weight
+    weights[y_arr == 0.0] = neg_weight
+    return weights
+
+
+def _tune_binary_threshold(
+    *,
+    y_true: np.ndarray,
+    y_score: np.ndarray,
+    metric_name: str,
+    grid_size: int,
+    enabled: bool,
+) -> float:
+    if not enabled:
+        return 0.5
+    steps = max(3, int(grid_size))
+    thresholds = np.linspace(0.05, 0.95, num=steps, dtype=float)
+    best_threshold = 0.5
+    best_metric = -1.0
+    best_accuracy = -1.0
+    for threshold in thresholds:
+        metrics = _evaluate_predictions(
+            target_mode="binary",
+            y_true=y_true,
+            y_score=y_score,
+            threshold=float(threshold),
+        )
+        metric_value = safe_float(metrics.get(metric_name))
+        accuracy_value = safe_float(metrics.get("accuracy"))
+        if metric_value is None:
+            continue
+        if accuracy_value is None:
+            accuracy_value = -1.0
+        if (
+            metric_value > best_metric
+            or (metric_value == best_metric and accuracy_value > best_accuracy)
+            or (
+                metric_value == best_metric
+                and accuracy_value == best_accuracy
+                and abs(float(threshold) - 0.5) < abs(best_threshold - 0.5)
+            )
+        ):
+            best_metric = float(metric_value)
+            best_accuracy = float(accuracy_value)
+            best_threshold = float(threshold)
+    return float(best_threshold)
 
 
 def _ensure_split(frame: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame:
@@ -398,6 +485,8 @@ def main(argv: list[str] | None = None) -> int:
 
     frame = _ensure_split(frame, args)
     split_col = str(args.split_column)
+    if not args.no_progress:
+        print("[calibrate] Step 2/8: resolving split + target...")
 
     requested_target = str(args.target_column)
     fallback_target = _target_column_from_horizon(args.target_horizon, args.target_mode)
@@ -444,6 +533,9 @@ def main(argv: list[str] | None = None) -> int:
     y_val = y_all[val_idx]
     y_test = y_all[test_idx]
 
+    if not args.no_progress:
+        print("[calibrate] Step 3/8: fitting stage-1 transcript model...")
+
     stage1_transform = _fit_feature_transform(frame, transcript_features, train_idx, standardize=True)
     X_stage1_all = stage1_transform.transform(frame)
     X_stage1_train = X_stage1_all[train_idx]
@@ -451,6 +543,7 @@ def main(argv: list[str] | None = None) -> int:
     X_stage1_test = X_stage1_all[test_idx]
 
     if args.target_mode == "binary":
+        logistic_sample_weight = _binary_sample_weight(y_train, mode=str(args.binary_class_weight))
         stage1_model = _fit_logistic_l2(
             X_stage1_train,
             y_train,
@@ -458,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
             learning_rate=float(args.logistic_learning_rate),
             max_iter=int(args.logistic_max_iter),
             tol=float(args.logistic_tol),
+            sample_weight=logistic_sample_weight,
         )
         stage1_score_all = stage1_model.predict_proba(X_stage1_all)
     else:
@@ -478,6 +572,9 @@ def main(argv: list[str] | None = None) -> int:
     X_stage2_val = X_stage2_all[val_idx]
     X_stage2_test = X_stage2_all[test_idx]
 
+    if not args.no_progress:
+        print("[calibrate] Step 4/8: fitting stage-2 full-score model...")
+
     if args.target_mode == "binary":
         stage2_model = _fit_logistic_l2(
             X_stage2_train,
@@ -486,6 +583,7 @@ def main(argv: list[str] | None = None) -> int:
             learning_rate=float(args.logistic_learning_rate),
             max_iter=int(args.logistic_max_iter),
             tol=float(args.logistic_tol),
+            sample_weight=logistic_sample_weight,
         )
         stage2_score_all = stage2_model.predict_proba(X_stage2_all)
     else:
@@ -499,6 +597,9 @@ def main(argv: list[str] | None = None) -> int:
     X_direct_val = X_direct_all[val_idx]
     X_direct_test = X_direct_all[test_idx]
 
+    if not args.no_progress:
+        print("[calibrate] Step 5/8: fitting direct single-stage model...")
+
     if args.target_mode == "binary":
         direct_model = _fit_logistic_l2(
             X_direct_train,
@@ -507,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
             learning_rate=float(args.logistic_learning_rate),
             max_iter=int(args.logistic_max_iter),
             tol=float(args.logistic_tol),
+            sample_weight=logistic_sample_weight,
         )
         direct_score_all = direct_model.predict_proba(X_direct_all)
     else:
@@ -521,9 +623,20 @@ def main(argv: list[str] | None = None) -> int:
         "target_mode": args.target_mode,
         "target_column": target_col,
         "split_counts": frame[split_col].value_counts().to_dict(),
+        "binary_settings": {
+            "class_weight": str(args.binary_class_weight),
+            "threshold_metric": str(args.binary_threshold_metric),
+            "threshold_grid_size": int(args.binary_threshold_grid_size),
+            "threshold_tuned": bool(args.tune_binary_threshold),
+        }
+        if args.target_mode == "binary"
+        else None,
         "models": {},
         "baselines": {},
     }
+
+    if not args.no_progress:
+        print("[calibrate] Step 6/8: evaluating models and baselines...")
 
     model_predictions = {
         "stage1": frame["prediction_stage1"].to_numpy(dtype=float),
@@ -531,17 +644,31 @@ def main(argv: list[str] | None = None) -> int:
         "direct": frame["prediction_direct"].to_numpy(dtype=float),
     }
 
+    model_thresholds: dict[str, float] = {}
     for model_name, pred_all in model_predictions.items():
+        threshold = 0.5
+        if args.target_mode == "binary":
+            threshold = _tune_binary_threshold(
+                y_true=y_val,
+                y_score=pred_all[val_idx],
+                metric_name=str(args.binary_threshold_metric),
+                grid_size=int(args.binary_threshold_grid_size),
+                enabled=bool(args.tune_binary_threshold),
+            )
+        model_thresholds[model_name] = float(threshold)
         metrics["models"][model_name] = {
+            "threshold": float(threshold),
             "validation": _evaluate_predictions(
                 target_mode=args.target_mode,
                 y_true=y_val,
                 y_score=pred_all[val_idx],
+                threshold=float(threshold),
             ),
             "test": _evaluate_predictions(
                 target_mode=args.target_mode,
                 y_true=y_test,
                 y_score=pred_all[test_idx],
+                threshold=float(threshold),
             ),
         }
 
@@ -610,6 +737,31 @@ def main(argv: list[str] | None = None) -> int:
             "validation": _evaluate_predictions(target_mode="binary", y_true=y_val, y_score=majority_val),
             "test": _evaluate_predictions(target_mode="binary", y_true=y_test, y_score=majority_test),
         }
+
+    if args.target_mode == "binary":
+        selection_metric = str(args.binary_threshold_metric)
+    else:
+        selection_metric = "spearman"
+
+    def _selection_score(payload: dict[str, Any]) -> float:
+        metric_value = safe_float((payload.get("validation") or {}).get(selection_metric))
+        if metric_value is None:
+            return -999.0
+        return float(metric_value)
+
+    selected_model_name = max(metrics["models"].keys(), key=lambda name: _selection_score(metrics["models"][name]))
+    selected_model_threshold = float(model_thresholds.get(selected_model_name, 0.5))
+    metrics["model_selection"] = {
+        "selected_model": selected_model_name,
+        "selection_metric": selection_metric,
+        "validation_score": _selection_score(metrics["models"][selected_model_name]),
+        "threshold": selected_model_threshold,
+        "validation_metrics": metrics["models"][selected_model_name]["validation"],
+        "test_metrics": metrics["models"][selected_model_name]["test"],
+    }
+
+    if not args.no_progress:
+        print("[calibrate] Step 7/8: optional local search + ranking analysis...")
 
     local_search_result = None
     if args.enable_local_search and args.target_mode == "continuous":
@@ -701,7 +853,20 @@ def main(argv: list[str] | None = None) -> int:
     comparison_rows: list[dict[str, Any]] = []
     for name, payload in metrics["models"].items():
         row = {"name": f"model:{name}", **(payload.get("test") or {})}
+        if args.target_mode == "binary":
+            row["threshold"] = float(payload.get("threshold", 0.5))
         comparison_rows.append(row)
+    selected_payload = metrics.get("model_selection") or {}
+    if selected_payload:
+        selected_test = selected_payload.get("test_metrics") or {}
+        selected_row = {
+            "name": "model:selected_by_validation",
+            "selected_model": selected_payload.get("selected_model"),
+            **selected_test,
+        }
+        if args.target_mode == "binary":
+            selected_row["threshold"] = float(selected_payload.get("threshold", 0.5))
+        comparison_rows.append(selected_row)
     for name, payload in metrics["baselines"].items():
         row = {"name": f"baseline:{name}", **(payload.get("test") or {})}
         comparison_rows.append(row)
@@ -725,6 +890,17 @@ def main(argv: list[str] | None = None) -> int:
     test_frame["prediction_stage1"] = model_predictions["stage1"][test_idx]
     test_frame["prediction_stage2"] = model_predictions["stage2"][test_idx]
     test_frame["prediction_direct"] = model_predictions["direct"][test_idx]
+    selected_pred = model_predictions[str(selected_model_name)][test_idx]
+    test_frame["prediction_selected_by_validation"] = selected_pred
+    if args.target_mode == "binary":
+        for model_name in ("stage1", "stage2", "direct"):
+            model_threshold = float(model_thresholds.get(model_name, 0.5))
+            test_frame[f"prediction_{model_name}_label"] = (
+                test_frame[f"prediction_{model_name}"].to_numpy(dtype=float) >= model_threshold
+            ).astype(int)
+        test_frame["prediction_selected_by_validation_label"] = (
+            selected_pred >= float(selected_model_threshold)
+        ).astype(int)
     for baseline_name in baseline_names:
         if baseline_name == "handset_overall":
             signal = _baseline_signal(
@@ -762,6 +938,9 @@ def main(argv: list[str] | None = None) -> int:
     keep_cols = keep_meta + [target_col] + prediction_cols
     predictions_test = test_frame[keep_cols].copy()
 
+    if not args.no_progress:
+        print("[calibrate] Step 8/8: writing report artifacts...")
+
     out_dir = Path(args.output_dir)
     ensure_dir(out_dir)
     metrics_path = out_dir / "metrics.json"
@@ -781,6 +960,9 @@ def main(argv: list[str] | None = None) -> int:
     lines.append(f"- Target mode: `{args.target_mode}`")
     lines.append(f"- Target column: `{target_col}`")
     lines.append(f"- Events: `{len(frame)}` (train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)})")
+    lines.append(f"- Selected model (validation `{selection_metric}`): `{selected_model_name}`")
+    if args.target_mode == "binary":
+        lines.append(f"- Selected threshold: `{selected_model_threshold:.3f}`")
     lines.append("")
     lines.append("## Test Comparison")
     lines.append("")
@@ -813,17 +995,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-    if not args.no_progress:
-        print("[calibrate] Step 2/8: resolving split + target...")
-    if not args.no_progress:
-        print("[calibrate] Step 3/8: fitting stage-1 transcript model...")
-    if not args.no_progress:
-        print("[calibrate] Step 4/8: fitting stage-2 full-score model...")
-    if not args.no_progress:
-        print("[calibrate] Step 5/8: fitting direct single-stage model...")
-    if not args.no_progress:
-        print("[calibrate] Step 6/8: evaluating models and baselines...")
-    if not args.no_progress:
-        print("[calibrate] Step 7/8: optional local search + ranking analysis...")
-    if not args.no_progress:
-        print("[calibrate] Step 8/8: writing report artifacts...")
