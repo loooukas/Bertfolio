@@ -33,7 +33,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Audit event table failures and missing-feature causes.")
     parser.add_argument("--input", default="output/score_calibration/historical_event_table.csv")
     parser.add_argument("--failures-json", default="output/score_calibration/event_table_failures.json")
-    parser.add_argument("--horizon", type=int, choices=[1, 3, 5], default=3)
+    parser.add_argument("--horizon", type=int, choices=[1, 3, 5, 21], default=3)
     parser.add_argument(
         "--probe-missing-tickers",
         action="store_true",

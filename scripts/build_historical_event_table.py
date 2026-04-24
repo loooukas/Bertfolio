@@ -49,6 +49,7 @@ DEFAULT_NORMALIZED_DIR = "output/teacher_dataset_kaggle_v2/normalized_transcript
 DEFAULT_ANALYSIS_CACHE_GLOB = "output/analysis_cache/*.json"
 DEFAULT_OUTPUT_DIR = "output/score_calibration"
 DEFAULT_OUTPUT_FILE = "historical_event_table.csv"
+TARGET_HORIZONS = [1, 3, 5, 21]
 
 _POSITIVE_FINANCE_TERMS = {
     "beat",
@@ -124,23 +125,29 @@ class EventRow:
     close_t_plus_1: Optional[float] = None
     close_t_plus_3: Optional[float] = None
     close_t_plus_5: Optional[float] = None
+    close_t_plus_21: Optional[float] = None
     stock_return_1d: Optional[float] = None
     stock_return_3d: Optional[float] = None
     stock_return_5d: Optional[float] = None
+    stock_return_21d: Optional[float] = None
     benchmark_t_minus_1: Optional[float] = None
     benchmark_t: Optional[float] = None
     benchmark_t_plus_1: Optional[float] = None
     benchmark_t_plus_3: Optional[float] = None
     benchmark_t_plus_5: Optional[float] = None
+    benchmark_t_plus_21: Optional[float] = None
     benchmark_return_1d: Optional[float] = None
     benchmark_return_3d: Optional[float] = None
     benchmark_return_5d: Optional[float] = None
+    benchmark_return_21d: Optional[float] = None
     abnormal_return_1d: Optional[float] = None
     abnormal_return_3d: Optional[float] = None
     abnormal_return_5d: Optional[float] = None
+    abnormal_return_21d: Optional[float] = None
     binary_abnormal_up_1d: Optional[int] = None
     binary_abnormal_up_3d: Optional[int] = None
     binary_abnormal_up_5d: Optional[int] = None
+    binary_abnormal_up_21d: Optional[int] = None
     aligned_trading_date: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -850,7 +857,7 @@ def _attach_market_outcomes(
         return {"ticker_price_diagnostics": {}, "benchmark_price_diagnostics": {}}
 
     start = min(event_dates) - timedelta(days=30)
-    end = max(event_dates) + timedelta(days=30)
+    end = max(event_dates) + timedelta(days=90)
 
     per_ticker: dict[str, pd.Series] = {}
     ticker_price_diag: dict[str, Any] = {}
@@ -901,18 +908,22 @@ def _attach_market_outcomes(
         row.close_t_plus_1 = stock_window.close_t_plus_1
         row.close_t_plus_3 = stock_window.close_t_plus_3
         row.close_t_plus_5 = stock_window.close_t_plus_5
+        row.close_t_plus_21 = stock_window.close_t_plus_21
         row.stock_return_1d = stock_window.return_1d
         row.stock_return_3d = stock_window.return_3d
         row.stock_return_5d = stock_window.return_5d
+        row.stock_return_21d = stock_window.return_21d
 
         row.benchmark_t_minus_1 = bench_window.close_t_minus_1
         row.benchmark_t = bench_window.close_t
         row.benchmark_t_plus_1 = bench_window.close_t_plus_1
         row.benchmark_t_plus_3 = bench_window.close_t_plus_3
         row.benchmark_t_plus_5 = bench_window.close_t_plus_5
+        row.benchmark_t_plus_21 = bench_window.close_t_plus_21
         row.benchmark_return_1d = bench_window.return_1d
         row.benchmark_return_3d = bench_window.return_3d
         row.benchmark_return_5d = bench_window.return_5d
+        row.benchmark_return_21d = bench_window.return_21d
 
         if row.stock_return_1d is not None and row.benchmark_return_1d is not None:
             row.abnormal_return_1d = row.stock_return_1d - row.benchmark_return_1d
@@ -923,6 +934,9 @@ def _attach_market_outcomes(
         if row.stock_return_5d is not None and row.benchmark_return_5d is not None:
             row.abnormal_return_5d = row.stock_return_5d - row.benchmark_return_5d
             row.binary_abnormal_up_5d = int(row.abnormal_return_5d > 0)
+        if row.stock_return_21d is not None and row.benchmark_return_21d is not None:
+            row.abnormal_return_21d = row.stock_return_21d - row.benchmark_return_21d
+            row.binary_abnormal_up_21d = int(row.abnormal_return_21d > 0)
         outcome_progress.update(1)
     outcome_progress.close()
     return {
@@ -954,6 +968,7 @@ def _summary_payload(rows: list[EventRow], args: argparse.Namespace) -> dict[str
         "abnormal_return_1d",
         "abnormal_return_3d",
         "abnormal_return_5d",
+        "abnormal_return_21d",
     ]:
         if col in frame.columns:
             missing_rates[col] = float(frame[col].isna().mean())
@@ -963,7 +978,7 @@ def _summary_payload(rows: list[EventRow], args: argparse.Namespace) -> dict[str
 
     assumptions = [
         "Event alignment uses transcript published_date, then Motley URL date, then quarter midpoint fallback.",
-        "Returns are post-event close-to-close: t->t+1, t->t+3, t->t+5.",
+        "Returns are post-event close-to-close: t->t+1, t->t+3, t->t+5, t->t+21.",
         f"Alignment mode: {args.event_alignment_mode}.",
         f"Benchmark ticker: {args.benchmark_ticker}.",
         f"Price source: {args.price_source}.",
@@ -993,6 +1008,8 @@ def _failure_payload(
         return {
             "rows": 0,
             "missing_abnormal_return_3d_rows": 0,
+            "missing_abnormal_return_21d_rows": 0,
+            "missing_abnormal_return_rows_by_horizon": {},
             "missing_by_ticker": {},
             "ticker_price_diagnostics": {},
             "benchmark_ticker": benchmark_ticker,
@@ -1004,6 +1021,11 @@ def _failure_payload(
 
     missing = frame.loc[frame["abnormal_return_3d"].isna()].copy()
     missing_counts = missing["ticker"].value_counts().to_dict() if not missing.empty else {}
+    missing_by_horizon = {}
+    for horizon in TARGET_HORIZONS:
+        col = f"abnormal_return_{horizon}d"
+        if col in frame.columns:
+            missing_by_horizon[col] = int(frame[col].isna().sum())
 
     ticker_diag_all = (price_diag or {}).get("ticker_price_diagnostics") or {}
     ticker_diag_subset = {
@@ -1025,6 +1047,10 @@ def _failure_payload(
     return {
         "rows": int(len(frame)),
         "missing_abnormal_return_3d_rows": int(len(missing)),
+        "missing_abnormal_return_21d_rows": int(frame["abnormal_return_21d"].isna().sum())
+        if "abnormal_return_21d" in frame.columns
+        else None,
+        "missing_abnormal_return_rows_by_horizon": missing_by_horizon,
         "missing_by_ticker": missing_counts,
         "ticker_price_diagnostics": ticker_diag_subset,
         "benchmark_ticker": benchmark_ticker,

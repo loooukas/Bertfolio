@@ -45,6 +45,7 @@ DEFAULT_META_COLUMNS = [
     "transcript_source_url",
     "component_source",
 ]
+TARGET_HORIZON_CHOICES = [1, 3, 5, 21]
 
 
 @dataclass
@@ -94,7 +95,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--input", required=True, help="Prepared dataset CSV/JSON/JSONL.")
     parser.add_argument("--output-dir", default="output/score_calibration/calibration_run")
     parser.add_argument("--target-mode", choices=["continuous", "binary"], default="continuous")
-    parser.add_argument("--target-horizon", type=int, choices=[1, 3, 5], default=3)
+    parser.add_argument("--target-horizon", type=int, choices=TARGET_HORIZON_CHOICES, default=3)
     parser.add_argument("--target-column", default="target")
     parser.add_argument("--split-column", default="split")
     parser.add_argument("--event-date-column", default="event_date")

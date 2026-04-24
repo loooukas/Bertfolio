@@ -23,6 +23,7 @@ from scripts.score_calibration_utils import (
 )
 
 DEFAULT_OUTPUT_DIR = "output/score_calibration"
+TARGET_HORIZON_CHOICES = [1, 3, 5, 21]
 
 DEFAULT_FEATURE_COLUMNS = [
     "management_confidence",
@@ -53,7 +54,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare score calibration dataset from historical event table.")
     parser.add_argument("--input", required=True, help="Input event table CSV/JSON/JSONL.")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--target-horizon", type=int, choices=[1, 3, 5], default=3)
+    parser.add_argument("--target-horizon", type=int, choices=TARGET_HORIZON_CHOICES, default=3)
     parser.add_argument("--target-mode", choices=["continuous", "binary"], default="continuous")
     parser.add_argument(
         "--feature-columns",
