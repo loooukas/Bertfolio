@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import {
   DEFAULT_UI_SETTINGS,
+  OPTIMIZED_SCORE_WEIGHTS,
   sanitizeAnalyzeRunOverrides,
   sanitizeUISettings,
   type AnalyzeRunOverrides,
@@ -42,6 +43,8 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const pathname = usePathname()
   const effectiveSettings = useMemo(() => sanitizeUISettings(settings), [settings])
+  const usingOptimizedScoreWeightDefaults =
+    effectiveSettings.run_overrides.use_optimized_score_weight_defaults
   const onCacheRunsPage = pathname.startsWith("/cache-runs")
 
   const updateSettings = (patch: Partial<UISettings>) => {
@@ -240,12 +243,27 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
 
             <div className="space-y-3 rounded-lg border border-border p-3">
               <div className="text-sm font-medium text-foreground">Score Weights (%)</div>
+              <div className="flex items-center justify-between rounded-md border border-border bg-secondary/20 px-3 py-2">
+                <div>
+                  <div className="text-xs text-foreground">Use optimized defaults</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Transcript/Fundamentals/News/Social ={" "}
+                    {OPTIMIZED_SCORE_WEIGHTS.transcript}/{OPTIMIZED_SCORE_WEIGHTS.fundamentals}/
+                    {OPTIMIZED_SCORE_WEIGHTS.news}/{OPTIMIZED_SCORE_WEIGHTS.social}
+                  </div>
+                </div>
+                <Switch
+                  checked={usingOptimizedScoreWeightDefaults}
+                  onCheckedChange={(checked) => updateRunSettings({ use_optimized_score_weight_defaults: checked })}
+                />
+              </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <NumberInput
                   label="Transcript Weight"
                   value={effectiveSettings.run_overrides.score_weight_transcript}
                   min={0}
                   max={100}
+                  disabled={usingOptimizedScoreWeightDefaults}
                   onChange={(value) => updateRunSettings({ score_weight_transcript: value })}
                 />
                 <NumberInput
@@ -253,6 +271,7 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
                   value={effectiveSettings.run_overrides.score_weight_fundamentals}
                   min={0}
                   max={100}
+                  disabled={usingOptimizedScoreWeightDefaults}
                   onChange={(value) => updateRunSettings({ score_weight_fundamentals: value })}
                 />
                 <NumberInput
@@ -260,6 +279,7 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
                   value={effectiveSettings.run_overrides.score_weight_news}
                   min={0}
                   max={100}
+                  disabled={usingOptimizedScoreWeightDefaults}
                   onChange={(value) => updateRunSettings({ score_weight_news: value })}
                 />
                 <NumberInput
@@ -267,11 +287,15 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
                   value={effectiveSettings.run_overrides.score_weight_social}
                   min={0}
                   max={100}
+                  disabled={usingOptimizedScoreWeightDefaults}
                   onChange={(value) => updateRunSettings({ score_weight_social: value })}
                 />
               </div>
               <div className="text-[11px] text-muted-foreground">
                 Weights are normalized automatically; they do not need to sum to 100.
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                Transcript sub-weights remain optimized automatically in all modes.
               </div>
             </div>
 
@@ -377,12 +401,14 @@ function NumberInput({
   value,
   min,
   max,
+  disabled = false,
   onChange,
 }: {
   label: string
   value: number
   min: number
   max: number
+  disabled?: boolean
   onChange: (value: number) => void
 }) {
   return (
@@ -393,6 +419,7 @@ function NumberInput({
         min={min}
         max={max}
         value={value}
+        disabled={disabled}
         onChange={(event) => {
           const next = Number(event.target.value)
           if (!Number.isFinite(next)) {

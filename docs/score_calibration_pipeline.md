@@ -263,22 +263,25 @@ Notes:
   --output-dir output/score_calibration/binary/calibration_run
 ```
 
-## App Toggle: Optimized Transcript Defaults
+## App Toggle: Optimized Score Defaults
 
-The web app settings modal now supports transcript-focused calibration defaults:
+The web app settings modal supports an optimized-defaults toggle in `Score Weights (%)`:
 
-- `Use 126d transcript-optimized defaults` (default: on)
-  - applies calibrated transcript-internal weights for:
-    - sentiment
-    - confidence
-    - directness
-    - outlook strength
-    - specificity
-    - risk intensity
-- fundamentals/news/social component interactions are unchanged unless you edit their existing weights.
-- when disabled, transcript-internal weights become editable in the modal.
+- `Use optimized defaults` (default: on)
+  - when enabled, the top-level component weights are set to calibrated defaults:
+    - transcript: `40`
+    - fundamentals: `35`
+    - news: `15`
+    - social: `10`
+  - when disabled, those four top-level weights are manually editable.
+- transcript internal sub-weights are always pinned to calibrated values in all modes.
 
-Runtime overrides passed by the UI map to:
+Runtime overrides passed by the UI include:
+- `use_optimized_score_weight_defaults`
+- `score_weight_transcript`
+- `score_weight_fundamentals`
+- `score_weight_news`
+- `score_weight_social`
 - `transcript_internal_model_enabled`
 - `transcript_internal_intercept`
 - `transcript_internal_weight_sentiment`

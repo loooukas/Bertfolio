@@ -8,10 +8,19 @@ export interface AnalyzeRunOverrides {
   social_pool_size: number
   social_lookback_days: number
   use_cache: boolean
+  use_optimized_score_weight_defaults: boolean
   score_weight_transcript: number
   score_weight_fundamentals: number
   score_weight_news: number
   score_weight_social: number
+  transcript_internal_model_enabled: boolean
+  transcript_internal_intercept: number
+  transcript_internal_weight_sentiment: number
+  transcript_internal_weight_confidence: number
+  transcript_internal_weight_directness: number
+  transcript_internal_weight_outlook_strength: number
+  transcript_internal_weight_specificity: number
+  transcript_internal_weight_risk_intensity: number
   news_enable_alpha_vantage: boolean
   news_enable_yahoo_finance: boolean
   social_enable_reddit: boolean
@@ -27,6 +36,23 @@ export interface UISettings {
   run_overrides: AnalyzeRunOverrides
 }
 
+export const OPTIMIZED_SCORE_WEIGHTS = {
+  transcript: 40,
+  fundamentals: 35,
+  news: 15,
+  social: 10,
+} as const
+
+export const OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS = {
+  intercept: -0.019738131823252437,
+  sentiment: -0.1401634692187762,
+  confidence: -0.018278288860921532,
+  directness: 0.015206414272671791,
+  outlook_strength: -0.11552397904346766,
+  specificity: -0.08887882362418172,
+  risk_intensity: -0.0394870057888973,
+} as const
+
 export const DEFAULT_UI_SETTINGS: UISettings = {
   polling_mode: "balanced",
   market_columns: 2,
@@ -41,10 +67,19 @@ export const DEFAULT_UI_SETTINGS: UISettings = {
     social_pool_size: 260,
     social_lookback_days: 30,
     use_cache: false,
-    score_weight_transcript: 40,
-    score_weight_fundamentals: 35,
-    score_weight_news: 15,
-    score_weight_social: 10,
+    use_optimized_score_weight_defaults: true,
+    score_weight_transcript: OPTIMIZED_SCORE_WEIGHTS.transcript,
+    score_weight_fundamentals: OPTIMIZED_SCORE_WEIGHTS.fundamentals,
+    score_weight_news: OPTIMIZED_SCORE_WEIGHTS.news,
+    score_weight_social: OPTIMIZED_SCORE_WEIGHTS.social,
+    transcript_internal_model_enabled: true,
+    transcript_internal_intercept: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.intercept,
+    transcript_internal_weight_sentiment: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.sentiment,
+    transcript_internal_weight_confidence: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.confidence,
+    transcript_internal_weight_directness: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.directness,
+    transcript_internal_weight_outlook_strength: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.outlook_strength,
+    transcript_internal_weight_specificity: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.specificity,
+    transcript_internal_weight_risk_intensity: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.risk_intensity,
     news_enable_alpha_vantage: true,
     news_enable_yahoo_finance: true,
     social_enable_reddit: true,
@@ -86,6 +121,20 @@ export function sanitizeUISettings(settings?: Partial<UISettings> | null): UISet
 
 export function sanitizeAnalyzeRunOverrides(overrides?: Partial<AnalyzeRunOverrides>): AnalyzeRunOverrides {
   const incoming = { ...DEFAULT_UI_SETTINGS.run_overrides, ...(overrides || {}) }
+  const useOptimizedScoreWeightDefaults = Boolean(incoming.use_optimized_score_weight_defaults)
+  const scoreWeightTranscript = useOptimizedScoreWeightDefaults
+    ? OPTIMIZED_SCORE_WEIGHTS.transcript
+    : clampInt(incoming.score_weight_transcript, 0, 100)
+  const scoreWeightFundamentals = useOptimizedScoreWeightDefaults
+    ? OPTIMIZED_SCORE_WEIGHTS.fundamentals
+    : clampInt(incoming.score_weight_fundamentals, 0, 100)
+  const scoreWeightNews = useOptimizedScoreWeightDefaults
+    ? OPTIMIZED_SCORE_WEIGHTS.news
+    : clampInt(incoming.score_weight_news, 0, 100)
+  const scoreWeightSocial = useOptimizedScoreWeightDefaults
+    ? OPTIMIZED_SCORE_WEIGHTS.social
+    : clampInt(incoming.score_weight_social, 0, 100)
+
   return {
     news_limit: clampInt(incoming.news_limit, 10, 120),
     news_pool_size: clampInt(incoming.news_pool_size, 80, 1000),
@@ -94,10 +143,20 @@ export function sanitizeAnalyzeRunOverrides(overrides?: Partial<AnalyzeRunOverri
     social_pool_size: clampInt(incoming.social_pool_size, 80, 1000),
     social_lookback_days: clampInt(incoming.social_lookback_days, 3, 365),
     use_cache: Boolean(incoming.use_cache),
-    score_weight_transcript: clampInt(incoming.score_weight_transcript, 0, 100),
-    score_weight_fundamentals: clampInt(incoming.score_weight_fundamentals, 0, 100),
-    score_weight_news: clampInt(incoming.score_weight_news, 0, 100),
-    score_weight_social: clampInt(incoming.score_weight_social, 0, 100),
+    use_optimized_score_weight_defaults: useOptimizedScoreWeightDefaults,
+    score_weight_transcript: scoreWeightTranscript,
+    score_weight_fundamentals: scoreWeightFundamentals,
+    score_weight_news: scoreWeightNews,
+    score_weight_social: scoreWeightSocial,
+    // Transcript sub-weights are intentionally always the calibrated defaults.
+    transcript_internal_model_enabled: true,
+    transcript_internal_intercept: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.intercept,
+    transcript_internal_weight_sentiment: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.sentiment,
+    transcript_internal_weight_confidence: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.confidence,
+    transcript_internal_weight_directness: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.directness,
+    transcript_internal_weight_outlook_strength: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.outlook_strength,
+    transcript_internal_weight_specificity: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.specificity,
+    transcript_internal_weight_risk_intensity: OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS.risk_intensity,
     news_enable_alpha_vantage: Boolean(incoming.news_enable_alpha_vantage),
     news_enable_yahoo_finance: Boolean(incoming.news_enable_yahoo_finance),
     social_enable_reddit: Boolean(incoming.social_enable_reddit),

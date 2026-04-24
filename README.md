@@ -219,7 +219,10 @@ Current defaults in `.env.example`:
 Run-time overrides:
 
 - The frontend settings modal now sends runtime feed overrides per analysis job (`runtime_overrides`) so you can increase scrape depth without editing `.env`.
-- Override keys: `news_limit`, `news_pool_size`, `news_lookback_days`, `social_limit`, `social_pool_size`, `social_lookback_days`, and source toggles.
+- Override keys include feed depth/source controls plus score-calibration controls:
+  - feed: `news_limit`, `news_pool_size`, `news_lookback_days`, `social_limit`, `social_pool_size`, `social_lookback_days`, source toggles
+  - top-level score weights: `use_optimized_score_weight_defaults`, `score_weight_transcript`, `score_weight_fundamentals`, `score_weight_news`, `score_weight_social`
+  - transcript-internal calibrated weights: `transcript_internal_model_enabled`, `transcript_internal_intercept`, `transcript_internal_weight_sentiment`, `transcript_internal_weight_confidence`, `transcript_internal_weight_directness`, `transcript_internal_weight_outlook_strength`, `transcript_internal_weight_specificity`, `transcript_internal_weight_risk_intensity`
 
 ### Expanded Fundamentals Metrics
 
