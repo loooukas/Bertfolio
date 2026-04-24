@@ -48,6 +48,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--input", required=True, help="Prepared calibration dataset CSV/JSON/JSONL.")
     parser.add_argument("--output-dir", required=True, help="Output directory for fold artifacts and summary.")
     parser.add_argument("--target-mode", choices=["continuous", "binary"], default="binary")
+    parser.add_argument(
+        "--binary-rank-metric",
+        choices=["accuracy", "macro_f1", "roc_auc"],
+        default="accuracy",
+        help="Primary aggregate ranking metric for binary mode.",
+    )
     parser.add_argument("--target-horizon", type=int, choices=TARGET_HORIZON_CHOICES, default=126)
     parser.add_argument("--target-column", default="target")
     parser.add_argument("--event-date-column", default="event_date")
@@ -156,14 +162,17 @@ def _aggregate_metric_dicts(rows: list[dict[str, Any]]) -> dict[str, Optional[fl
     return out
 
 
-def _sort_aggregate_rows(rows: list[dict[str, Any]], target_mode: str) -> list[dict[str, Any]]:
+def _sort_aggregate_rows(rows: list[dict[str, Any]], target_mode: str, binary_rank_metric: str) -> list[dict[str, Any]]:
     if target_mode == "binary":
+        primary = f"{str(binary_rank_metric)}_mean"
+        secondary = "accuracy_mean" if binary_rank_metric != "accuracy" else "macro_f1_mean"
+        tertiary = "roc_auc_mean" if binary_rank_metric != "roc_auc" else "macro_f1_mean"
         return sorted(
             rows,
             key=lambda row: (
-                -(safe_float(row.get("accuracy_mean")) or -999.0),
-                -(safe_float(row.get("macro_f1_mean")) or -999.0),
-                -(safe_float(row.get("roc_auc_mean")) or -999.0),
+                -(safe_float(row.get(primary)) or -999.0),
+                -(safe_float(row.get(secondary)) or -999.0),
+                -(safe_float(row.get(tertiary)) or -999.0),
             ),
         )
     return sorted(
@@ -348,10 +357,11 @@ def main(argv: list[str] | None = None) -> int:
                 **_aggregate_metric_dicts(records),
             }
         )
-    aggregate_rows = _sort_aggregate_rows(aggregate_rows, args.target_mode)
+    aggregate_rows = _sort_aggregate_rows(aggregate_rows, args.target_mode, str(args.binary_rank_metric))
 
     summary = {
         "target_mode": args.target_mode,
+        "binary_rank_metric": str(args.binary_rank_metric) if args.target_mode == "binary" else None,
         "target_horizon": int(args.target_horizon),
         "target_column": target_col,
         "input_rows_after_filtering": int(n_rows),

@@ -199,10 +199,20 @@ HORIZONS="63 126" ./scripts/run_walkforward_binary_long_horizons.sh \
   --input output/score_calibration_126d/binary/prepared_calibration_dataset.csv \
   --target-mode binary \
   --target-horizon 126 \
+  --binary-rank-metric macro_f1 \
   --output-dir output/score_calibration_126d/binary/walkforward \
   --min-train-size 36 \
   --val-size 8 \
   --test-size 8
+```
+
+### Binary macro-F1 helper script
+
+```bash
+./scripts/run_walkforward_binary_macrof1.sh \
+  output/score_calibration_126d/binary_v2/prepared_calibration_dataset.csv \
+  output/score_calibration_126d/binary_v2/walkforward_macrof1 \
+  126
 ```
 
 ### Walk-forward outputs
