@@ -308,7 +308,7 @@ Optional keys:
 
 - `ALPHAVANTAGE_API_KEY` for Alpha Vantage news feed
 - `OPENAI_API_KEY` for transcript normalization and deterministic Motley pipeline OpenAI fallback
-- `OPENAI_NORMALIZER_MODEL` (default `gpt-4o-mini`)
+- `OPENAI_NORMALIZER_MODEL` (default `gpt-4o-mini`; `gpt-5*` values auto-fallback to `gpt-4o-mini` on structured chat path)
 - `OPENAI_REQUEST_RETRIES` and `OPENAI_RETRY_BACKOFF_SECONDS` for OpenAI retry behavior
 - `OPENAI_SEARCH_MODEL` (default `gpt-5-mini`) for deterministic discovery/scrape
 - `TRANSCRIPT_PIPELINE_MODE` (`motley_cli` or `legacy`)
@@ -316,7 +316,7 @@ Optional keys:
 - `TRANSCRIPT_PIPELINE_FALLBACK_TO_LEGACY` (`1` or `0`)
 - `MOTLEY_*` discovery/scrape controls in `.env.example`
 - `TRANSCRIPT_SENTIMENT_SEGMENT_*` segmentation controls in `.env.example`
-- `TRANSCRIPT_FEATURE_AI_*` controls in `.env.example` for hybrid speaker-metric classification
+- `TRANSCRIPT_FEATURE_AI_*` controls in `.env.example` for hybrid speaker-metric classification (`TRANSCRIPT_FEATURE_AI_MODEL` should be a structured-chat compatible model such as `gpt-4o-mini`)
 - `NEWS_*` and `SOCIAL_*` controls in `.env.example` for higher feed volume
 
 5. Start both frontend and backend

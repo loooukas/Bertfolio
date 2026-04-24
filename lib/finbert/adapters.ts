@@ -199,14 +199,34 @@ function quarterLabelFromTitle(titleRaw?: string | null): string | null {
   return `Q${matched[1]} ${matched[2]}`
 }
 
+function quarterLabelFromSourceUrl(sourceUrlRaw?: string | null): string | null {
+  if (!sourceUrlRaw) {
+    return null
+  }
+  const raw = String(sourceUrlRaw).trim()
+  if (!raw) {
+    return null
+  }
+  const matched = raw.match(/-q([1-4])-(20\d{2})-earnings-call-transcript/i)
+  if (!matched) {
+    return null
+  }
+  return `Q${matched[1]} ${matched[2]}`
+}
+
 function transcriptLabelFromMetadata(
   titleRaw: string | null | undefined,
   publishedDateRaw: string | null | undefined,
+  sourceUrlRaw: string | null | undefined,
   index: number,
 ): string {
   const fromTitle = quarterLabelFromTitle(titleRaw)
   if (fromTitle) {
     return fromTitle
+  }
+  const fromSourceUrl = quarterLabelFromSourceUrl(sourceUrlRaw)
+  if (fromSourceUrl) {
+    return fromSourceUrl
   }
   const fromDate = quarterLabelFromDate(publishedDateRaw)
   if (fromDate) {
@@ -352,7 +372,7 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
   )
 
   const transcriptDocs = report.transcript.transcripts.map((doc, index) => {
-    const label = transcriptLabelFromMetadata(doc.title, doc.published_date, index)
+    const label = transcriptLabelFromMetadata(doc.title, doc.published_date, doc.source_url, index)
     return {
       id: doc.source_url || `transcript-${index + 1}`,
       label,

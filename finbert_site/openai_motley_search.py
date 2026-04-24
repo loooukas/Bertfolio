@@ -122,6 +122,13 @@ _BAD_SPEAKER_LABELS = {
     "thank you",
     "good afternoon",
     "good morning",
+    "duration",
+    "prepared",
+    "prepared remarks",
+    "other",
+    "questions and answers",
+    "q&a",
+    "call participants",
 }
 _COMPANY_TOKEN_STOPWORDS = {
     "inc",
@@ -550,6 +557,22 @@ def _looks_like_plausible_speaker_label(label: str) -> bool:
     return False
 
 
+def _canonicalize_speaker_label(label: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(label or "").strip())
+    if not cleaned:
+        return ""
+    if " -- " in cleaned:
+        cleaned = cleaned.split(" -- ", 1)[0].strip()
+    cleaned = re.sub(
+        r"\s+\([^)]*(officer|analyst|operator|relations|director|president|chief)[^)]*\)\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
+    return cleaned
+
+
 def _sanitize_section_role(value: str) -> Optional[str]:
     role = str(value or "").strip().lower()
     if not role:
@@ -586,7 +609,9 @@ def _speaker_line_match(line: str) -> Optional[tuple[str, str]]:
     match = _SPEAKER_LINE_PATTERN.match(line.strip())
     if not match:
         return None
-    speaker = re.sub(r"\s+", " ", match.group(1)).strip()
+    speaker = _canonicalize_speaker_label(match.group(1))
+    if not _looks_like_plausible_speaker_label(speaker):
+        return None
     spoken = match.group(2).strip()
     if len(spoken) < 2:
         return None
@@ -1713,6 +1738,19 @@ def _candidate_has_explicit_ticker(ticker: str, title: str, url: str) -> bool:
     )
 
 
+def _url_has_ticker_token(url: str, ticker: str) -> bool:
+    path = urlparse(url).path or ""
+    slug = path.rstrip("/").split("/")[-1].lower()
+    if not slug:
+        return False
+    tokens = [token for token in re.split(r"[^a-z0-9]+", slug) if token]
+    ticker_norm = re.sub(r"[^a-z0-9]+", "", ticker.lower())
+    if not ticker_norm:
+        return False
+    token_norms = {re.sub(r"[^a-z0-9]+", "", token) for token in tokens}
+    return ticker_norm in token_norms
+
+
 def _extract_company_tokens_from_candidate(ticker: str, title: str, url: str) -> set[str]:
     ticker_lower = ticker.lower()
     tokens: set[str] = set()
@@ -2234,12 +2272,15 @@ def _is_low_quality_speaker_parse(parsed: dict[str, Any]) -> tuple[bool, str]:
 
     unknown_sections = 0
     suspicious_content = False
+    implausible_labels = 0
     for section in sections:
         if not isinstance(section, dict):
             continue
         speaker = str(section.get("speaker") or "").strip().lower()
         if speaker in {"", "unknown"}:
             unknown_sections += 1
+        if not _looks_like_plausible_speaker_label(str(section.get("speaker") or "")):
+            implausible_labels += 1
         text = str(section.get("text") or "")
         if "self.__next_f.push" in text or '\\"children\\":' in text or "\\u003c" in text:
             suspicious_content = True
@@ -2250,6 +2291,8 @@ def _is_low_quality_speaker_parse(parsed: dict[str, Any]) -> tuple[bool, str]:
         return True, "single_unknown_section"
     if unknown_sections == len(sections):
         return True, "all_unknown_speakers"
+    if (implausible_labels / max(len(sections), 1)) > 0.25:
+        return True, "implausible_speaker_labels"
     return False, ""
 
 
@@ -2865,7 +2908,11 @@ def _clean_candidates(
         title = str(row.get("title") or "")
         url = str(row.get("url") or "")
         explicit_ticker = bool(row.get("explicit_ticker"))
+        source_value = str(row.get("source") or "").strip().lower()
         alias_match = _candidate_matches_company_tokens(title=title, url=url, company_tokens=company_tokens)
+        if source_value.startswith("openai_") and explicit_ticker and not _url_has_ticker_token(url, ticker):
+            warnings.append(f"Dropped title/url ticker mismatch candidate: {url}")
+            continue
         if company_tokens and not explicit_ticker and not alias_match:
             warnings.append(f"Dropped likely off-ticker URL: {url}")
             continue
@@ -2873,7 +2920,6 @@ def _clean_candidates(
         quality = float(row.get("base_quality") or 0.0)
         if alias_match and not explicit_ticker:
             quality += 6.0
-        source_value = str(row.get("source") or "").strip().lower()
         if source_value.startswith("sitemap_month:"):
             quality += 20.0
         elif source_value.startswith("author_page:"):

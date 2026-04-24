@@ -518,9 +518,10 @@ def _classify_block_features_with_openai(
     min_batch_size = max(1, min(configured_batch, settings.transcript_feature_ai_min_batch_size))
     timeout_seconds = max(5, settings.transcript_feature_ai_timeout_seconds)
     target_sections = sections[:max_blocks]
+    model_resolution_warning: str | None = None
 
     try:
-        model_name = _assert_structured_chat_model(
+        model_name, model_resolution_warning = _resolve_structured_chat_model(
             settings.transcript_feature_ai_model,
             purpose="OpenAI feature classifier",
         )
@@ -565,6 +566,8 @@ def _classify_block_features_with_openai(
     diagnostics: list[str] = []
     failed_batches = 0
     failed_blocks = 0
+    if model_resolution_warning:
+        diagnostics.append(model_resolution_warning)
 
     cursor = 0
     batch_number = 0
@@ -1394,17 +1397,43 @@ def _extract_json_from_text(content: str) -> str:
     return content
 
 
-def _assert_structured_chat_model(model_name: str, *, purpose: str) -> str:
+def _resolve_structured_chat_model(model_name: str, *, purpose: str) -> tuple[str, str | None]:
     configured = (model_name or "").strip()
     if not configured:
         raise ValueError(f"{purpose}: model is not configured.")
     lowered = configured.lower()
     if lowered.startswith("gpt-5"):
-        raise ValueError(
-            f"{purpose}: model '{configured}' is not allowed for this chat.completions structured-output path. "
-            "Set an explicitly supported model (for example gpt-4o-mini)."
+        fallback_model = "gpt-4o-mini"
+        return (
+            fallback_model,
+            (
+                f"{purpose}: model '{configured}' is not allowed for this chat.completions structured-output path. "
+                f"Auto-falling back to '{fallback_model}'."
+            ),
         )
-    return configured
+    return configured, None
+
+
+def _summarize_openai_http_error(response: requests.Response) -> str:
+    detail = ""
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if isinstance(error, dict):
+                code = str(error.get("code") or "").strip()
+                message = str(error.get("message") or "").strip()
+                if code and message:
+                    detail = f"{code}: {message}"
+                elif message:
+                    detail = message
+    except Exception:
+        pass
+    if not detail:
+        detail = re.sub(r"\s+", " ", str(response.text or "")).strip()[:360]
+    if detail:
+        return f"HTTP {response.status_code}: {detail}"
+    return f"HTTP {response.status_code}"
 
 
 def _structured_response_format(schema_name: str, schema: dict[str, Any]) -> dict[str, Any]:
@@ -1454,7 +1483,8 @@ def _post_structured_chat_completion(
                 },
                 timeout=timeout,
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                raise RuntimeError(_summarize_openai_http_error(response))
             payload = response.json()
             choices = payload.get("choices") or []
             if not choices:
@@ -1467,7 +1497,7 @@ def _post_structured_chat_completion(
                 raise ValueError("OpenAI response returned non-object JSON payload.")
             return parsed, None
         except Exception as exc:
-            last_error = str(exc)
+            last_error = str(exc).strip() or exc.__class__.__name__
             if attempt >= max_retries:
                 break
             time.sleep(backoff * (2 ** attempt))
@@ -1492,10 +1522,12 @@ def _openai_normalize(
     }
 
     try:
-        model_name = _assert_structured_chat_model(
+        model_name, model_resolution_warning = _resolve_structured_chat_model(
             settings.openai_normalizer_model,
             purpose="OpenAI normalizer",
         )
+        if model_resolution_warning:
+            input_payload["model_resolution_warning"] = model_resolution_warning
         parsed, error = _post_structured_chat_completion(
             api_key=settings.openai_api_key,
             model_name=model_name,
