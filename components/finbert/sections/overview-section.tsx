@@ -1,7 +1,6 @@
 "use client"
 
 import { CheckCircle2, TrendingUp, AlertTriangle, Target, Info } from "lucide-react"
-import { Progress } from "@/components/ui/progress"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 interface Metric {
@@ -23,10 +22,10 @@ interface OverviewSectionProps {
 }
 
 const getMetricColor = (key: string, value: number) => {
-  if (key === "evasiveness") {
-    return value > 40 ? "text-bearish" : value > 25 ? "text-neutral" : "text-bullish"
-  }
-  return value > 70 ? "text-bullish" : value > 50 ? "text-neutral" : "text-bearish"
+  const clamped = Math.max(0, Math.min(100, value))
+  const favorableScore = key === "evasiveness" ? 100 - clamped : clamped
+  const hue = Math.round((favorableScore / 100) * 120)
+  return `hsl(${hue} 78% 54%)`
 }
 
 const getMetricIcon = (key: string) => {
@@ -99,7 +98,7 @@ export function OverviewSection({ data, onNavigate }: OverviewSectionProps) {
             return (
               <div key={metric.key} className="p-4 rounded-xl bg-card border border-border">
                 <div className="flex items-center gap-2 mb-3">
-                  <Icon className={`w-4 h-4 ${colorClass}`} />
+                  <Icon className="w-4 h-4" style={{ color: colorClass }} />
                   <span className="text-xs text-muted-foreground font-medium">{metric.label}</span>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -111,10 +110,18 @@ export function OverviewSection({ data, onNavigate }: OverviewSectionProps) {
                   </Tooltip>
                 </div>
                 <div className="mb-2 flex items-end gap-2">
-                  <span className={`text-3xl font-bold ${colorClass}`}>{metric.value}</span>
+                  <span className="text-3xl font-bold" style={{ color: colorClass }}>{metric.value}</span>
                   <span className="mb-1 text-sm text-muted-foreground">/100</span>
                 </div>
-                <Progress value={metric.value} className="h-1.5" />
+                <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-primary/20">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, metric.value))}%`,
+                      backgroundColor: colorClass,
+                    }}
+                  />
+                </div>
                 <div className="mt-2 text-[11px] leading-4 text-muted-foreground">
                   <span className="font-medium text-foreground/90">{context}</span>
                 </div>

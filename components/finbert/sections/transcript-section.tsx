@@ -1,10 +1,9 @@
 "use client"
 
 import { type KeyboardEvent, useMemo, useState } from "react"
-import { ArrowUpDown, ExternalLink, Filter, Quote, User, Info, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
+import { ArrowUpDown, ExternalLink, Filter, Quote, User, Info, CheckCircle2, XCircle, AlertCircle, ChevronDown, ChevronUp } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -26,6 +25,7 @@ interface SpeakerAnalysis {
   segment_diagnostics?: {
     feature_diagnostics?: {
       metric_source_debug?: Record<string, MetricSourceDebug>
+      metric_band_debug?: Record<string, string>
       [key: string]: unknown
     }
     [key: string]: unknown
@@ -185,6 +185,55 @@ function metricHelpCopy(key: "sentiment" | "confidence" | "evasiveness" | "speci
   return "Higher when statements contain concrete details such as explicit numbers, KPI terms, and direct commitments."
 }
 
+function toTitleCaseBand(value: string): string {
+  return String(value || "")
+    .replace(/_/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
+function confidenceBandFromScore(score: number): string {
+  if (score >= 82) return "very_high"
+  if (score >= 65) return "high"
+  if (score >= 48) return "medium"
+  if (score >= 30) return "low"
+  return "very_low"
+}
+
+function evasivenessBandFromScore(score: number): string {
+  if (score <= 22) return "very_low"
+  if (score <= 35) return "low"
+  if (score <= 52) return "medium"
+  if (score <= 70) return "high"
+  return "very_high"
+}
+
+function bandToneClass(metric: "confidence" | "evasiveness", band: string): string {
+  const normalized = String(band || "").trim().toLowerCase()
+  if (metric === "confidence") {
+    if (normalized === "very_high" || normalized === "high") return "text-bullish"
+    if (normalized === "medium") return "text-neutral"
+    return "text-bearish"
+  }
+  if (normalized === "very_low" || normalized === "low") return "text-bullish"
+  if (normalized === "medium") return "text-neutral"
+  return "text-bearish"
+}
+
+function metricBandFromRow(row: SpeakerAnalysis | undefined, metric: "confidence" | "evasiveness"): string {
+  if (!row) return "n/a"
+  const debugBand =
+    row.segment_diagnostics?.feature_diagnostics?.metric_band_debug &&
+    typeof row.segment_diagnostics.feature_diagnostics.metric_band_debug[metric] === "string"
+      ? String(row.segment_diagnostics.feature_diagnostics.metric_band_debug[metric])
+      : null
+  if (debugBand) {
+    return debugBand
+  }
+  const score = metric === "confidence" ? row.confidence : row.evasiveness
+  return metric === "confidence" ? confidenceBandFromScore(score) : evasivenessBandFromScore(score)
+}
+
 function MetricHelp({ copy }: { copy: string }) {
   const activate = (event: KeyboardEvent<HTMLSpanElement>) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -220,6 +269,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
   const [activeSpeaker, setActiveSpeaker] = useState<string | null>(null)
   const [activeTranscriptId, setActiveTranscriptId] = useState<string | null>(null)
   const [activeBlockIndex, setActiveBlockIndex] = useState<number | null>(null)
+  const [showBlockDebug, setShowBlockDebug] = useState<boolean>(false)
   const [activeQuarter, setActiveQuarter] = useState<string | null>(null)
   const [activeQuarterTranscriptId, setActiveQuarterTranscriptId] = useState<string | null>(null)
 
@@ -380,6 +430,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
 
   const closeBlockModal = () => {
     setActiveBlockIndex(null)
+    setShowBlockDebug(false)
   }
 
   const openQuarterModal = (quarter: string) => {
@@ -795,16 +846,22 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <Progress value={item.confidence} className="h-1.5 w-16" />
-                            <span className="text-sm text-muted-foreground">{item.confidence}</span>
+                            <Badge
+                              variant="outline"
+                              className={`text-[11px] ${bandToneClass("confidence", metricBandFromRow(item, "confidence"))}`}
+                            >
+                              {toTitleCaseBand(metricBandFromRow(item, "confidence"))}
+                            </Badge>
                           </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <Progress value={item.evasiveness} className="h-1.5 w-16" />
-                            <span className={`text-sm ${item.evasiveness > 30 ? "text-bearish" : "text-muted-foreground"}`}>
-                              {item.evasiveness}
-                            </span>
+                            <Badge
+                              variant="outline"
+                              className={`text-[11px] ${bandToneClass("evasiveness", metricBandFromRow(item, "evasiveness"))}`}
+                            >
+                              {toTitleCaseBand(metricBandFromRow(item, "evasiveness"))} Evasion
+                            </Badge>
                           </div>
                         </td>
                         <td className="px-4 py-3">
@@ -980,18 +1037,14 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                               </div>
                               <div className="rounded-lg border border-border bg-secondary/30 p-3">
                                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Confidence</div>
-                                <div className="font-mono text-base text-foreground">
-                                  {typeof score?.confidence === "number" ? score.confidence.toFixed(2) : "n/a"}
+                                <div className={`text-base font-semibold ${bandToneClass("confidence", metricBandFromRow(score, "confidence"))}`}>
+                                  {score ? toTitleCaseBand(metricBandFromRow(score, "confidence")) : "n/a"}
                                 </div>
                               </div>
                               <div className="rounded-lg border border-border bg-secondary/30 p-3">
                                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Evasiveness</div>
-                                <div
-                                  className={`font-mono text-base ${
-                                    typeof score?.evasiveness === "number" && score.evasiveness > 30 ? "text-bearish" : "text-foreground"
-                                  }`}
-                                >
-                                  {typeof score?.evasiveness === "number" ? score.evasiveness.toFixed(2) : "n/a"}
+                                <div className={`text-base font-semibold ${bandToneClass("evasiveness", metricBandFromRow(score, "evasiveness"))}`}>
+                                  {score ? `${toTitleCaseBand(metricBandFromRow(score, "evasiveness"))} Evasion` : "n/a"}
                                 </div>
                               </div>
                               <div className="rounded-lg border border-border bg-secondary/30 p-3">
@@ -1020,6 +1073,17 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
 
         <Dialog open={activeBlockIndex !== null} onOpenChange={(open) => (!open ? closeBlockModal() : undefined)}>
           <DialogContent className="max-h-[85vh] w-[94vw] max-w-[94vw] overflow-hidden sm:max-w-[1280px]">
+            {activeMetricDebug.length > 0 ? (
+              <button
+                type="button"
+                className="absolute right-14 top-4 inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
+                onClick={() => setShowBlockDebug((prev) => !prev)}
+                aria-label={showBlockDebug ? "Hide metric source debug" : "Show metric source debug"}
+              >
+                {showBlockDebug ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                Debug
+              </button>
+            ) : null}
             <DialogHeader>
               <DialogTitle className="text-lg">Speaker Block Detail</DialogTitle>
               <DialogDescription>
@@ -1041,12 +1105,14 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                   </div>
                   <div className="rounded-lg border border-border bg-secondary/30 p-3">
                     <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Confidence</div>
-                    <div className="font-mono text-base text-foreground">{activeBlock.confidence.toFixed(2)}</div>
+                    <div className={`text-base font-semibold ${bandToneClass("confidence", metricBandFromRow(activeBlock, "confidence"))}`}>
+                      {toTitleCaseBand(metricBandFromRow(activeBlock, "confidence"))}
+                    </div>
                   </div>
                   <div className="rounded-lg border border-border bg-secondary/30 p-3">
                     <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Evasiveness</div>
-                    <div className={`font-mono text-base ${activeBlock.evasiveness > 30 ? "text-bearish" : "text-foreground"}`}>
-                      {activeBlock.evasiveness.toFixed(2)}
+                    <div className={`text-base font-semibold ${bandToneClass("evasiveness", metricBandFromRow(activeBlock, "evasiveness"))}`}>
+                      {toTitleCaseBand(metricBandFromRow(activeBlock, "evasiveness"))} Evasion
                     </div>
                   </div>
                   <div className="rounded-lg border border-border bg-secondary/30 p-3">
@@ -1076,7 +1142,7 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
                   </p>
                 </div>
 
-                {activeMetricDebug.length > 0 ? (
+                {activeMetricDebug.length > 0 && showBlockDebug ? (
                   <div className="rounded-lg border border-border bg-secondary/20 p-4">
                     <div className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Metric Source Debug
