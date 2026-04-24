@@ -269,10 +269,10 @@ The web app settings modal supports an optimized-defaults toggle in `Score Weigh
 
 - `Use optimized defaults` (default: on)
   - when enabled, the top-level component weights are set to calibrated defaults:
-    - transcript: `40`
-    - fundamentals: `35`
-    - news: `15`
-    - social: `10`
+    - transcript: `100`
+    - fundamentals: `0`
+    - news: `0`
+    - social: `0`
   - when disabled, those four top-level weights are manually editable.
 - transcript internal sub-weights are always pinned to calibrated values in all modes.
 

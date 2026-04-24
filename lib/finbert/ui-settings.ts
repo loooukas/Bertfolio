@@ -37,10 +37,10 @@ export interface UISettings {
 }
 
 export const OPTIMIZED_SCORE_WEIGHTS = {
-  transcript: 40,
-  fundamentals: 35,
-  news: 15,
-  social: 10,
+  transcript: 100,
+  fundamentals: 0,
+  news: 0,
+  social: 0,
 } as const
 
 export const OPTIMIZED_TRANSCRIPT_INTERNAL_WEIGHTS = {

@@ -294,9 +294,6 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
               <div className="text-[11px] text-muted-foreground">
                 Weights are normalized automatically; they do not need to sum to 100.
               </div>
-              <div className="text-[11px] text-muted-foreground">
-                Transcript sub-weights remain optimized automatically in all modes.
-              </div>
             </div>
 
             <div className="space-y-3 rounded-lg border border-border p-3">
