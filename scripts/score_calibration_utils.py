@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 import json
 from pathlib import Path
+import time
 from typing import Any, Iterable, Optional, Sequence
 
 import numpy as np
@@ -16,6 +17,48 @@ import yfinance as yf
 
 
 DATE_FMT = "%Y-%m-%d"
+
+
+class ProgressBar:
+    """Minimal terminal progress bar without extra dependencies."""
+
+    def __init__(self, *, total: int, label: str, enabled: bool = True, width: int = 28) -> None:
+        self.total = max(0, int(total))
+        self.label = str(label)
+        self.enabled = bool(enabled)
+        self.width = max(10, int(width))
+        self.current = 0
+        self.start = time.perf_counter()
+        if self.enabled:
+            self._render(final=False)
+
+    def update(self, step: int = 1) -> None:
+        self.current = min(self.total, self.current + max(0, int(step)))
+        if self.enabled:
+            self._render(final=False)
+
+    def close(self) -> None:
+        self.current = self.total
+        if self.enabled:
+            self._render(final=True)
+
+    def _render(self, *, final: bool) -> None:
+        if self.total <= 0:
+            message = f"{self.label}: 0/0"
+            end = "\n" if final else "\r"
+            print(message.ljust(80), end=end, flush=True)
+            return
+
+        ratio = min(1.0, max(0.0, self.current / float(self.total)))
+        filled = int(round(ratio * self.width))
+        bar = "#" * filled + "-" * (self.width - filled)
+        elapsed = time.perf_counter() - self.start
+        message = (
+            f"{self.label} [{bar}] {self.current}/{self.total} "
+            f"({ratio * 100:5.1f}%) elapsed {elapsed:6.1f}s"
+        )
+        end = "\n" if final else "\r"
+        print(message.ljust(120), end=end, flush=True)
 
 
 def ensure_dir(path: Path) -> None:

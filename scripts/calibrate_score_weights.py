@@ -114,6 +114,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--enable-local-search", action="store_true", default=False)
     parser.add_argument("--local-search-samples", type=int, default=400)
     parser.add_argument("--local-search-radius", type=float, default=0.10)
+    parser.add_argument("--no-progress", action="store_true", default=False, help="Disable terminal progress messages.")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args(argv)
 
@@ -388,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
     if not input_path.exists():
         raise RuntimeError(f"Input dataset not found: {input_path}")
 
+    if not args.no_progress:
+        print("[calibrate] Step 1/8: loading prepared dataset...")
     frame = _load_table(input_path)
     if frame.empty:
         raise RuntimeError("Input dataset is empty.")
@@ -809,3 +812,17 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+    if not args.no_progress:
+        print("[calibrate] Step 2/8: resolving split + target...")
+    if not args.no_progress:
+        print("[calibrate] Step 3/8: fitting stage-1 transcript model...")
+    if not args.no_progress:
+        print("[calibrate] Step 4/8: fitting stage-2 full-score model...")
+    if not args.no_progress:
+        print("[calibrate] Step 5/8: fitting direct single-stage model...")
+    if not args.no_progress:
+        print("[calibrate] Step 6/8: evaluating models and baselines...")
+    if not args.no_progress:
+        print("[calibrate] Step 7/8: optional local search + ranking analysis...")
+    if not args.no_progress:
+        print("[calibrate] Step 8/8: writing report artifacts...")

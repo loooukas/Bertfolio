@@ -71,6 +71,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--val-fraction", type=float, default=0.20)
     parser.add_argument("--min-per-split", type=int, default=10)
     parser.add_argument("--standardize", action="store_true", default=False)
+    parser.add_argument("--no-progress", action="store_true", default=False, help="Disable terminal progress messages.")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args(argv)
 
@@ -132,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
     meta_columns = _parse_list_arg(args.metadata_columns, DEFAULT_META_COLUMNS)
     target_column = _target_column(args.target_horizon, args.target_mode)
 
+    if not args.no_progress:
+        print("[prepare] Step 1/5: loading input table...")
     frame = _load_table(in_path)
     if frame.empty:
         raise RuntimeError(f"Input table is empty: {in_path}")
@@ -256,3 +259,11 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+    if not args.no_progress:
+        print("[prepare] Step 2/5: parsing dates and selecting target...")
+    if not args.no_progress:
+        print("[prepare] Step 3/5: cleaning feature columns...")
+    if not args.no_progress:
+        print("[prepare] Step 4/5: creating chronological split...")
+    if not args.no_progress:
+        print("[prepare] Step 5/5: writing output artifacts...")

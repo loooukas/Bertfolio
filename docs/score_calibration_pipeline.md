@@ -140,6 +140,11 @@ This pipeline builds an event-level historical table and calibrates score weight
   --output-dir output/score_calibration/calibration_run
 ```
 
+Progress UX:
+- Phase 1 shows live progress bars for event-row build, price fetch, and outcome enrichment.
+- Phase 2 and Phase 3 show explicit step counters (`Step X/Y`).
+- Disable progress output with `--no-progress` on any script.
+
 ## Binary-mode example
 
 ```bash

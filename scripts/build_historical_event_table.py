@@ -26,6 +26,7 @@ from finbert_site.providers import fetch_fundamentals, fetch_news_multi_source, 
 from finbert_site.schemas import TranscriptSectionBlock
 from finbert_site.settings import Settings
 from scripts.score_calibration_utils import (
+    ProgressBar,
     clamp,
     compute_event_window,
     date_to_str,
@@ -222,6 +223,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--output-file", default=DEFAULT_OUTPUT_FILE)
+    parser.add_argument("--no-progress", action="store_true", default=False, help="Disable terminal progress bars.")
     return parser.parse_args(argv)
 
 
@@ -581,6 +583,7 @@ def _build_event_rows(
         paths = paths[: int(args.max_events)]
 
     rows: list[EventRow] = []
+    progress = ProgressBar(total=len(paths), label="Phase1 Event Rows", enabled=not args.no_progress)
 
     for path in paths:
         try:
@@ -715,6 +718,9 @@ def _build_event_rows(
                     )
 
         rows.append(event_row)
+        progress.update(1)
+
+    progress.close()
 
     return rows
 
@@ -745,6 +751,7 @@ def _attach_market_outcomes(
     *,
     benchmark_ticker: str,
     alignment_mode: str,
+    show_progress: bool,
 ) -> None:
     if not rows:
         return
@@ -759,17 +766,21 @@ def _attach_market_outcomes(
 
     per_ticker: dict[str, pd.Series] = {}
     tickers = sorted({row.ticker for row in rows})
+    fetch_progress = ProgressBar(total=len(tickers), label="Phase1 Prices", enabled=show_progress)
     for ticker in tickers:
         try:
             per_ticker[ticker] = fetch_close_series(ticker, start, end)
         except Exception:
             per_ticker[ticker] = pd.Series(dtype=float)
+        fetch_progress.update(1)
+    fetch_progress.close()
 
     try:
         benchmark_series = fetch_close_series(benchmark_ticker, start, end)
     except Exception:
         benchmark_series = pd.Series(dtype=float)
 
+    outcome_progress = ProgressBar(total=len(rows), label="Phase1 Outcomes", enabled=show_progress)
     for row in rows:
         event_dt = parse_date(row.event_date)
         if event_dt is None:
@@ -807,6 +818,8 @@ def _attach_market_outcomes(
         if row.stock_return_5d is not None and row.benchmark_return_5d is not None:
             row.abnormal_return_5d = row.stock_return_5d - row.benchmark_return_5d
             row.binary_abnormal_up_5d = int(row.abnormal_return_5d > 0)
+        outcome_progress.update(1)
+    outcome_progress.close()
 
 
 def _summary_payload(rows: list[EventRow], args: argparse.Namespace) -> dict[str, Any]:
@@ -892,6 +905,7 @@ def main(argv: list[str] | None = None) -> int:
         rows,
         benchmark_ticker=str(args.benchmark_ticker).upper(),
         alignment_mode=args.event_alignment_mode,
+        show_progress=not args.no_progress,
     )
 
     out_dir = Path(args.output_dir)
