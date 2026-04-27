@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useMemo, useState } from "react"
 import { usePathname } from "next/navigation"
-import { Activity, FileText, Settings, X } from "lucide-react"
+import { Activity, Settings, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -126,12 +126,6 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
 
           {/* Actions */}
           <div className="flex items-center gap-2">
-            <Button asChild variant="ghost" size="sm" className="hidden sm:flex gap-2">
-              <Link href="/docs">
-              <FileText className="w-4 h-4" />
-              <span>Docs</span>
-              </Link>
-            </Button>
             <Button variant="ghost" size="icon" className="w-9 h-9" onClick={() => setSettingsOpen(true)}>
               <Settings className="w-4 h-4" />
               <span className="sr-only">Settings</span>

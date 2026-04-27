@@ -29,7 +29,6 @@ Main paths:
 - `components/finbert/`: report UI components.
 - `finbert_site/`: FastAPI app, analysis pipeline, providers, model runtime, schemas, and jobs.
 - `scripts/dev.sh`: single-command local launcher for both services.
-- `tests/`: app-level regression tests with mocked providers and dummy keys.
 
 ## Requirements
 
@@ -37,7 +36,6 @@ Main paths:
 - Node.js with `pnpm`.
 - Optional Alpha Vantage API key for Alpha Vantage news/fundamental enrichment.
 - Optional OpenAI API key for transcript normalization and fallback discovery.
-- Optional local student-model artifacts if you want the trained classifier layer instead of lexical fallback.
 
 ## Quick Start
 
@@ -80,7 +78,7 @@ Common settings:
 Bertfolio has two model layers:
 
 1. FinBERT runs through Hugging Face/Transformers and downloads on first use unless already cached on the machine.
-2. Student metric classifiers load from local directories when present.
+2. Student metric classifiers are included under `output/student_models/...` and load from local directories at runtime.
 
 Default student model paths:
 
@@ -92,7 +90,22 @@ output/student_models/specificity_deberta_v3_base_cpu/model
 output/student_models/risk_intensity_three_band_deberta_v3_base_strict070/model
 ```
 
-If those directories exist, the backend uses them automatically. If a directory is missing, the affected metric falls back to deterministic lexical scoring and the report remains runnable. If your artifacts live elsewhere, set the matching `STUDENT_MODEL_*_DIR` value in `.env`.
+Those directories are committed as Git LFS artifacts. After cloning, run `git lfs pull` if your Git client did not download LFS files automatically. If your artifacts live elsewhere, set the matching `STUDENT_MODEL_*_DIR` value in `.env`.
+
+## Git LFS
+
+The student classifier weight files are stored with Git LFS because each DeBERTa weight file is larger than GitHub's normal file limit. Install Git LFS before cloning if you want a one-step checkout of the model artifacts:
+
+```bash
+brew install git-lfs
+git lfs install
+```
+
+If you already cloned the repo and see pointer text instead of binary weight files, run:
+
+```bash
+git lfs pull
+```
 
 ## Run Commands
 
@@ -102,7 +115,6 @@ pnpm dev:web  # start only Next.js
 pnpm dev:api  # start only FastAPI
 pnpm lint     # generate Next route types and run TypeScript checks
 pnpm build    # production Next.js build
-pytest -q     # Python regression tests
 ```
 
 ## Analysis Flow
@@ -134,16 +146,14 @@ Included:
 
 - Product source for the Next.js and FastAPI app.
 - Runtime prompt templates used by the backend.
-- App-level tests and mocked-provider regression coverage.
-- Public setup, methodology, and release-readiness docs.
+- Trained student classifier model artifacts required by the app.
 
 Not included:
 
 - Source datasets.
-- Trained model weights/checkpoints.
 - Generated analysis caches and reports.
 - Historical backtesting/calibration outputs.
-- Training and backtesting scripts used during model development.
+- Training, testing, and backtesting scripts used during model development.
 
 ## Troubleshooting
 
