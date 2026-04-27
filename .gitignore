@@ -30,7 +30,11 @@ pnpm-debug.log*
 .DS_Store
 
 # Generated app outputs and caches
-output/
+output/*
+!output/student_models/
+!output/student_models/*/
+!output/student_models/*/model/
+!output/student_models/*/model/**
 cache/
 logs/
 *.log

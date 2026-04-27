@@ -6,10 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 import re
 from statistics import mean
@@ -56,8 +53,6 @@ async def _app_lifespan(_: FastAPI):
 
 app = FastAPI(title="Bertfolio", version="0.4.0", lifespan=_app_lifespan)
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
 job_manager = AnalyzeJobManager(settings=settings)
 
 _OVERRIDABLE_SETTING_KEYS: tuple[str, ...] = (
@@ -405,16 +400,6 @@ def _refresh_cached_result_from_local_data(
                     )
 
     return refreshed
-
-
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
-@app.get("/charts-test", response_class=HTMLResponse)
-def charts_test(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("charts_test.html", {"request": request})
 
 
 @app.get("/api/health")
