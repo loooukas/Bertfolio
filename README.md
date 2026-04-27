@@ -2,7 +2,7 @@
 
 Bertfolio is a local earnings-call intelligence app. It combines a Next.js dashboard with a FastAPI analysis backend to pull company context, score transcript tone, summarize market reaction, and show data-quality diagnostics in one report.
 
-The app is designed to run locally first. API keys belong in your own `.env` file and should never be committed.
+The app is designed to run locally first, with provider credentials and model artifacts supplied from the developer's machine.
 
 ## What It Does
 
@@ -33,14 +33,7 @@ pnpm install
 cp .env.example .env
 ```
 
-Then edit `.env` locally. Leave keys blank if you do not have them yet.
-
-```bash
-ALPHAVANTAGE_API_KEY=
-OPENAI_API_KEY=
-```
-
-Do not commit `.env`, model weights, generated datasets, caches, or backtesting outputs.
+Then edit `.env` for your local providers. You can leave optional providers blank while testing the UI and fallback paths.
 
 ## Run Locally
 
@@ -66,8 +59,6 @@ pnpm dev:api
 
 ## Environment Variables
 
-The included `.env.example` is safe to commit because it contains empty placeholders and local defaults only.
-
 Most useful variables:
 
 - `ALPHAVANTAGE_API_KEY`: optional Alpha Vantage provider key.
@@ -78,7 +69,7 @@ Most useful variables:
 - `NEWS_*` and `SOCIAL_*`: feed limits, source toggles, and lookback settings.
 - `STUDENT_MODEL_*_DIR`: optional local paths for student classifier model directories.
 
-Generated local directories under `output/` are ignored by Git.
+Local generated directories under `output/` are ignored by Git.
 
 ## Analysis Flow
 
@@ -107,10 +98,19 @@ The final report is organized into five primary sections:
 
 Bertfolio has two model layers:
 
-- FinBERT is the default local sentiment scorer for finance-specific directional tone.
-- Student metric classifiers are optional local models for block-level communication features. The app falls back to deterministic lexical scoring when those model directories are missing or disabled.
+- FinBERT is the default local sentiment scorer for finance-specific directional tone. It downloads through Hugging Face/Transformers the first time it is needed unless already cached on the machine.
+- Student metric classifiers are loaded from local directories under `output/student_models/...` by default. These directories are not part of the repository; if they exist on the machine running the app, Bertfolio uses them automatically.
+- When a configured student model directory is missing, the backend logs a warning in the Data Audit path and falls back to deterministic lexical scoring for that metric. The app still runs, but it is not using the trained student-classifier layer for that metric.
 
-Training datasets, model weights, benchmark data, and backtesting/calibration outputs are intentionally not committed. Keep those files local or publish them separately through an explicit artifact workflow.
+Default student model paths:
+
+- `output/student_models/confidence_three_band_deberta_v3_base_strict070/model`
+- `output/student_models/directness_three_band_deberta_v3_base_strict070/model`
+- `output/student_models/outlook_strength_five_band_deberta_v3_base_strict070/model`
+- `output/student_models/specificity_deberta_v3_base_cpu/model`
+- `output/student_models/risk_intensity_three_band_deberta_v3_base_strict070/model`
+
+If your trained models live somewhere else, set the corresponding `STUDENT_MODEL_*_DIR` variables in `.env`.
 
 ## Testing
 
@@ -121,15 +121,6 @@ pytest -q
 ```
 
 If dependencies are missing, install the Python and Node dependencies from the setup section first.
-
-## Public-Repo Hygiene
-
-Before making the repository public, verify:
-
-- `.env` is not tracked.
-- API keys are not present in source, docs, logs, or generated reports.
-- `output/`, model directories, pickle files, archives, CSV/JSONL datasets, and calibration/backtesting results are not tracked.
-- Any private notes, local absolute paths, or professor-specific handoff drafts are removed or generalized.
 
 ## Notes
 
