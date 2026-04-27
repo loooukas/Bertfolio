@@ -10,7 +10,7 @@ import { FinbertClientError, deleteCachedRun, getCacheRuns } from "@/lib/finbert
 import type { CacheRunSummary } from "@/lib/finbert/types"
 import { DEFAULT_UI_SETTINGS, sanitizeUISettings, type UISettings } from "@/lib/finbert/ui-settings"
 
-const UI_SETTINGS_STORAGE_KEY = "finbert-ui-settings-v2"
+const UI_SETTINGS_STORAGE_KEY = "bertfolio-ui-settings-v1"
 
 function formatRunTime(value: string): string {
   const parsed = new Date(value)

@@ -10,7 +10,7 @@ import { FinbertClientError, getCachedRun } from "@/lib/finbert/client"
 import type { CachedRunResponse } from "@/lib/finbert/types"
 import { DEFAULT_UI_SETTINGS, sanitizeUISettings, type UISettings } from "@/lib/finbert/ui-settings"
 
-const UI_SETTINGS_STORAGE_KEY = "finbert-ui-settings-v2"
+const UI_SETTINGS_STORAGE_KEY = "bertfolio-ui-settings-v1"
 
 function errorMessageFromUnknown(error: unknown): string {
   if (error instanceof FinbertClientError) {

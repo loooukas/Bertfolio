@@ -5,9 +5,9 @@ import { GeistSans } from "geist/font/sans"
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'FinBERT Earnings Signals',
+  title: 'Bertfolio',
   description: 'Transcript-first earnings intelligence platform',
-  generator: 'v0.app',
+  applicationName: "Bertfolio",
   icons: {
     icon: [
       {

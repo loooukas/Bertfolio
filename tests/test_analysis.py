@@ -230,7 +230,7 @@ def test_build_analysis_returns_new_sections_and_legacy_fields(monkeypatch):
     result = analysis.build_analysis("AAPL", _settings())
 
     assert result.analysis_version.startswith("2026.04")
-    assert result.ui_copy.app_title == "FinBERT Earnings Signals"
+    assert result.ui_copy.app_title == "Bertfolio"
 
     assert result.overview.ticker == "AAPL"
     assert result.transcript.transcript_count_found == 1

@@ -4,7 +4,7 @@ export default function DocsPage() {
   return (
     <main className="mx-auto max-w-5xl space-y-8 px-4 py-10 sm:px-6 lg:px-8">
       <section className="space-y-3 rounded-xl border border-border bg-card p-6">
-        <h1 className="text-3xl font-semibold tracking-tight text-foreground">FinBERT Docs</h1>
+        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Bertfolio Docs</h1>
         <p className="text-sm text-muted-foreground">
           Local runbook and product behavior notes for the root Next.js app + FastAPI backend.
         </p>
@@ -38,7 +38,7 @@ export default function DocsPage() {
         <h2 className="text-xl font-semibold text-foreground">Latest UI Behavior</h2>
         <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
           <li>The analyze hero/input panel fades away once a run starts and stays hidden while viewing results.</li>
-          <li>Clicking the top-left FinBERT brand resets to a fresh homepage state so you can analyze another ticker.</li>
+          <li>Clicking the top-left Bertfolio brand resets to a fresh homepage state so you can analyze another ticker.</li>
           <li>Transcript key quotes now attempt speaker attribution from real transcript evidence before fallback labels.</li>
           <li>Speaker cards open a modal showing every mention by transcript, with per-transcript mention-count buttons.</li>
           <li>Speaker/block diagnostics include analysts + management, but company-facing transcript aggregates are management-only.</li>

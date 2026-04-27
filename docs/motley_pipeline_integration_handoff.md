@@ -257,7 +257,7 @@ Keep schema and user-facing UI unchanged."
 
 ### Development validation run
 ```zsh
-cd <local-repo-path>
+cd bertfolio
 mkdir -p output
 .venv/bin/python scripts/openai_motley_transcript_cli.py AAPL MSFT \
   --pretty --verbose --scrape --scrape-count 4 \
@@ -269,7 +269,7 @@ mkdir -p output
 
 ### Production-like cached run
 ```zsh
-cd <local-repo-path>
+cd bertfolio
 .venv/bin/python scripts/openai_motley_transcript_cli.py AAPL MSFT \
   --pretty --verbose --scrape --scrape-count 4 \
   --timeout 45 --openai-retries 2 \

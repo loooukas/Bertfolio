@@ -1,11 +1,76 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments and secrets
 .env
+.env.*
+!.env.example
 .venv/
-.DS_Store
+venv/
+
+# Node / Next.js
 node_modules/
 .next/
-.env*.local
-.vercel/
-output/
+out/
 tsconfig.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Deployment/local tooling
+.vercel/
+.DS_Store
+
+# Generated app outputs and caches
+output/
+cache/
+logs/
+*.log
+
+# Local research/training/backtesting artifacts
+*.pkl
+*.pickle
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.parquet
+*.feather
+*.csv
+*.tsv
+*.jsonl
+*.ndjson
+*.sqlite
+*.sqlite3
+*.db
+
+# Model weights and training outputs
+models/
+checkpoints/
+student_models/
+teacher_dataset*/
+student_training_data*/
+score_calibration*/
+backtest*/
+wandb/
+mlruns/
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Local browser/test artifacts
+playwright-report/
+test-results/
+
+# Local one-off research importers
+scripts/import_streetevents_zip.py

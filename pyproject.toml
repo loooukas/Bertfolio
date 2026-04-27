@@ -1,7 +1,7 @@
 [project]
-name = "finbert-earnings-site"
+name = "bertfolio"
 version = "0.1.0"
-description = "Local earnings transcript analyzer using FinBERT"
+description = "Local earnings transcript analyzer for Bertfolio"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [

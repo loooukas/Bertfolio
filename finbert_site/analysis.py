@@ -1,4 +1,4 @@
-"""Core earnings analysis pipeline for FinBERT Earnings Signals."""
+"""Core earnings analysis pipeline for Bertfolio."""
 
 from __future__ import annotations
 
@@ -118,7 +118,7 @@ LOW_INFORMATION_QUOTES = {
 }
 
 UI_COPY = CopyDictionary(
-    app_title="FinBERT Earnings Signals",
+    app_title="Bertfolio",
     app_subtitle="Transcript-first earnings intelligence with focused market context and auditability.",
     section_labels={
         "overview": "Overview",
@@ -144,7 +144,7 @@ UI_COPY = CopyDictionary(
         "news": "No news items met the quality threshold.",
     },
     headings={
-        "hero_kicker": "FinBERT Earnings Signals",
+        "hero_kicker": "Bertfolio",
         "overview": "Overview",
         "transcript": "Transcript",
         "market_reaction": "Market Reaction",

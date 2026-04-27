@@ -1,4 +1,4 @@
-"""FastAPI entrypoint for the local FinBERT earnings analyzer site."""
+"""FastAPI entrypoint for the local bertfolio earnings analyzer site."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ async def _app_lifespan(_: FastAPI):
         return
 
 
-app = FastAPI(title="FinBERT Earnings Signals", version="0.4.0", lifespan=_app_lifespan)
+app = FastAPI(title="Bertfolio", version="0.4.0", lifespan=_app_lifespan)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")

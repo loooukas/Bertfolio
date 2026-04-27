@@ -1,4 +1,4 @@
-"""Runtime configuration for the local FinBERT app."""
+"""Runtime configuration for the local Bertfolio app."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
-# FinBERT Report Desk Redesign Plan (Implemented)
+# Bertfolio Report Desk Redesign Plan (Implemented)
 
 ## Scope
-Preserve FinBERT-first sentiment analysis while moving from a tall report stack to a compact left-rail + tabbed workspace with deterministic report outputs.
+Preserve finance-model-first sentiment analysis while moving from a tall report stack to a compact left-rail + tabbed workspace with deterministic report outputs.
 
 ## Phase 1: Retrieval + Scoring Reliability
 Status: Completed

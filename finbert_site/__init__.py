@@ -1,1 +1,1 @@
-"""FinBERT earnings analysis local web app."""
+"""bertfolio earnings analysis local web app."""

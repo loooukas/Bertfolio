@@ -1,10 +1,10 @@
-# FinBERT UI Redesign: Information Architecture Prompt
+# Bertfolio UI Redesign: Information Architecture Prompt
 
 Copy/paste the prompt below into ChatGPT to design a completely new interface from the data model and content goals, without inheriting the current visual structure.
 
 ---
 
-You are designing the best possible product UI and interaction system for a transcript-first earnings intelligence platform called **FinBERT Earnings Signals**.
+You are designing the best possible product UI and interaction system for a transcript-first earnings intelligence platform called **Bertfolio**.
 
 Your job is to design the information experience from first principles based on the exact information inventory below. Do not assume any existing layout, component style, or current visual hierarchy; treat this as a clean redesign with modern, high-signal UX.
 

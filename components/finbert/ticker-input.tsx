@@ -39,7 +39,7 @@ export function TickerInput({ onAnalyze, isLoading, currentTicker, onReset }: Ti
           Transcript-first earnings intelligence
         </h1>
         <p className="mt-3 text-base text-muted-foreground leading-relaxed">
-          Analyze earnings calls with FinBERT-powered sentiment scoring. Get actionable signals from 
+          Analyze earnings calls with Bertfolio's finance-tuned sentiment stack. Get actionable signals from 
           management tone, market reaction, and fundamentals in one explainable report.
         </p>
       </div>

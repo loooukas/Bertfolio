@@ -3,7 +3,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* FinBERT Earnings Signals - Professional Financial Analytics Theme */
+/* Bertfolio analytics theme */
 :root {
   /* Core palette: Dark slate backgrounds with warm stone accents */
   --background: oklch(0.13 0.005 250);

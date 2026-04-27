@@ -11,7 +11,7 @@ class _DummyAnalysisResult:
         return {
             "analysis_version": "2026.04-earnings-signals-v1",
             "ui_copy": {
-                "app_title": "FinBERT Earnings Signals",
+                "app_title": "Bertfolio",
                 "app_subtitle": "Transcript-first workspace",
                 "section_labels": {
                     "overview": "Overview",

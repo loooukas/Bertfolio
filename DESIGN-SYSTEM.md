@@ -1,4 +1,4 @@
-# FinBERT Earnings Signals - Design System & Implementation Specification
+# Bertfolio - Design System & Implementation Specification
 
 > A complete design constitution for the transcript-first earnings intelligence platform.
 
@@ -198,7 +198,7 @@ Usage in components:
 
 ```tsx
 // Page title
-<h1 className="text-3xl font-bold text-foreground">FinBERT Earnings Signals</h1>
+<h1 className="text-3xl font-bold text-foreground">Bertfolio</h1>
 
 // Section header
 <h2 className="text-xl font-semibold text-foreground">Transcript Analysis</h2>
@@ -807,7 +807,7 @@ function SentimentBadge({ sentiment }: { sentiment: 'bullish' | 'bearish' | 'neu
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ HEADER                                                          │
-│ [Logo] FinBERT Earnings Signals    [Charts Test] [Settings] [●] │
+│ [Logo] Bertfolio    [Charts Test] [Settings] [●] │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │ ┌─────────────────────────────────────────────────────────────┐ │
@@ -1325,4 +1325,4 @@ var(--bearish)  # Negative
 
 ---
 
-*This design system document serves as the single source of truth for the FinBERT Earnings Signals UI implementation.*
+*This design system document serves as the single source of truth for the Bertfolio UI implementation.*

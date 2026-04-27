@@ -25,7 +25,7 @@ import type { BackendJobStatus, UIReportModel } from "@/lib/finbert/types"
 
 type PageStatus = BackendJobStatus | "idle"
 
-const UI_SETTINGS_STORAGE_KEY = "finbert-ui-settings-v2"
+const UI_SETTINGS_STORAGE_KEY = "bertfolio-ui-settings-v1"
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))

@@ -84,10 +84,10 @@ export function Header({ onHomeClick, settings, onSettingsChange }: HeaderProps)
             </div>
             <div className="flex flex-col">
               <span className="text-base font-semibold text-foreground tracking-tight">
-                FinBERT
+                Bertfolio
               </span>
               <span className="text-xs text-muted-foreground -mt-0.5">
-                Earnings Signals
+                Earnings intelligence
               </span>
             </div>
           </button>
