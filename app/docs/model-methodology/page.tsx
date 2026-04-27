@@ -1,0 +1,190 @@
+import Link from "next/link"
+
+export default function ModelMethodologyPage() {
+  return (
+    <main className="mx-auto max-w-6xl space-y-8 px-4 py-10 sm:px-6 lg:px-8">
+      <section className="space-y-3 rounded-xl border border-border bg-card p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Model Methodology Guide</h1>
+          <Link
+            href="/docs"
+            className="inline-flex items-center rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+          >
+            Back to Docs
+          </Link>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Canonical implementation reference for scoring, pipeline progress, data-audit taxonomy, and run-time settings behavior.
+        </p>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Score Scales</h2>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>Directional sentiment scores are normalized to <code>-1</code> to <code>+1</code>.</li>
+          <li>UI score badges typically show unit scores multiplied by <code>100</code>.</li>
+          <li>Confidence, evasiveness, outlook strength, and specificity are <code>0-100</code> metrics.</li>
+          <li>Speaker/block diagnostics can include management and analysts.</li>
+          <li>Company-facing transcript aggregates are management-only and exclude analyst/operator/moderator blocks.</li>
+          <li>Transcript coverage shows <code>found / requested</code> quarter capture.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">10-Stage Progress Semantics</h2>
+        <p className="text-sm text-muted-foreground">
+          Job progress is emitted from backend as the canonical ordered stage list below and rendered directly by frontend without collapsing to
+          coarse buckets.
+        </p>
+        <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
+          <li>News Fetch</li>
+          <li>Social Fetch</li>
+          <li>News Sentiment Scoring</li>
+          <li>Social Sentiment Scoring</li>
+          <li>Fundamentals Fetch</li>
+          <li>Fundamentals Validation</li>
+          <li>Transcript Discovery + Scrape</li>
+          <li>Transcript Normalization</li>
+          <li>Transcript Sentiment + Speaker Scoring</li>
+          <li>Data Audit / Report Assembly</li>
+        </ol>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Transcript Hybrid Metric Policy (Student + Lexical)</h2>
+        <p className="text-sm text-muted-foreground">
+          Transcript communication metrics are now policy-routed per block. Student classifiers are primary for the strongest metrics while lexical
+          scoring remains available for fallback and for weaker metrics.
+        </p>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>
+            Student-primary by default: <code>confidence</code> (3-band), <code>directness</code> (3-band),{" "}
+            <code>outlook_strength</code> (5-band).
+          </li>
+          <li>
+            Lexical-primary by default: <code>specificity</code>, <code>risk_intensity</code>.
+          </li>
+          <li>
+            For student-primary metrics, lexical fallback is used on model load/inference failure, malformed text, or short/junk-like block text.
+          </li>
+          <li>
+            Evasiveness remains a first-class metric and is derived as inverse directness when student directness is selected.
+          </li>
+        </ul>
+        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
+          net_density = positive_density - counter_weight * counter_density{"\n"}
+          smoothed_pct = 100 * (0.5 + 0.5*tanh(net_density * curve)){"\n"}
+          lexical_metric = bounded mix(smoothed_signals, numeric_density, optional AI block-features){"\n"}
+          final_metric = policy_select(student_metric, lexical_metric, fallback_rules)
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Segment diagnostics expose metric source provenance (<code>student_primary</code>, <code>lexical_primary</code>,{" "}
+          <code>lexical_fallback</code>) plus lexical/student counterparts when shadow compare is enabled.
+        </p>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Deterministic Transcript Normalization</h2>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>Deterministic parsing is primary. OpenAI normalization runs only when deterministic quality is degraded.</li>
+          <li>
+            Canonical speaker identity resolves alias variants (for example middle-initial variants) before role aggregation and rollups.
+          </li>
+          <li>
+            Role resolution is weighted across participant titles, Yahoo officer roster enrichment, speaker text behavior, and turn context.
+          </li>
+          <li>Final deterministic role set: <code>management</code>, <code>analyst</code>, <code>operator</code>, <code>host_ir</code>, <code>unknown</code>.</li>
+          <li>
+            Section typing uses a call-flow state machine (<code>intro</code> → <code>prepared_remarks</code> → <code>qa</code> → <code>closing</code>) with transition/closing cues, not only literal headings.
+          </li>
+          <li>
+            Speaker/block diagnostics retain all non-operator detail, while company-facing transcript aggregates remain management-only.
+          </li>
+        </ul>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Overall Scoring and Fundamentals Analyst Blend</h2>
+        <p className="text-sm text-muted-foreground">Default aggregate weighting (user-adjustable in Run Settings):</p>
+        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
+          overall = transcript*0.40 + fundamentals*0.35 + news*0.15 + social*0.10
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Transcript component in this blend is computed from management-only speaker blocks. Analyst/operator/moderator blocks are excluded from
+          overview and overall company-facing transcript scoring.
+        </p>
+        <p className="text-sm text-muted-foreground">Fundamentals blend:</p>
+        <div className="rounded-md border border-border bg-secondary/40 p-4 font-mono text-xs text-foreground">
+          growth_signal = clamp_unit((revenue_qoq_growth*0.55 + eps_qoq_growth*0.45) / 50.0){"\n"}
+          analyst_signal = blend(recommendation_mean_signal, target_upside_signal) when available{"\n"}
+          fundamentals_blended = 0.80 * growth_signal + 0.20 * analyst_signal{"\n"}
+          fallback = growth_signal when analyst fields unavailable
+        </div>
+        <p className="text-sm text-muted-foreground">Label thresholds are unchanged in this calibration pass.</p>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Executive Summary Generation</h2>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>Executive summary is an OpenAI-required quality step for full analysis.</li>
+          <li>Target output is exactly 5-6 analyst-style sentences with management-only confidence/evasiveness/outlook + market/fundamental context.</li>
+          <li>Summary is rendered as one coherent paragraph and should start with the company name/ticker context.</li>
+          <li>Key takeaways and executive-summary transcript commentary use management-only transcript aggregates.</li>
+          <li>
+            If generation fails, the summary section is hidden and Data Audit receives an actionable warning with failure cause.
+          </li>
+        </ul>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Data Audit Taxonomy</h2>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li><code>warnings[]</code>: actionable failures that need attention.</li>
+          <li><code>notices[]</code>: non-blocking drift/variance.</li>
+          <li><code>diagnostics[]</code>: parser traces and internal method diagnostics.</li>
+          <li>
+            Legacy <code>parsing_warnings[]</code> is retained for compatibility and mapped into diagnostics in UI adapters.
+          </li>
+          <li>
+            Fundamentals mismatch table includes severity (<code>low/medium/high</code>); only high-severity drift escalates into warnings.
+          </li>
+          <li><code>missing_items[]</code> is reserved for true absence of required data (not provider drift).</li>
+        </ul>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h2 className="text-xl font-semibold text-foreground">Run Settings That Affect Backend Behavior</h2>
+        <ul className="list-disc space-y-2 pl-5 text-sm text-foreground">
+          <li>Data collection knobs: <code>news/social pool size</code>, <code>kept limits</code>, <code>lookback days</code>.</li>
+          <li>
+            Cache toggle: <code>use_cache</code> enables/disables full report cache reuse per ticker. When disabled, the run
+            recomputes and overwrites the cached report for that ticker. UI default is off.
+          </li>
+          <li>
+            Cache Runs tab: browse cached reports instantly (ticker, transcript labels, run timestamp) and delete stale cached
+            runs from local storage.
+          </li>
+          <li>
+            Opening a cached run performs a lightweight local recompute of company-facing aggregates (management-only transcript
+            rollups, overview metrics, overall score/label) from cached speaker/news/social/fundamentals payloads without
+            re-running provider fetches or OpenAI scoring.
+          </li>
+          <li>Source toggles: Alpha Vantage/Yahoo for news, Reddit/Stocktwits for social.</li>
+          <li>
+            Transcript segmentation knobs: <code>TRANSCRIPT_SENTIMENT_SEGMENT_CHARS</code>, <code>MAX</code>, <code>MIN</code>,{" "}
+            <code>OVERLAP_SENTENCES</code>.
+          </li>
+          <li>
+            Feature blending knobs: <code>TRANSCRIPT_FEATURE_AI_* </code>, <code>TRANSCRIPT_FEATURE_COUNTER_WEIGHT</code>,{" "}
+            <code>TRANSCRIPT_FEATURE_DENSITY_SMOOTHING</code>.
+          </li>
+          <li>
+            Student rollout knobs: <code>USE_STUDENT_*</code>, <code>STUDENT_METRICS_SHADOW_COMPARE</code>,{" "}
+            <code>STUDENT_METRICS_FORCE_LEXICAL_FALLBACK</code>, and per-metric <code>STUDENT_MODEL_*_DIR</code> overrides.
+          </li>
+          <li>OpenAI request resiliency knobs: <code>OPENAI_REQUEST_RETRIES</code>, <code>OPENAI_RETRY_BACKOFF_SECONDS</code>.</li>
+        </ul>
+      </section>
+    </main>
+  )
+}

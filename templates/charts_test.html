@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bertfolio Charts Test</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-wrap">
+          <div class="brand-glyph" aria-hidden="true"></div>
+          <div>
+            <p class="brand-kicker">BERTFOLIO DEV UTILITY</p>
+            <h1 class="brand-title">Charts Test Surface</h1>
+          </div>
+        </div>
+        <nav class="topnav">
+          <a href="/">Back to App</a>
+          <button id="regen-btn" class="ghost-btn" type="button">Regenerate Mock Data</button>
+        </nav>
+      </header>
+
+      <section class="surface">
+        <h2>Synthetic Chart Validation</h2>
+        <p class="muted">Use this page to validate chart rendering, sizing, and responsiveness without waiting for transcript pipeline runs.</p>
+      </section>
+
+      <section class="tab-panel active">
+        <article class="surface">
+          <h3>Speaker Sentiment Comparison</h3>
+          <div id="chart-speaker-sentiment" class="chart-surface"></div>
+        </article>
+
+        <article class="surface">
+          <h3>Word Count by Speaker</h3>
+          <div id="chart-word-count" class="chart-surface"></div>
+        </article>
+
+        <article class="surface">
+          <h3>Sentiment Over Time</h3>
+          <div id="chart-sentiment-timeline" class="chart-surface"></div>
+        </article>
+
+        <article class="surface">
+          <h3>Revenue and Net Income Trends</h3>
+          <div id="chart-fundamentals" class="chart-surface"></div>
+        </article>
+
+        <article class="surface">
+          <h3>Speaker Metrics Radar</h3>
+          <div id="chart-radar" class="chart-surface"></div>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      const state = {
+        charts: {
+          speakerSentiment: null,
+          wordCount: null,
+          sentimentTimeline: null,
+          fundamentals: null,
+          radar: null,
+        },
+      };
+
+      function randomSeries(base, variance, count, min = null) {
+        return Array.from({ length: count }, () => {
+          const next = Number((base + (Math.random() - 0.5) * variance).toFixed(2));
+          if (min === null) return next;
+          return Math.max(min, next);
+        });
+      }
+
+      function buildCanvas(id) {
+        const root = document.getElementById(id);
+        root.innerHTML = "";
+        const canvas = document.createElement("canvas");
+        root.appendChild(canvas);
+        return canvas;
+      }
+
+      function destroyCharts() {
+        Object.keys(state.charts).forEach((key) => {
+          const chart = state.charts[key];
+          if (chart && typeof chart.destroy === "function") chart.destroy();
+          state.charts[key] = null;
+        });
+      }
+
+      function chartTheme() {
+        return {
+          axis: "#aeb6c7",
+          legend: "#ece9df",
+          grid: "rgba(255,255,255,0.06)",
+        };
+      }
+
+      function renderAllCharts() {
+        destroyCharts();
+
+        const speakers = ["Tim Cook", "Kevan Parekh", "Suhasini", "Amit", "David", "Wamsi"];
+        const quarters = ["2024-Q3", "2024-Q4", "2025-Q1", "2025-Q2", "2025-Q3", "2025-Q4", "2026-Q1", "2026-Q2"];
+        const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon+1", "Tue+1", "Wed+1"];
+        const palette = chartTheme();
+
+        state.charts.speakerSentiment = new Chart(buildCanvas("chart-speaker-sentiment"), {
+          type: "bar",
+          data: {
+            labels: speakers,
+            datasets: [
+              { label: "Confidence", data: randomSeries(62, 20, speakers.length, 10), backgroundColor: "rgba(112,210,148,0.66)", borderRadius: 8 },
+              { label: "Evasiveness", data: randomSeries(38, 18, speakers.length, 5), backgroundColor: "rgba(236,113,96,0.66)", borderRadius: 8 },
+              { label: "Specificity", data: randomSeries(58, 18, speakers.length, 10), backgroundColor: "rgba(255,207,114,0.62)", borderRadius: 8 },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { ticks: { color: palette.axis } },
+              y: { min: 0, max: 100, ticks: { color: palette.axis }, grid: { color: palette.grid } },
+            },
+            plugins: { legend: { labels: { color: palette.legend } } },
+          },
+        });
+
+        state.charts.wordCount = new Chart(buildCanvas("chart-word-count"), {
+          type: "bar",
+          data: {
+            labels: speakers,
+            datasets: [
+              { label: "Word Count", data: randomSeries(2800, 1800, speakers.length, 300), backgroundColor: "rgba(102,159,255,0.66)", borderRadius: 8 },
+            ],
+          },
+          options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { ticks: { color: palette.axis }, grid: { color: palette.grid } },
+              y: { ticks: { color: palette.axis }, grid: { color: palette.grid } },
+            },
+            plugins: { legend: { labels: { color: palette.legend } } },
+          },
+        });
+
+        state.charts.sentimentTimeline = new Chart(buildCanvas("chart-sentiment-timeline"), {
+          type: "line",
+          data: {
+            labels: days,
+            datasets: [
+              {
+                label: "News",
+                data: randomSeries(0.15, 0.35, days.length),
+                borderColor: "rgba(102,159,255,0.9)",
+                backgroundColor: "rgba(102,159,255,0.18)",
+                tension: 0.3,
+                fill: true,
+              },
+              {
+                label: "Social",
+                data: randomSeries(0.05, 0.45, days.length),
+                borderColor: "rgba(112,210,148,0.92)",
+                backgroundColor: "rgba(112,210,148,0.16)",
+                tension: 0.3,
+                fill: true,
+              },
+              {
+                label: "Blended",
+                data: randomSeries(0.08, 0.3, days.length),
+                borderColor: "rgba(255,207,114,0.96)",
+                backgroundColor: "rgba(255,207,114,0.14)",
+                tension: 0.3,
+                fill: false,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { ticks: { color: palette.axis } },
+              y: { min: -1, max: 1, ticks: { color: palette.axis }, grid: { color: palette.grid } },
+            },
+            plugins: { legend: { labels: { color: palette.legend } } },
+          },
+        });
+
+        state.charts.fundamentals = new Chart(buildCanvas("chart-fundamentals"), {
+          data: {
+            labels: quarters,
+            datasets: [
+              { type: "bar", label: "Revenue", data: randomSeries(120_000_000_000, 60_000_000_000, quarters.length, 10_000_000_000), yAxisID: "yUsd", backgroundColor: "rgba(102,159,255,0.62)", borderRadius: 8 },
+              { type: "line", label: "Net Income", data: randomSeries(30_000_000_000, 20_000_000_000, quarters.length, 1_000_000_000), yAxisID: "yUsd", borderColor: "rgba(112,210,148,0.92)", backgroundColor: "rgba(112,210,148,0.2)", tension: 0.28, fill: true },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { ticks: { color: palette.axis } },
+              yUsd: { ticks: { color: palette.axis }, grid: { color: palette.grid } },
+            },
+            plugins: { legend: { labels: { color: palette.legend } } },
+          },
+        });
+
+        state.charts.radar = new Chart(buildCanvas("chart-radar"), {
+          type: "radar",
+          data: {
+            labels: ["Confidence", "Specificity", "Forward Looking", "Risk Language", "Evasiveness", "Consistency"],
+            datasets: [
+              {
+                label: "CEO",
+                data: randomSeries(62, 18, 6, 15),
+                borderColor: "rgba(102,159,255,0.9)",
+                backgroundColor: "rgba(102,159,255,0.25)",
+              },
+              {
+                label: "CFO",
+                data: randomSeries(58, 22, 6, 15),
+                borderColor: "rgba(112,210,148,0.92)",
+                backgroundColor: "rgba(112,210,148,0.24)",
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              r: {
+                min: 0,
+                max: 100,
+                angleLines: { color: palette.grid },
+                grid: { color: palette.grid },
+                pointLabels: { color: palette.axis },
+                ticks: { color: palette.axis, backdropColor: "transparent" },
+              },
+            },
+            plugins: { legend: { labels: { color: palette.legend } } },
+          },
+        });
+      }
+
+      document.getElementById("regen-btn").addEventListener("click", renderAllCharts);
+      renderAllCharts();
+    </script>
+  </body>
+</html>

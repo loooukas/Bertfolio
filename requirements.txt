@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+requests
+httpx
+beautifulsoup4
+python-dotenv
+transformers
+torch
+yfinance
+pandas
+numpy
+urllib3<2
