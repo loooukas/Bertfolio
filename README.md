@@ -1,79 +1,113 @@
 # Bertfolio
 
-Bertfolio is a local earnings-call intelligence app. It combines a Next.js dashboard with a FastAPI analysis backend to pull company context, score transcript tone, summarize market reaction, and show data-quality diagnostics in one report.
+Bertfolio is a local earnings-call intelligence workspace. It combines a Next.js dashboard with a FastAPI analysis backend to score transcript tone, summarize market reaction, inspect fundamentals, and surface data-quality diagnostics in one report.
 
-The app is designed to run locally first, with provider credentials and model artifacts supplied from the developer's machine.
+## Features
 
-## What It Does
+- Transcript-first earnings-call analysis with FinBERT directional tone scoring.
+- Optional local student classifiers for communication metrics such as confidence, directness, outlook strength, specificity, and risk intensity.
+- News, social, fundamentals, transcript discovery, normalization, scoring, and audit stages in one async job flow.
+- Explainable report sections for overview, transcript, market reaction, fundamentals, and data audit.
+- Local cache browsing for previously generated ticker reports.
+- Next.js proxy routes so the browser talks to `/api/*` while the backend remains a separate FastAPI service.
 
-- Runs a Next.js frontend on `127.0.0.1:3000`.
-- Runs a FastAPI backend on `127.0.0.1:8000`.
-- Uses FinBERT (`ProsusAI/finbert`) for directional financial tone scoring.
-- Supports optional student classifiers for transcript communication metrics such as confidence, directness, and outlook strength.
-- Pulls market/news/social/fundamental context when the relevant provider keys are configured.
-- Shows a 10-stage analysis progress flow, final report sections, source diagnostics, and cached run browsing.
+## Architecture
+
+```text
+Next.js app                 FastAPI backend
+127.0.0.1:3000   /api/* -> 127.0.0.1:8000
+   |                          |
+   |                          +-- FinBERT sentiment engine
+   |                          +-- optional local student classifiers
+   |                          +-- transcript/news/social/fundamentals providers
+   |                          +-- local cache under output/
+```
+
+Main paths:
+
+- `app/`: Next.js App Router frontend and proxy route handlers.
+- `components/finbert/`: report UI components.
+- `finbert_site/`: FastAPI app, analysis pipeline, providers, model runtime, schemas, and jobs.
+- `scripts/dev.sh`: single-command local launcher for both services.
+- `tests/`: app-level regression tests with mocked providers and dummy keys.
 
 ## Requirements
 
-- macOS, Linux, or Windows with a POSIX-like shell for the bundled dev script.
 - Python 3.9 or newer.
-- Node.js and pnpm.
-- Optional: Alpha Vantage API key for Alpha Vantage news/fundamental enrichment.
-- Optional: OpenAI API key for transcript normalization and search fallback.
+- Node.js with `pnpm`.
+- Optional Alpha Vantage API key for Alpha Vantage news/fundamental enrichment.
+- Optional OpenAI API key for transcript normalization and fallback discovery.
+- Optional local student-model artifacts if you want the trained classifier layer instead of lexical fallback.
 
-## Setup
+## Quick Start
 
 ```bash
-git clone <repo-url> bertfolio
+git clone <repository-url> bertfolio
 cd bertfolio
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 pnpm install
 cp .env.example .env
-```
-
-Then edit `.env` for your local providers. You can leave optional providers blank while testing the UI and fallback paths.
-
-## Run Locally
-
-Start the full stack with one command:
-
-```bash
 pnpm dev
 ```
 
 Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
-`pnpm dev` starts:
+`pnpm dev` starts both services:
 
 - Next.js frontend: `127.0.0.1:3000`
 - FastAPI backend: `127.0.0.1:8000`
 
-You can also run services separately:
+## Configuration
 
-```bash
-pnpm dev:web
-pnpm dev:api
+Edit `.env` after copying `.env.example`.
+
+Common settings:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `ALPHAVANTAGE_API_KEY` | Alpha Vantage provider access | blank |
+| `OPENAI_API_KEY` | OpenAI transcript normalization and fallback discovery | blank |
+| `FINBERT_BACKEND_URL` | Next.js proxy target for FastAPI | `http://127.0.0.1:8000` |
+| `FINBERT_MODEL_NAME` | Hugging Face model for financial sentiment | `ProsusAI/finbert` |
+| `TRANSCRIPT_PIPELINE_MODE` | Transcript retrieval pipeline | `motley_cli` |
+| `NEWS_*` / `SOCIAL_*` | Feed source toggles, lookbacks, and pool sizes | see `.env.example` |
+| `STUDENT_MODEL_*_DIR` | Local classifier model directories | `output/student_models/...` |
+
+## Model Artifacts
+
+Bertfolio has two model layers:
+
+1. FinBERT runs through Hugging Face/Transformers and downloads on first use unless already cached on the machine.
+2. Student metric classifiers load from local directories when present.
+
+Default student model paths:
+
+```text
+output/student_models/confidence_three_band_deberta_v3_base_strict070/model
+output/student_models/directness_three_band_deberta_v3_base_strict070/model
+output/student_models/outlook_strength_five_band_deberta_v3_base_strict070/model
+output/student_models/specificity_deberta_v3_base_cpu/model
+output/student_models/risk_intensity_three_band_deberta_v3_base_strict070/model
 ```
 
-## Environment Variables
+If those directories exist, the backend uses them automatically. If a directory is missing, the affected metric falls back to deterministic lexical scoring and the report remains runnable. If your artifacts live elsewhere, set the matching `STUDENT_MODEL_*_DIR` value in `.env`.
 
-Most useful variables:
+## Run Commands
 
-- `ALPHAVANTAGE_API_KEY`: optional Alpha Vantage provider key.
-- `OPENAI_API_KEY`: optional OpenAI key for transcript normalization and fallback discovery.
-- `FINBERT_BACKEND_URL`: frontend-to-backend proxy target, default `http://127.0.0.1:8000`.
-- `FINBERT_MODEL_NAME`: Hugging Face model name for the FinBERT tone scorer, default `ProsusAI/finbert`.
-- `TRANSCRIPT_PIPELINE_MODE`: transcript retrieval mode, default `motley_cli`.
-- `NEWS_*` and `SOCIAL_*`: feed limits, source toggles, and lookback settings.
-- `STUDENT_MODEL_*_DIR`: optional local paths for student classifier model directories.
-
-Local generated directories under `output/` are ignored by Git.
+```bash
+pnpm dev      # start frontend and backend together
+pnpm dev:web  # start only Next.js
+pnpm dev:api  # start only FastAPI
+pnpm lint     # generate Next route types and run TypeScript checks
+pnpm build    # production Next.js build
+pytest -q     # Python regression tests
+```
 
 ## Analysis Flow
 
-The frontend uses async job polling so the loading screen reflects backend progress. The canonical stages are:
+The frontend starts an async backend job and polls real stage progress:
 
 1. News Fetch
 2. Social Fetch
@@ -86,42 +120,44 @@ The frontend uses async job polling so the loading screen reflects backend progr
 9. Transcript Sentiment + Speaker Scoring
 10. Data Audit / Report Assembly
 
-The final report is organized into five primary sections:
+The report renders five primary sections:
 
-1. Overview
-2. Transcript
-3. Market Reaction
-4. Fundamentals
-5. Data Audit
+- Overview
+- Transcript
+- Market Reaction
+- Fundamentals
+- Data Audit
 
-## Models
+## Repository Scope
 
-Bertfolio has two model layers:
+Included:
 
-- FinBERT is the default local sentiment scorer for finance-specific directional tone. It downloads through Hugging Face/Transformers the first time it is needed unless already cached on the machine.
-- Student metric classifiers are loaded from local directories under `output/student_models/...` by default. These directories are not part of the repository; if they exist on the machine running the app, Bertfolio uses them automatically.
-- When a configured student model directory is missing, the backend logs a warning in the Data Audit path and falls back to deterministic lexical scoring for that metric. The app still runs, but it is not using the trained student-classifier layer for that metric.
+- Product source for the Next.js and FastAPI app.
+- Runtime prompt templates used by the backend.
+- App-level tests and mocked-provider regression coverage.
+- Public setup, methodology, and release-readiness docs.
 
-Default student model paths:
+Not included:
 
-- `output/student_models/confidence_three_band_deberta_v3_base_strict070/model`
-- `output/student_models/directness_three_band_deberta_v3_base_strict070/model`
-- `output/student_models/outlook_strength_five_band_deberta_v3_base_strict070/model`
-- `output/student_models/specificity_deberta_v3_base_cpu/model`
-- `output/student_models/risk_intensity_three_band_deberta_v3_base_strict070/model`
+- Source datasets.
+- Trained model weights/checkpoints.
+- Generated analysis caches and reports.
+- Historical backtesting/calibration outputs.
+- Training and backtesting scripts used during model development.
 
-If your trained models live somewhere else, set the corresponding `STUDENT_MODEL_*_DIR` variables in `.env`.
+## Troubleshooting
 
-## Testing
+If `uvicorn` is not found, make sure the virtual environment is active or run the backend through the repo-local script:
 
 ```bash
-pnpm lint
-pnpm build
-pytest -q
+. .venv/bin/activate
+pnpm dev:api
 ```
 
-If dependencies are missing, install the Python and Node dependencies from the setup section first.
+If student metrics show fallback warnings, confirm the configured `STUDENT_MODEL_*_DIR` paths exist and contain Hugging Face-compatible model/tokenizer files.
 
-## Notes
+If transcript normalization or fallback discovery is unavailable, confirm `OPENAI_API_KEY` is set for the shell running `pnpm dev`.
 
-Bertfolio is an analysis and research-support tool, not trading advice.
+## Disclaimer
+
+Bertfolio is an analysis and research-support tool. It is not financial advice.
