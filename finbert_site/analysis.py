@@ -1870,6 +1870,8 @@ def build_analysis(
             source_url=record.source_url,
             title=record.title,
             published_date=record.date,
+            fiscal_year=record.year,
+            fiscal_quarter=record.quarter,
             content=record.content,
             extraction_confidence=record.extraction_confidence,
             parsing_warnings=record.parsing_warnings,

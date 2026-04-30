@@ -11,7 +11,7 @@ import math
 import re
 from statistics import mean
 import time
-from typing import Any
+from typing import Any, Optional
 
 import requests
 
@@ -1203,6 +1203,8 @@ def deterministic_document_from_text(
     source_url: str | None,
     title: str | None,
     published_date: str | None,
+    fiscal_year: Optional[int] = None,
+    fiscal_quarter: Optional[int] = None,
     content: str,
     extraction_confidence: float,
     parsing_warnings: list[str],
@@ -1379,6 +1381,8 @@ def deterministic_document_from_text(
         source_url=source_url,
         title=title,
         published_date=published_date,
+        fiscal_year=fiscal_year,
+        fiscal_quarter=fiscal_quarter,
         has_full_transcript=len(sections) >= 2,
         extraction_confidence=_clamp(extraction_confidence, 0.0, 1.0),
         parsing_warnings=parsing_warnings,
@@ -1591,6 +1595,8 @@ def normalize_transcript_document(
     source_url: str | None,
     title: str | None,
     published_date: str | None,
+    fiscal_year: Optional[int] = None,
+    fiscal_quarter: Optional[int] = None,
     content: str,
     extraction_confidence: float,
     parsing_warnings: list[str],
@@ -1605,6 +1611,8 @@ def normalize_transcript_document(
         source_url=source_url,
         title=title,
         published_date=published_date,
+        fiscal_year=fiscal_year,
+        fiscal_quarter=fiscal_quarter,
         content=content,
         extraction_confidence=extraction_confidence,
         parsing_warnings=parsing_warnings,
@@ -1617,6 +1625,8 @@ def normalize_transcript_document(
 
     normalized, error = _openai_normalize(deterministic, settings)
     if normalized is not None:
+        normalized.fiscal_year = deterministic.fiscal_year
+        normalized.fiscal_quarter = deterministic.fiscal_quarter
         return NormalizationResult(document=normalized, warnings=[])
 
     warnings = [error] if error else []

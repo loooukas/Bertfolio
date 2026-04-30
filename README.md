@@ -8,6 +8,7 @@ Bertfolio is a local earnings-call intelligence workspace. It combines a Next.js
 - Optional local student classifiers for communication metrics such as confidence, directness, outlook strength, specificity, and risk intensity.
 - News, social, fundamentals, transcript discovery, normalization, scoring, and audit stages in one async job flow.
 - Explainable report sections for overview, transcript, market reaction, fundamentals, and data audit, with fundamentals ratios shown as investor-facing multiples.
+- Transcript quarter drilldowns use provider fiscal metadata so readable transcripts stay attached to the correct quarter.
 - Local cache browsing for previously generated ticker reports.
 - Next.js proxy routes so the browser talks to `/api/*` while the backend remains a separate FastAPI service.
 

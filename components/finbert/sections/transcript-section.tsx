@@ -62,6 +62,7 @@ interface KeyQuote {
 interface QuarterStatus {
   quarter: string
   status: "found" | "not_found" | "error"
+  detail?: string | null
 }
 
 interface TranscriptDocumentSection {
@@ -79,6 +80,8 @@ interface TranscriptDocument {
   source_url?: string
   title?: string
   published_date?: string
+  fiscal_year?: number
+  fiscal_quarter?: number
   sections: TranscriptDocumentSection[]
 }
 
@@ -135,6 +138,25 @@ function quarterKeyFromLabel(label: string): string | null {
     return `${alt[2]}-Q${alt[1]}`
   }
   return null
+}
+
+function quarterKeyFromTranscript(transcript: TranscriptDocument): string | null {
+  if (
+    typeof transcript.fiscal_year === "number" &&
+    Number.isInteger(transcript.fiscal_year) &&
+    typeof transcript.fiscal_quarter === "number" &&
+    Number.isInteger(transcript.fiscal_quarter) &&
+    transcript.fiscal_quarter >= 1 &&
+    transcript.fiscal_quarter <= 4
+  ) {
+    return `${transcript.fiscal_year}-Q${transcript.fiscal_quarter}`
+  }
+  return (
+    quarterKeyFromLabel(transcript.label) ||
+    quarterKeyFromLabel(transcript.title || "") ||
+    quarterKeyFromLabel(transcript.published_date || "") ||
+    null
+  )
 }
 
 function normalizeSpeakerKey(value: string): string {
@@ -357,20 +379,30 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
 
   const quarterTranscripts = useMemo(() => {
     const byQuarter = new Map<string, TranscriptDocument[]>()
+    const unassignedTranscripts: TranscriptDocument[] = []
     for (const transcript of data.transcripts) {
-      const quarterKey =
-        quarterKeyFromLabel(transcript.label) ||
-        quarterKeyFromLabel(transcript.title || "") ||
-        quarterKeyFromLabel(transcript.published_date || "")
+      const quarterKey = quarterKeyFromTranscript(transcript)
       if (!quarterKey) {
+        unassignedTranscripts.push(transcript)
         continue
       }
       const existing = byQuarter.get(quarterKey) || []
       existing.push(transcript)
       byQuarter.set(quarterKey, existing)
     }
+
+    const foundQuartersWithoutDocs = data.quarter_status.filter(
+      (quarter) => quarter.status === "found" && !byQuarter.has(quarter.quarter),
+    )
+    foundQuartersWithoutDocs.forEach((quarter, index) => {
+      const transcript = unassignedTranscripts[index]
+      if (transcript) {
+        byQuarter.set(quarter.quarter, [transcript])
+      }
+    })
+
     return byQuarter
-  }, [data.transcripts])
+  }, [data.quarter_status, data.transcripts])
 
   const speakerModalData = useMemo(() => {
     if (!activeSpeaker) return []
@@ -463,8 +495,9 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
     return <span className="text-[11px] leading-none text-muted-foreground">{sortDirection === "asc" ? "↑" : "↓"}</span>
   }
 
-  const getStatusIcon = (status: string) => {
-    if (status === "found") return <CheckCircle2 className="w-4 h-4 text-bullish" />
+  const getStatusIcon = (status: string, canOpen = false) => {
+    if (status === "found" && canOpen) return <CheckCircle2 className="w-4 h-4 text-bullish" />
+    if (status === "found") return <AlertCircle className="w-4 h-4 text-neutral" />
     if (status === "not_found") return <XCircle className="w-4 h-4 text-muted-foreground" />
     if (status === "error") return <AlertCircle className="w-4 h-4 text-destructive" />
     return null
@@ -591,25 +624,34 @@ export function TranscriptSection({ data, quoteColumns = 2, showCoverageDetails 
           <div className="rounded-xl border border-border bg-card p-6 lg:w-64">
             <h3 className="mb-4 text-sm font-medium uppercase tracking-wider text-muted-foreground">Quarters Analyzed</h3>
             <div className="space-y-2">
-              {data.quarter_status.map((q) => (
-                <div key={q.quarter} className="flex items-center justify-between rounded-lg bg-secondary/50 px-3 py-2">
-                  <span className="text-sm font-mono text-foreground">{q.quarter}</span>
-                  <div className="flex items-center gap-2">
-                    {q.status === "found" && (quarterTranscripts.get(q.quarter) || []).length > 0 ? (
-                      <button
-                        type="button"
-                        className="inline-flex items-center rounded border border-border p-1 text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
-                        onClick={() => openQuarterModal(q.quarter)}
-                        aria-label={`Open ${q.quarter} transcript`}
-                        title={`Open ${q.quarter} transcript`}
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </button>
-                    ) : null}
-                    {getStatusIcon(q.status)}
+              {data.quarter_status.map((q) => {
+                const readableTranscripts = quarterTranscripts.get(q.quarter) || []
+                const canOpen = q.status === "found" && readableTranscripts.length > 0
+                const statusTitle =
+                  q.status === "found" && !canOpen
+                    ? q.detail || "Transcript was found, but no readable transcript document was attached to this report."
+                    : q.detail || q.status
+
+                return (
+                  <div key={q.quarter} className="flex items-center justify-between gap-3 rounded-lg bg-secondary/50 px-3 py-2">
+                    <span className="min-w-0 text-sm font-mono text-foreground">{q.quarter}</span>
+                    <div className="flex items-center gap-2" title={statusTitle}>
+                      {canOpen ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center rounded border border-border p-1 text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
+                          onClick={() => openQuarterModal(q.quarter)}
+                          aria-label={`Open ${q.quarter} transcript`}
+                          title={`Open ${q.quarter} transcript`}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
+                      {getStatusIcon(q.status, canOpen)}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         </div>

@@ -302,6 +302,8 @@ class TranscriptDocument(BaseModel):
     source_url: Optional[str] = None
     title: Optional[str] = None
     published_date: Optional[str] = None
+    fiscal_year: Optional[int] = None
+    fiscal_quarter: Optional[int] = Field(default=None, ge=1, le=4)
     has_full_transcript: bool
     extraction_confidence: float = Field(ge=0, le=1)
     parsing_warnings: list[str]

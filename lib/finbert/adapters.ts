@@ -380,6 +380,8 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
       source_url: doc.source_url || undefined,
       title: doc.title || undefined,
       published_date: doc.published_date || undefined,
+      fiscal_year: doc.fiscal_year ?? undefined,
+      fiscal_quarter: doc.fiscal_quarter ?? undefined,
       sections: doc.sections.map((section) => ({
         section_type: section.section_type,
         speaker: section.speaker,
@@ -420,6 +422,7 @@ export function adaptAnalysisResponseToUI(report: AnalysisResponseBackend): UIRe
       quarter_status: report.transcript.quarter_status.map((quarter) => ({
         quarter: quarter.quarter,
         status: quarter.status,
+        detail: quarter.detail || undefined,
       })),
       transcripts: transcriptDocs,
     },

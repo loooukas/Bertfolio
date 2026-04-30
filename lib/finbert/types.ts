@@ -124,6 +124,8 @@ export interface AnalysisResponseBackend {
       source_url?: string | null
       title?: string | null
       published_date?: string | null
+      fiscal_year?: number | null
+      fiscal_quarter?: number | null
       has_full_transcript: boolean
       extraction_confidence: number
       parsing_warnings: string[]
@@ -296,6 +298,7 @@ export interface UIReportModel {
     quarter_status: Array<{
       quarter: string
       status: "found" | "not_found" | "error"
+      detail?: string
     }>
     transcripts: Array<{
       id: string
@@ -304,6 +307,8 @@ export interface UIReportModel {
       source_url?: string
       title?: string
       published_date?: string
+      fiscal_year?: number
+      fiscal_quarter?: number
       sections: Array<{
         section_type: "prepared_remarks" | "qa" | "other"
         speaker: string
