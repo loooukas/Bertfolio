@@ -1643,7 +1643,7 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
         "current_price": info.get("currentPrice") or info.get("regularMarketPrice"),
         "trailing_pe": info.get("trailingPE"),
         "forward_pe": info.get("forwardPE"),
-        "debt_to_equity": info.get("debtToEquity"),
+        "debt_to_equity": _normalize_debt_to_equity(info.get("debtToEquity"), percent_encoded=True),
         "beta": info.get("beta"),
         "enterprise_value": info.get("enterpriseValue"),
         "total_debt": info.get("totalDebt"),
@@ -1676,6 +1676,15 @@ def _safe_float(value: Any) -> Optional[float]:
         return float(text)
     except Exception:
         return None
+
+
+def _normalize_debt_to_equity(value: Any, *, percent_encoded: bool = False) -> Optional[float]:
+    numeric = _safe_float(value)
+    if numeric is None:
+        return None
+    if percent_encoded:
+        return numeric / 100.0
+    return numeric / 100.0 if abs(numeric) > 10 else numeric
 
 
 def _fetch_alpha_overview(symbol: str, settings: Settings) -> tuple[dict[str, Any], list[str]]:
@@ -1765,6 +1774,8 @@ def enrich_fundamentals_with_alpha_validation(
     }
     for key, alpha_key in alpha_field_map.items():
         alpha_value = _safe_float(alpha_overview.get(alpha_key)) if alpha_overview else None
+        if key == "debt_to_equity":
+            alpha_value = _normalize_debt_to_equity(alpha_value)
         yahoo_value = _safe_float(merged.get(key))
         if alpha_value is not None or yahoo_value is not None:
             validation["compared_fields"].append(key)

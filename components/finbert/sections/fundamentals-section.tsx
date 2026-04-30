@@ -94,6 +94,26 @@ function formatAxisCurrency(value: number): string {
   return `$${value.toFixed(0)}`
 }
 
+function calculateEpsSurprise(reported?: number | null, estimate?: number | null): number | null {
+  if (
+    typeof reported !== "number" ||
+    typeof estimate !== "number" ||
+    !Number.isFinite(reported) ||
+    !Number.isFinite(estimate) ||
+    estimate === 0
+  ) {
+    return null
+  }
+  return ((reported - estimate) / Math.abs(estimate)) * 100
+}
+
+function formatSignedPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "n/a"
+  }
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`
+}
+
 export function FundamentalsSection({ data }: FundamentalsSectionProps) {
   const latestQuarter = data.quarterly_data[0]
   const previousQuarter = data.quarterly_data[1]
@@ -102,9 +122,11 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
     ? ((latestQuarter.revenue - previousQuarter.revenue) / previousQuarter.revenue) * 100
     : 0
   
-  const epsBeats = latestQuarter 
-    ? latestQuarter.reported_eps > latestQuarter.eps_estimate 
-    : false
+  const epsSurprise = calculateEpsSurprise(latestQuarter?.reported_eps, latestQuarter?.eps_estimate)
+  const epsBeats = epsSurprise !== null ? epsSurprise >= 0 : false
+  const epsBadgeLabel = epsSurprise === null ? "n/a" : epsBeats ? "Beat" : "Miss"
+  const epsSurpriseClass =
+    epsSurprise === null ? "text-muted-foreground" : epsBeats ? "text-bullish" : "text-bearish"
 
   const toneClass = (tone: "bullish" | "neutral" | "bearish" | "muted") => {
     if (tone === "bullish") return "text-bullish"
@@ -178,8 +200,16 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
           <div className="text-xs text-muted-foreground mb-2">Reported EPS</div>
           <div className="flex items-center gap-2">
             <span className="text-2xl font-bold text-foreground">${latestQuarter?.reported_eps}</span>
-            <Badge className={`${epsBeats ? "bg-bullish/10 text-bullish border-bullish/20" : "bg-bearish/10 text-bearish border-bearish/20"}`}>
-              {epsBeats ? "Beat" : "Miss"}
+            <Badge
+              className={
+                epsSurprise === null
+                  ? "bg-muted text-muted-foreground border-border"
+                  : epsBeats
+                    ? "bg-bullish/10 text-bullish border-bullish/20"
+                    : "bg-bearish/10 text-bearish border-bearish/20"
+              }
+            >
+              {epsBadgeLabel}
             </Badge>
           </div>
           <div className="text-xs text-muted-foreground mt-1">
@@ -190,10 +220,8 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
         <div className="p-5 rounded-xl bg-card border border-border">
           <div className="text-xs text-muted-foreground mb-2">EPS Surprise</div>
           <div className="flex items-baseline gap-2">
-            <span className={`text-2xl font-bold ${epsBeats ? "text-bullish" : "text-bearish"}`}>
-              {epsBeats ? "+" : ""}{latestQuarter 
-                ? ((latestQuarter.reported_eps - latestQuarter.eps_estimate) / latestQuarter.eps_estimate * 100).toFixed(1) 
-                : 0}%
+            <span className={`text-2xl font-bold ${epsSurpriseClass}`}>
+              {formatSignedPercent(epsSurprise)}
             </span>
           </div>
           <div className="text-xs text-muted-foreground mt-1">vs consensus</div>
@@ -335,8 +363,13 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
             </thead>
             <tbody className="divide-y divide-border">
               {data.quarterly_data.map((quarter) => {
-                const surprise = ((quarter.reported_eps - quarter.eps_estimate) / quarter.eps_estimate) * 100
-                const isPositive = surprise > 0
+                const surprise = calculateEpsSurprise(quarter.reported_eps, quarter.eps_estimate)
+                const surpriseClass =
+                  surprise === null
+                    ? "text-muted-foreground"
+                    : surprise >= 0
+                      ? "text-bullish"
+                      : "text-bearish"
                 
                 return (
                   <tr key={quarter.quarter} className="bg-card hover:bg-secondary/30 transition-colors">
@@ -356,8 +389,8 @@ export function FundamentalsSection({ data }: FundamentalsSectionProps) {
                       <span className="text-sm font-mono text-muted-foreground">${quarter.eps_estimate}</span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span className={`text-sm font-mono font-medium ${isPositive ? "text-bullish" : "text-bearish"}`}>
-                        {isPositive ? "+" : ""}{surprise.toFixed(1)}%
+                      <span className={`text-sm font-mono font-medium ${surpriseClass}`}>
+                        {formatSignedPercent(surprise)}
                       </span>
                     </td>
                   </tr>
