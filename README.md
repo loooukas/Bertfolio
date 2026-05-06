@@ -155,6 +155,16 @@ Not included:
 - Historical backtesting/calibration outputs.
 - Training, testing, and backtesting scripts used during model development.
 
+## Project Dossier
+
+Product, architecture, business-context, and guardrail documentation is organized under:
+
+- `docs/project-dossier/`
+
+Start with:
+
+- `docs/project-dossier/README.md`
+
 ## Troubleshooting
 
 If `uvicorn` is not found, make sure the virtual environment is active or run the backend through the repo-local script:
