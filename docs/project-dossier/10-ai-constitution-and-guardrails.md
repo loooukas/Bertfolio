@@ -1,29 +1,33 @@
 # AI Constitution and Guardrails
 
-## Canonical constitution source
+## Business purpose
 
-The active AI constitution already exists and should be treated as canonical:
+Bertfolio uses AI to improve analyst throughput and consistency while preserving accountability. Guardrails ensure AI assistance remains explainable, bounded, and reviewable.
+
+## Canonical source
 
 - `docs/llm_prompt_constitution.md`
 
-## Summary of enforceable rules
+## Core guardrail pillars
 
-- Evidence boundaries and no hallucinated facts.
-- Strict JSON/schema discipline.
-- Deterministic fallback and visible degradation.
-- No trading advice generation.
-- Management-only aggregation for company-facing transcript signals.
+- Evidence boundaries: no fabricated facts or sources.
+- Structured output discipline: schema-constrained responses.
+- Deterministic fallback behavior when AI outputs are invalid.
+- No direct trading recommendations.
+- Management-focused aggregation for company-facing transcript signals.
 
-## Prompt and call-site governance
+## Why this matters for adoption
 
-- Runtime prompt templates are versioned under `finbert_site/prompts/`.
-- LLM call sites are documented and bounded by function-level responsibilities.
+These rules support use in environments where trust, auditability, and defensible interpretation are mandatory.
+
+## Governance recommendations
+
+- Require human review for low-confidence or high-impact summaries.
+- Keep diagnostics visible in user-facing outputs.
+- Treat missing/ambiguous inputs as explicit uncertainty, not hidden defaults.
 
 ## Citations
 
 - `docs/llm_prompt_constitution.md:1`
 - `docs/llm_prompt_constitution.md:138`
 - `docs/llm_prompt_constitution.md:159`
-- `finbert_site/prompts/analysis_constitution_v1.md`
-- `finbert_site/prompts/normalizer_v1.md`
-- `finbert_site/prompts/transcript_feature_classifier_v1.md`

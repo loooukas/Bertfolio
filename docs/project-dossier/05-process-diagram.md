@@ -2,26 +2,24 @@
 
 ```mermaid
 flowchart TD
-  A["User enters ticker"] --> B["POST /api/analyze/jobs (Next proxy)"]
-  B --> C["FastAPI job manager creates background run"]
-  C --> D["News + social fetch and FinBERT scoring"]
-  C --> E["Fundamentals fetch + validation"]
-  C --> F["Transcript discovery and scrape"]
-  F --> G["Normalization and speaker-level scoring"]
-  D --> H["Report assembly + data audit"]
-  E --> H
-  G --> H
-  H --> I["Persist cache envelope"]
-  I --> J["GET /api/analyze/jobs/{id}/result"]
-  J --> K["Frontend adapts payload and renders report"]
+  A["Analyst enters ticker in Next.js"] --> B["POST /api/analyze/jobs"]
+  B --> C["FastAPI job manager starts run"]
+  C --> D["Fetch transcript, news, social, fundamentals"]
+  D --> E["Score with FinBERT and optional local models"]
+  E --> F["Assemble Overview, Transcript, Market, Fundamentals"]
+  F --> G["Generate Data Audit and diagnostics"]
+  G --> H["Return structured report payload"]
+  H --> I["Frontend renders report and evidence"]
 ```
+
+## Operating interpretation
+
+This process replaces a multi-tab manual workflow with one repeatable run that is easier to scale and easier to review.
 
 ## Citations
 
-- `lib/finbert/client.ts:39`
+- `app/page.tsx:81`
 - `finbert_site/main.py:434`
-- `finbert_site/jobs.py:208`
-- `finbert_site/progress.py:15`
+- `finbert_site/jobs.py:98`
 - `finbert_site/analysis.py:1676`
-- `finbert_site/main.py:455`
-- `lib/finbert/adapters.ts:289`
+- `finbert_site/schemas.py:413`

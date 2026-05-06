@@ -1,23 +1,37 @@
 # Value Proposition vs Manual Workflow
 
-## Core value
+## Executive value proposition
 
-Bertfolio compresses a multi-source analyst workflow into one repeatable run and one structured output.
+Bertfolio converts a slow, fragmented, and person-dependent workflow into a structured process that is faster to execute and easier to trust.
 
-## Value drivers grounded in implementation
+## Business outcomes
 
-- Single run across transcript, sentiment, fundamentals, and market context.
-- Consistent scoring rules and typed response model.
-- Explicit audit trail for missing/degraded data.
-- Reproducibility through cache and configurable runtime settings.
+- `Speed`: fewer handoffs and less manual synthesis time.
+- `Consistency`: standardized scoring and output structure.
+- `Trust`: visible diagnostics and evidence-linked conclusions.
+- `Scale`: repeatable process across larger coverage universes.
 
-## Manual workflow comparison
+## Manual workflow contrast
 
-Manual workflow usually requires switching between transcript websites, finance terminals/sites, and ad hoc notes. Bertfolio integrates these steps into one pipeline with explicit diagnostics.
+Manual process usually requires separate transcript review, market-feed review, fundamentals lookup, and narrative writeup. Bertfolio merges these into one job and one response contract.
 
-## Important caveat
+## Value by stakeholder
 
-Claims like "500x faster" are not currently measured in this repository. Treat speed multipliers as hypotheses until benchmarked.
+- Buy-side research: faster triage and cleaner internal debate.
+- Sell-side research: better first-pass standardization.
+- Corporate strategy/IR: competitor messaging monitoring at scale.
+- Research ops: more structured inputs for downstream analysis.
+
+## Measurement framework (recommended)
+
+- Time from ticker input to first usable brief.
+- Number of names reviewed per earnings window.
+- Variance in sentiment interpretation across analysts.
+- Frequency of missing-data surprises after report delivery.
+
+## Claims discipline
+
+Speed/cost multipliers should be treated as hypotheses until measured under a documented benchmark plan.
 
 ## Citations
 
@@ -25,4 +39,4 @@ Claims like "500x faster" are not currently measured in this repository. Treat s
 - `finbert_site/schemas.py:413`
 - `finbert_site/schemas.py:397`
 - `finbert_site/analysis_cache.py:44`
-- `external-supporting-draft` (external supporting draft, not repository source-of-truth)
+- `README.md`

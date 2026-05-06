@@ -1,28 +1,35 @@
 # Competitive Landscape
 
-## Positioning frame
+## Strategic framing
 
-Bertfolio is currently a local, code-centric analyst-support system rather than a hosted enterprise data platform.
+Bertfolio is positioned as a practical, explainable earnings-intelligence layer for teams that want strong workflow outcomes without immediate dependence on expensive enterprise research stacks.
 
-## Differentiators visible in this repo
+## Typical alternatives
 
-- Local-first runtime with inspectable code paths.
-- Transcript-first design with speaker-level scoring and attached evidence snippets.
-- Explicit deterministic fallback and data-audit surfacing.
+- Manual transcript workflows.
+- Generic sentiment tools without finance-specific context.
+- Enterprise platforms with broader datasets but higher cost and less local inspectability.
 
-## Limits vs commercial platforms
+## Bertfolio differentiation
 
-- No built-in licensed terminal dataset breadth in this repository.
-- Coverage depends on configured providers and available transcript sources.
-- No verified comparative benchmark suite against external products is included yet.
+- Transcript-first earnings workflow.
+- Unified report with explicit diagnostics.
+- Local-first architecture that can be inspected and adapted.
+- Guardrail-first posture for responsible analyst adoption.
 
-## Market claims policy
+## Where enterprise tools still lead
 
-Any competitive claims from pitch material should be treated as directional until validated with independent benchmark docs.
+- Dataset breadth and deep historical coverage.
+- Integrated institutional workflows at very large scale.
+- Broad vendor support ecosystems.
+
+## Commercial implication
+
+Bertfolio is strongest as a high-leverage intelligence layer and process standardizer. It can reduce manual load quickly and serve as a bridge toward broader data-stack maturity.
 
 ## Citations
 
+- `finbert_site/transcript_pipeline.py:150`
 - `finbert_site/schemas.py:271`
 - `finbert_site/schemas.py:397`
-- `finbert_site/transcript_pipeline.py:150`
-- `external-supporting-draft` (external supporting draft, not repository source-of-truth)
+- `README.md`

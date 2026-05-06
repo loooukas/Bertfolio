@@ -1,27 +1,37 @@
 # Problem Statement
 
-Bertfolio exists to reduce the time and inconsistency of multi-source earnings analysis by turning transcript, sentiment, market context, and data quality into one structured run.
+## The real business problem
 
-## Current pain points addressed
+Earnings calls are one of the most information-dense events in public markets, but the current workflow for extracting insight is still mostly manual. Teams read long transcripts, cross-check market reaction, compare fundamentals, and then synthesize a view. This is expensive in analyst time and inconsistent across people.
 
-- Earnings analysis is fragmented across transcript reading, news/social scanning, and fundamentals checks.
-- Manual review quality varies across analysts and across time.
-- Typical tooling does not expose a unified audit trail of what was found, skipped, or degraded.
+## Why this hurts decision-making
 
-## Product problem definition (code-backed)
+- Cycle time is too long during earnings windows.
+- Coverage depth and coverage breadth compete with each other.
+- Signal quality varies by analyst style and fatigue.
+- Leadership often receives conclusions without enough traceable evidence.
 
-The implemented product is explicitly transcript-first and combines:
+## Root causes
 
-- Transcript retrieval and normalization.
-- FinBERT sentiment scoring.
-- Optional local student-style communication metrics.
-- Fundamentals/news/social context.
-- Data-audit diagnostics in the same response payload.
+- Inputs are fragmented across multiple systems and formats.
+- Financial language needs domain-aware interpretation, not generic sentiment.
+- Confidence, hedging, and guidance nuance are difficult to score consistently by hand.
+- Quality checks for missing data are usually implicit, not structured.
+
+## Consequences if unresolved
+
+- Slower response to new earnings information.
+- Inconsistent quarter-over-quarter comparability.
+- More organizational debate about interpretation quality than about strategy.
+
+## Bertfolio problem definition
+
+Bertfolio addresses this by operationalizing a repeatable earnings-analysis workflow that joins transcript, market reaction, fundamentals, and diagnostics in one report contract.
 
 ## Citations
 
-- `README.md` (product scope and workflow)
-- `finbert_site/analysis.py:1` (core pipeline role)
-- `finbert_site/schemas.py:413` (single `AnalysisResponse` contract)
-- `finbert_site/schemas.py:397` (explicit data-audit section)
-- `docs/site_behavior_and_user_progression.md:5` (analyst-support workflow)
+- `README.md`
+- `docs/site_behavior_and_user_progression.md:5`
+- `finbert_site/analysis.py:1`
+- `finbert_site/schemas.py:413`
+- `finbert_site/schemas.py:397`

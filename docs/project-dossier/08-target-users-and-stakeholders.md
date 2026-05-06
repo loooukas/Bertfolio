@@ -2,23 +2,35 @@
 
 ## Primary users
 
-- Research analysts who need repeatable quarterly transcript + context reviews.
-- Portfolio support workflows that need explainable sentiment and communication signals.
+1. Buy-side research teams
+Use case: accelerate post-earnings interpretation while keeping analyst verification intact.
+
+2. Sell-side research teams
+Use case: standardize first-pass call interpretation before deeper thesis communication.
+
+3. Corporate strategy and competitive intelligence teams
+Use case: track peer management tone, guidance posture, and communication shifts.
 
 ## Secondary users
 
-- Strategy/IR teams comparing management messaging patterns over time.
-- Advanced individual users who prefer local, inspectable pipelines.
+- Advanced individual investors seeking structured, explainable analysis.
+- Internal research operations teams that need normalized and reusable signal outputs.
 
-## Internal stakeholders
+## Economic buyer vs. daily user
 
-- Engineering: maintain deterministic and fallback reliability.
-- Product/research: tune scoring and interpretability.
-- Risk/compliance-minded reviewers: inspect audit and no-advice posture.
+- Economic buyer: research lead, PM, head of strategy, or operations lead.
+- Daily user: analyst or associate running and reviewing earnings workflows.
+
+## Stakeholders inside implementation
+
+- Product: clarity and workflow usability.
+- Engineering: reliability, maintainability, observability.
+- Research/ML: signal quality and calibration.
+- Governance/compliance: guardrails and no-advice boundaries.
 
 ## Citations
 
-- `README.md` (local earnings-call intelligence workspace)
 - `docs/site_behavior_and_user_progression.md:5`
+- `README.md`
 - `docs/llm_prompt_constitution.md:159`
 - `finbert_site/schemas.py:397`

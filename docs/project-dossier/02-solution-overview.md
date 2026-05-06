@@ -1,25 +1,36 @@
 # Solution Overview
 
-Bertfolio is a local two-service system: Next.js frontend + FastAPI backend, with the frontend talking to backend capabilities through `/api/*` proxy routes.
+## What Bertfolio is
 
-## What the solution delivers
+Bertfolio is a local earnings-intelligence system for teams that need faster, more consistent, and more explainable insight from earnings events.
 
-- Async analysis jobs with visible stage-level progress.
-- Combined report sections for Overview, Transcript, Market Reaction, Fundamentals, and Data Audit.
-- Cache-backed re-openable runs.
-- Runtime overrides for per-run tuning without editing environment files.
+## What the solution changes
 
-## Why this shape was chosen
+- From fragmented tools to one orchestrated analysis run.
+- From ad hoc interpretation to standardized scoring and section outputs.
+- From hidden uncertainty to explicit diagnostics and reliability notes.
+- From person-dependent process to team-repeatable workflow.
 
-- Keeps browser integration simple (`/api/*` from frontend), while backend can evolve independently.
-- Preserves deterministic fallbacks and diagnostics in backend while still allowing bounded LLM assists.
-- Makes the full output serializable and cacheable as one object.
+## Product outputs that matter to a business user
+
+- `Overview`: headline stance, key takeaways, summary orientation.
+- `Transcript`: speaker-level and quarter-level transcript analysis.
+- `Market Reaction`: sentiment-labeled news/social context.
+- `Fundamentals`: metric context plus validation checks.
+- `Data Audit`: what was found, what was missing, and what degraded.
+
+## Why this is commercially useful
+
+The value is operational: faster turnaround, improved consistency, and stronger evidence posture in investment or strategy discussions.
+
+## Adoption posture
+
+Bertfolio is designed as an analyst copilot, not an autonomous decision-maker. It accelerates synthesis while preserving human review and accountability.
 
 ## Citations
 
-- `lib/server/backend-proxy.ts:3`
-- `lib/server/backend-proxy.ts:53`
+- `README.md`
+- `app/page.tsx:81`
+- `lib/finbert/client.ts:39`
 - `finbert_site/main.py:434`
-- `finbert_site/jobs.py:31`
-- `finbert_site/progress.py:15`
 - `finbert_site/schemas.py:413`

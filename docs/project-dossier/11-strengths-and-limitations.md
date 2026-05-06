@@ -2,21 +2,23 @@
 
 ## Strengths
 
-- End-to-end pipeline with stage-level progress and structured completion.
-- Typed report contract with explicit audit and diagnostics sections.
-- Deterministic-first transcript processing with bounded LLM assists.
-- Graceful degradation on provider/model/normalization failures.
-- Local cache for re-openable analyses and recomputation of management-facing aggregates.
+- End-to-end pipeline from ticker input to structured report.
+- Real stage-level progress and operational transparency.
+- Explicit Data Audit diagnostics and missing-data surfacing.
+- Consistent response contract that supports repeatable workflows.
+- Local-first inspectability and controlled adoption path.
 
 ## Limitations
 
-- Provider/source coverage is variable by ticker and period.
-- Some transcript and feature paths depend on API keys or local model artifacts.
-- The repository does not include a formal benchmark package for latency/accuracy or competitive claims.
+- Source coverage can vary by ticker, region, and timeframe.
+- Some capabilities depend on external APIs or local model assets.
+- Performance and ROI benchmarks are not yet packaged as formal in-repo studies.
 
-## Operating guidance
+## Risk management guidance
 
-Use Data Audit and transcript quarter status as first-class confidence signals; do not interpret a completed run as complete provider coverage.
+- Treat outputs as analyst-support, not autonomous conclusions.
+- Use Data Audit as a required confidence checkpoint.
+- Escalate low-confidence or sparse-data runs for deeper manual review.
 
 ## Citations
 
@@ -25,4 +27,3 @@ Use Data Audit and transcript quarter status as first-class confidence signals; 
 - `finbert_site/schemas.py:397`
 - `finbert_site/transcript_pipeline.py:60`
 - `finbert_site/jobs.py:111`
-- `finbert_site/main.py:498`

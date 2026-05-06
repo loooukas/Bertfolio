@@ -1,35 +1,37 @@
 # Architecture Notes
 
-## System boundaries
+## Architecture in business context
 
-- Frontend: Next.js App Router (`app/`) with client orchestration in `app/page.tsx`.
-- Edge/backend boundary: Next route handlers proxy browser traffic to FastAPI.
-- Backend: FastAPI routes, async job manager, analysis pipeline, provider adapters, transcript pipeline, normalizer.
+Bertfolio separates user experience from analysis execution so each can evolve without breaking the other. This supports faster product iteration and cleaner operational ownership.
 
-## Runtime and configuration model
+## Major components
 
-- Environment-driven `Settings` dataclass holds provider/model/cache/scoring toggles.
-- Per-run runtime overrides are validated and sanitized before use.
-- Cache directories are explicit and configurable.
+- `Next.js frontend`: user input, progress polling, report rendering.
+- `FastAPI backend`: job orchestration, scoring, report assembly.
+- `Providers layer`: source-specific collection from transcript/news/social/fundamentals channels.
+- `Model layer`: FinBERT and optional local communication-style models.
+- `Schema layer`: typed contracts for stable payloads.
+- `Cache layer`: local persistence for reruns and revisit workflows.
 
-## Data contracts
+## Reliability mechanisms
 
-- Strong Pydantic schemas for transcript blocks, report sections, audit payloads, and full response.
-- Frontend adapter normalizes payload details for presentation and resilience.
+- Typed schemas enforce payload consistency.
+- Stage-level progress provides runtime observability.
+- Deterministic fallback behaviors reduce hard failures.
+- Data Audit makes uncertainty visible to users.
 
-## Architectural principles visible in code
+## Why this matters to deployment
 
-- Deterministic-first with bounded LLM fallbacks.
-- Graceful degradation with diagnostics instead of silent failure.
-- Separation of concerns: fetching/scoring/normalizing/assembly/proxy each have dedicated modules.
+- Easier separation of product, data, and model responsibilities.
+- Better maintainability as sources/models evolve.
+- More controlled path from local prototype to managed deployment.
 
 ## Citations
 
-- `app/page.tsx:44`
-- `app/api/analyze/route.ts:5`
 - `lib/server/backend-proxy.ts:53`
 - `finbert_site/main.py:54`
-- `finbert_site/settings.py:20`
-- `finbert_site/main.py:144`
-- `finbert_site/schemas.py:262`
+- `finbert_site/jobs.py:31`
+- `finbert_site/progress.py:42`
+- `finbert_site/schemas.py:413`
+- `finbert_site/analysis_cache.py:44`
 - `lib/finbert/adapters.ts:289`
