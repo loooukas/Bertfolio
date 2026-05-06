@@ -25,4 +25,4 @@ Any competitive claims from pitch material should be treated as directional unti
 - `finbert_site/schemas.py:271`
 - `finbert_site/schemas.py:397`
 - `finbert_site/transcript_pipeline.py:150`
-- `<external-supporting-draft>`
+- `external-supporting-draft` (external supporting draft, not repository source-of-truth)

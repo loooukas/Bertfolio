@@ -21,4 +21,4 @@ This dossier documents the Bertfolio product from the current codebase as the so
 
 - Implementation truth: `finbert_site/`, `app/`, `lib/`.
 - Existing product docs: `README.md`, `docs/site_behavior_and_user_progression.md`, `docs/llm_prompt_constitution.md`, `DESIGN-SYSTEM.md`.
-- Presentation text from `<external-supporting-draft>` is treated as supporting context, not normative truth.
+- Presentation text from `external-supporting-draft` (external supporting draft) is treated as supporting context, not normative truth.

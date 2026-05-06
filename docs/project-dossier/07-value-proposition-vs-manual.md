@@ -25,4 +25,4 @@ Claims like "500x faster" are not currently measured in this repository. Treat s
 - `finbert_site/schemas.py:413`
 - `finbert_site/schemas.py:397`
 - `finbert_site/analysis_cache.py:44`
-- `<external-supporting-draft>`
+- `external-supporting-draft` (external supporting draft, not repository source-of-truth)
