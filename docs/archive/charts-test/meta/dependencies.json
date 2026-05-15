@@ -1,0 +1,19 @@
+{
+  "runtime": {
+    "next": "App Router",
+    "react": "18+",
+    "tailwindcss": "v4"
+  },
+  "packages": [
+    "recharts",
+    "lucide-react",
+    "@radix-ui/react-slot",
+    "class-variance-authority",
+    "clsx",
+    "tailwind-merge"
+  ],
+  "notes": [
+    "Requires path alias '@/...' or adjust imports.",
+    "Requires CSS variables from styles/minimal-chart-theme.css."
+  ]
+}

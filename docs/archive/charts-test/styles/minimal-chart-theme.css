@@ -1,0 +1,18 @@
+/* Minimal token set required by archived charts test page. */
+:root {
+  --background: oklch(0.13 0.005 250);
+  --foreground: oklch(0.95 0.01 90);
+  --card: oklch(0.17 0.005 250);
+  --muted-foreground: oklch(0.60 0.01 90);
+  --border: oklch(0.28 0.005 250);
+
+  --bullish: oklch(0.65 0.18 145);
+  --bearish: oklch(0.60 0.20 25);
+  --neutral: oklch(0.70 0.12 85);
+
+  --chart-1: oklch(0.70 0.15 145);
+  --chart-2: oklch(0.65 0.15 25);
+  --chart-3: oklch(0.70 0.12 250);
+  --chart-4: oklch(0.75 0.15 85);
+  --chart-5: oklch(0.60 0.10 300);
+}
