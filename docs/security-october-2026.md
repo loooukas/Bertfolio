@@ -8,6 +8,6 @@ Validation used `pnpm install --lockfile-only --ignore-scripts --frozen-lockfile
 
 Both Python dependency manifests now require `certifi>=2026.10.19`. The [certifi advisory](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2) marks earlier versions affected because they trust emSign roots whose intermediates were revoked after key compromise. The advisory lists 2026.10.18 as the patched version. The 2026.10.19 release is compatible with Python 3.9.
 
-This updates dependency declarations only. The canonical checkout's existing virtual environment was Python 3.9.6 with certifi 2026.2.25; this change does not update that environment. No project Python, pip, package imports, installation, or tests were run for this patch.
+The manifest commit updates dependency declarations only. Separately, the October 22 local tooling maintenance updated the canonical Python 3.9.6 virtual environment from certifi 2026.2.25 to 2026.10.19 and verified its installed files and CA loading. Project application imports and tests were not run.
 
 The Python 3.9 constraint also limits separate updates. urllib3 1.26.20 is in current upstream advisory ranges, but the fixed urllib3 2.8.0 requires Python 3.10 or newer, while both manifests still specify `urllib3<2`. The project also declares `numpy>=2.2.4`, which itself requires Python 3.10 or newer, despite `requires-python>=3.9`. These compatibility changes need a separate runtime review.
