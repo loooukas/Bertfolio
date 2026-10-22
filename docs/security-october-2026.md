@@ -1,0 +1,5 @@
+# October 2026 dependency security update
+
+The production lockfile now resolves Next.js to 16.4.1, sharp to 0.35.5, and `source-map-js` to 1.2.2. These updates address the [Next.js October 14 security update](https://nextjs.org/blog/nextjs-security-update-october-14-2026), including the [React Server Components typed-array RCE](https://github.com/vercel/next.js/security/advisories/GHSA-673q-mjm6-r5xr), [Image Optimization SVG RCE](https://github.com/vercel/next.js/security/advisories/GHSA-2464-fhr4-w9xw), and [Server Actions denial of service](https://github.com/vercel/next.js/security/advisories/GHSA-p3m5-59mp-jv5r). The other targeted advisories are [sharp](https://github.com/advisories/GHSA-wq5f-xc86-pv6w) and [source-map-js](https://github.com/advisories/GHSA-68fv-2mgg-jv7q).
+
+Validation used `pnpm install --lockfile-only --ignore-scripts --frozen-lockfile` and `pnpm audit --prod --json`. The final production audit reports seven high and two moderate findings, with no critical findings. High findings remain in `browserslist`, `nanoid`, and `postcss`. Lockfile validation passed; builds and runtime, Vercel Preview, and production behavior were not tested.
